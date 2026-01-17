@@ -18,11 +18,15 @@ Writes are designed to be crash safe and consistent. A write is either fully com
 
 ## Scope
 
+Chassis assumes a single process owns the data at a time. It is designed for single-writer concurrency, relying on the host application or file-system level locking to coordinate access.
+
 Chassis provides a minimal set of capabilities needed for persistent vector search. It intentionally avoids higher level concerns such as networking, query languages, authentication, or distributed coordination.
 
 These responsibilities are left to the host application, where they can be addressed in a context appropriate way.
 
 ## Stability
+
+**Data created by Chassis today must remain accessible by Chassis in the future.**
 
 Chassis is intended to be depended on. This places a higher value on correctness, clarity, and conservative change than on rapid feature expansion.
 
