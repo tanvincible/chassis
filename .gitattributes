@@ -1,0 +1,12 @@
+# Force Unix line endings for all text files
+* text=auto eol=lf
+
+# Ensure Rust files are always treated as text
+*.rs text
+
+# Explicitly mark potential binary test files as binary
+*.chassis binary
+*.bin binary
+
+# Documentation
+*.md text

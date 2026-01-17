@@ -1,0 +1,15 @@
+# <type>: (If applied, this commit will...) <subject> (Max 50 chars)
+# |<----  Using a Maximum of 50 Characters  ---->|
+
+# Explain why this change is being made
+# |<----   Try to keep lines under 72 chars   ---->|
+
+# --- Types ---
+# feat:     A new feature
+# fix:      A bug fix
+# build:    Changes that affect the build system or external dependencies
+# docs:     Documentation only changes
+# refactor: A code change that neither fixes a bug nor adds a feature
+# perf:     A code change that improves performance
+# test:     Adding missing tests or correcting existing tests
+# chore:    Updating build tasks, package manager configs, etc.
