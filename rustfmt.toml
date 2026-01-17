@@ -1,0 +1,14 @@
+edition = "2024"
+style_edition = "2024"
+
+newline_style = "Unix"
+use_small_heuristics = "Max"
+wrap_comments = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
+merge_derives = true
+
+ignore = [
+    "bindings/",
+    "target/",
+]

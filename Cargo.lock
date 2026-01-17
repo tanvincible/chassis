@@ -5,3 +5,7 @@ version = 4
 [[package]]
 name = "chassis-core"
 version = "0.1.0"
+
+[[package]]
+name = "chassis-ffi"
+version = "0.1.0"

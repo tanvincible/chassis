@@ -2,9 +2,9 @@
 channel = "stable"
 
 components = [
-    "rustfmt",   # For boring, consistent code style
-    "clippy",    # For catching system-level code smells
-    "rust-src",  # Helpful for IDEs and cross-compilation
+    "rustfmt",
+    "clippy",
+    "rust-src",
 ]
 
 targets = [
