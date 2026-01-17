@@ -1,0 +1,16 @@
+[toolchain]
+channel = "stable"
+
+components = [
+    "rustfmt",   # For boring, consistent code style
+    "clippy",    # For catching system-level code smells
+    "rust-src",  # Helpful for IDEs and cross-compilation
+]
+
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc"
+]
