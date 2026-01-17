@@ -12,4 +12,3 @@
     - [Consistency & Durability](./specs/durability.md)
 - [Development](./dev/README.md)
     - [Toolchain & Setup](./dev/setup.md)
-    - [Contributing Guidelines](./dev/contributing.md)
