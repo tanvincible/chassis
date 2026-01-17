@@ -1,0 +1,10 @@
+[package]
+name = "chassis-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The foundational engine for the Chassis vector storage primitive."
+
+[dependencies]

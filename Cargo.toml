@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+
+members = ["chassis-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Tanvi Pooranmal Meena (tanvipm19@gmail.com)"]
+license = "MIT & Apache-2.0"
+repository = "https://github.com/tanvincible/chassis"
+description = "An embeddable, on-disk vector storage engine."
+
+[workspace.dependencies]
