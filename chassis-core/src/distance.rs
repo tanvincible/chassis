@@ -39,36 +39,35 @@ fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
-    #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::*;
-    
-    let len = a.len();
-    let mut sum = _mm256_setzero_ps();
-    
-    let chunks = len / 8;
-    for i in 0..chunks {
-        let offset = i * 8;
-        
-        let va = _mm256_loadu_ps(a.as_ptr().add(offset));
-        let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
-        
-        let diff = _mm256_sub_ps(va, vb);
-        let sq = _mm256_mul_ps(diff, diff);
-        sum = _mm256_add_ps(sum, sq);
+    unsafe {
+        use std::arch::x86_64::{_mm256_setzero_ps, _mm256_storeu_ps};
+
+        let mut sum = _mm256_setzero_ps();
+        let chunks = a.len() / 8;
+
+        for i in 0..chunks {
+            use std::arch::x86_64::{_mm256_fmadd_ps, _mm256_loadu_ps, _mm256_sub_ps};
+
+            let offset = i * 8;
+            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            let diff = _mm256_sub_ps(va, vb);
+            sum = _mm256_fmadd_ps(diff, diff, sum);
+        }
+
+        let mut result = [0.0f32; 8];
+        _mm256_storeu_ps(result.as_mut_ptr(), sum);
+
+        let mut total = result. iter().sum::<f32>();
+
+        // Handle remaining elements
+        for i in (chunks * 8)..a.len() {
+            let diff = a[i] - b[i];
+            total += diff * diff;
+        }
+
+        total.sqrt()
     }
-    
-    // Horizontal sum
-    let mut result = [0.0_f32; 8];
-    _mm256_storeu_ps(result.as_mut_ptr(), sum);
-    let mut total = result.iter().sum::<f32>();
-    
-    // Handle remainder
-    for i in (chunks * 8)..len {
-        let diff = a[i] - b[i];
-        total += diff * diff;
-    }
-    
-    total.sqrt()
 }
 
 /// Compute cosine distance (1 - cosine_similarity)

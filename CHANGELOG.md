@@ -5,14 +5,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.1.0-alpha.1...HEAD) - 18 January 2026
 
+### Merged
+- feat: Add zero-copy vector slice access via get_vector_slice() [`#2`](https://github.com/tanvincible/chassis/pull/2)
+
+### Added
+
+- feat: Add core HNSW implementation ([3ac81fa](https://github.com/tanvincible/chassis/commit/3ac81faf690eda60a34520d5a067e97db2480f8d))
+
+### Documentation
+
+- docs: add Contributor Covenant Code of Conduct ([486f7ae](https://github.com/tanvincible/chassis/commit/486f7ae4ca9991eae33b012958054ddc38b0d129))
+- docs: add project contributing guidelines ([39f89b1](https://github.com/tanvincible/chassis/commit/39f89b1f70c19f3eb608f4802873dad1abb62473))
+
 ### Infrastructure
 
-- chore: release v0.1.0-alpha.1 ([16bf7e7](https://github.com/tanvincible/chassis/commit/16bf7e7df8f2e0b9eebdc58c16fc515aa22f410c))
-- chore: release v0.1.0-alpha.1 ([00e07a6](https://github.com/tanvincible/chassis/commit/00e07a6e8c922fb1f71815ebca6885c25df2bc21))
+- chore: release v0.1.0-alpha.1 ([8c90ddf](https://github.com/tanvincible/chassis/commit/8c90ddf7338a24aaf65f82256d7165b7b6a7c643))
+- chore: release v0.1.0-alpha.1 ([b75d694](https://github.com/tanvincible/chassis/commit/b75d69454056ce76aef695e33064a85061e3a8b4))
+- build: implement precise changelog template and workflow ([194945a](https://github.com/tanvincible/chassis/commit/194945a38ba90646aa4e6015684cdb065aa8684c))
+- chore: fix unsafe impl and unused variables warnings ([3656184](https://github.com/tanvincible/chassis/commit/365618465b564b65eb5eafe7f11f25eef255e006))
+- build: harden quality standards with Rust 2024 and strict lints ([1f68b58](https://github.com/tanvincible/chassis/commit/1f68b58110a83fb8d3eb9357862e4a594bb01ff4))
+- build: initialize chassis-ffi crate and cbindgen configuration ([dc24cdb](https://github.com/tanvincible/chassis/commit/dc24cdb4a87b08d3bd34c25abeef9132afe7f325))
 
 ### Performance
 
-- perf: document official storage baseline and benchmark report ([0326011](https://github.com/tanvincible/chassis/commit/0326011eb604e653f3893f5254becf05066d6d93))
+- perf: document official storage baseline and benchmark report ([3d37816](https://github.com/tanvincible/chassis/commit/3d37816a53959262ac7f042f7efb9828f25bb1b2))
 
 ## v0.1.0-alpha.1 - 18 January 2026
 

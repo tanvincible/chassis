@@ -2,16 +2,17 @@ use crate::hnsw::node::{Node, NodeHeader, NodeId, Offset};
 use crate::hnsw::HnswParams;
 use crate::Storage;
 use anyhow::Result;
-use memmap2::MmapMut;
 use std::collections::HashMap;
 
 /// File offset where graph data begins (after vector data)
+#[allow(dead_code)]
 const GRAPH_OFFSET_MARKER: u64 = u64::MAX - 1;
 
 /// HNSW graph stored in segmented layout:
 /// [Vector Storage] | [Graph Header] | [Node Data]
 pub struct HnswGraph {
     pub(crate) storage: Storage,
+    #[allow(dead_code)]
     params: HnswParams,
     
     /// Offset where graph section begins
@@ -80,7 +81,7 @@ impl HnswGraph {
         let offset = self.allocate_node_space(node.disk_size())?;
         
         // Write node header
-        let header = NodeHeader::new(node.id, node.layers.len() as u8);
+        let _header = NodeHeader::new(node.id, node.layers.len() as u8);
         
         // TODO: Write header, neighbor counts, and neighbor offsets to mmap
         
@@ -90,7 +91,7 @@ impl HnswGraph {
     }
     
     /// Allocates space for a node in the graph zone
-    fn allocate_node_space(&self, size: usize) -> Result<Offset> {
+    fn allocate_node_space(&self, _size: usize) -> Result<Offset> {
         // Find next available offset
         let current_end = self.graph_start + self.total_graph_size();
         Ok(current_end)
@@ -103,7 +104,7 @@ impl HnswGraph {
     }
     
     /// Reads a node from disk
-    pub fn read_node(&self, offset: Offset) -> Result<Node> {
+    pub fn read_node(&self, _offset: Offset) -> Result<Node> {
         // TODO: Read node header and neighbor data from mmap
         unimplemented!("read_node")
     }
