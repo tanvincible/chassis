@@ -224,3 +224,25 @@ fn test_persistence_across_reopens() {
     let last = storage.get_vector(10).unwrap();
     assert_eq!(last, vec![99.0; 128]);
 }
+
+#[test]
+fn test_raw_fsync_cost() {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::os::unix::io::AsRawFd;
+    use std::time::Instant;
+    
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(temp.path())
+        .unwrap();
+    
+    file.write_all(b"test").unwrap();
+    
+    let start = Instant::now();
+    unsafe { libc::fsync(file.as_raw_fd()); }
+    let elapsed = start.elapsed();
+    
+    println!("Raw fsync took: {:?}", elapsed);
+}

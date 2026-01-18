@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.1.0-alpha.1...HEAD) - 18 January 2026
 
+### Infrastructure
+
+- chore: release v0.1.0-alpha.1 ([16bf7e7](https://github.com/tanvincible/chassis/commit/16bf7e7df8f2e0b9eebdc58c16fc515aa22f410c))
+- chore: release v0.1.0-alpha.1 ([00e07a6](https://github.com/tanvincible/chassis/commit/00e07a6e8c922fb1f71815ebca6885c25df2bc21))
+
+### Performance
+
+- perf: document official storage baseline and benchmark report ([0326011](https://github.com/tanvincible/chassis/commit/0326011eb604e653f3893f5254becf05066d6d93))
+
 ## v0.1.0-alpha.1 - 18 January 2026
 
 ### Documentation

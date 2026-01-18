@@ -15,7 +15,9 @@ description = "An embeddable, on-disk vector storage engine."
 chassis-core = { path = "./chassis-core" }
 
 anyhow = "1.0.100"
+criterion = "0.8.1"
 fs2 = "0.4.3"
+libc = "0.2.180"
 memmap2 = "0.9.9"
 tempfile = "3.24.0"
 

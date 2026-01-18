@@ -155,8 +155,17 @@ impl Storage {
     /// This operation is expensive (1-50ms depending on storage device).
     /// For batch inserts, insert many vectors and call commit() once.
     pub fn commit(&mut self) -> Result<()> {
+        // Flush mmap to kernel page cache
         self.mmap.flush()?;
+        
+        // Force kernel to flush to physical device
+        // On Linux: fdatasync() - flushes data but not metadata
         self.file.sync_data()?;
+        
+        // Additional barrier: sync_all() flushes metadata too
+        // This is slower but guarantees file size is durable
+        self.file.sync_all()?;
+        
         Ok(())
     }
 
