@@ -1,14 +1,19 @@
 # Summary
 
-[Introduction](../../README.md)
-[Manifesto](MANIFESTO.md)
+[Introduction](./introduction.md)
 
-- [Architecture](./architecture/README.md)
-    - [The Storage Model](./architecture/storage.md)
-    - [Memory Mapping Strategy](./architecture/mmap.md)
-    - [HNSW Indexing](./architecture/indexing.md)
-- [Design Specifications](./specs/README.md)
-    - [Binary Format V1](./specs/binary-format.md)
-    - [Consistency & Durability](./specs/durability.md)
-- [Development](./dev/README.md)
-    - [Toolchain & Setup](./dev/setup.md)
+# User Guide
+
+- [Getting Started](./guide/getting-started.md)
+- [Basic Usage](./guide/basic-usage.md)
+
+# Architecture
+
+- [Overview](./architecture/overview.md)
+- [Storage Layer](./architecture/storage.md)
+- [File Format](./architecture/file-format.md)
+
+# Development
+
+- [Building from Source](./dev/building.md)
+- [Running Tests](./dev/testing.md)
