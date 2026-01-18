@@ -1,5 +1,4 @@
 use crate::hnsw::graph::HnswGraph;
-use crate::hnsw::node::NodeId;
 use crate::hnsw::HnswParams;
 use crate::Storage;
 use anyhow::Result;

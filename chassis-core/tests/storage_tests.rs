@@ -1,4 +1,5 @@
 use chassis_core::Storage;
+use std::f32::consts::PI;
 use tempfile::NamedTempFile;
 
 #[test]
@@ -403,7 +404,7 @@ fn test_get_vector_slice_no_allocation() {
     let path = temp_file.path();
     
     let mut storage = Storage::open(path, 128).unwrap();
-    let vector = vec![3.14; 128];
+    let vector = vec![PI; 128];
     storage.insert(&vector).unwrap();
     
     // Get two slices - they should point to same memory
@@ -417,7 +418,7 @@ fn test_get_vector_slice_no_allocation() {
     
     // Verify data is correct
     assert_eq!(slice1, slice2);
-    assert!(slice1.iter().all(|&v| v == 3.14));
+    assert!(slice1.iter().all(|&v| v == PI));
 }
 
 #[test]
