@@ -1,4 +1,5 @@
 use chassis_core::Storage;
+use std::f32::consts::PI;
 use tempfile::NamedTempFile;
 
 #[test]
@@ -245,4 +246,285 @@ fn test_raw_fsync_cost() {
     let elapsed = start.elapsed();
     
     println!("Raw fsync took: {:?}", elapsed);
+}
+
+// ===== Zero-Copy Vector Slice Tests =====
+
+#[test]
+fn test_get_vector_slice_returns_correct_data() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 128).unwrap();
+    
+    // Insert a vector with known pattern
+    let vector = (0..128).map(|i| i as f32).collect::<Vec<_>>();
+    storage.insert(&vector).unwrap();
+    
+    // Get slice and verify data
+    let slice = storage.get_vector_slice(0).unwrap();
+    assert_eq!(slice.len(), 128);
+    
+    for (i, &val) in slice.iter().enumerate() {
+        assert_eq!(val, i as f32, "Mismatch at index {}", i);
+    }
+}
+
+#[test]
+fn test_get_vector_slice_matches_get_vector() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 768).unwrap();
+    
+    // Insert multiple vectors
+    for i in 0..10 {
+        let vector = vec![i as f32 * 1.5; 768];
+        storage.insert(&vector).unwrap();
+    }
+    
+    // Verify slice and owned vector match
+    for i in 0..10 {
+        let slice = storage.get_vector_slice(i).unwrap();
+        let owned = storage.get_vector(i).unwrap();
+        
+        assert_eq!(slice.len(), owned.len());
+        assert_eq!(slice, &owned[..]);
+    }
+}
+
+#[test]
+fn test_get_vector_slice_out_of_bounds() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let storage = Storage::open(path, 128).unwrap();
+    
+    // Try to read from empty storage
+    let result = storage.get_vector_slice(0);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("out of bounds"));
+}
+
+#[test]
+fn test_get_vector_slice_out_of_bounds_with_data() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 128).unwrap();
+    storage.insert(&vec![1.0; 128]).unwrap();
+    
+    // Try to read beyond the last vector
+    let result = storage.get_vector_slice(1);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("out of bounds"));
+    
+    // Verify we can still read the valid index
+    let slice = storage.get_vector_slice(0).unwrap();
+    assert_eq!(slice.len(), 128);
+}
+
+#[test]
+fn test_get_vector_slice_correct_length() {
+    let dimensions = [1, 64, 128, 384, 768, 1536];
+    
+    for dims in dimensions {
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+        
+        let mut storage = Storage::open(path, dims).unwrap();
+        let vector = vec![42.0; dims as usize];
+        storage.insert(&vector).unwrap();
+        
+        let slice = storage.get_vector_slice(0).unwrap();
+        assert_eq!(
+            slice.len(), 
+            dims as usize, 
+            "Slice length mismatch for {} dimensions", 
+            dims
+        );
+        
+        // Verify all values
+        for &val in slice {
+            assert_eq!(val, 42.0);
+        }
+    }
+}
+
+#[test]
+fn test_get_vector_slice_multiple_vectors() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 128).unwrap();
+    
+    // Insert 1000 vectors with unique patterns
+    for i in 0..1000 {
+        let vector = vec![i as f32; 128];
+        storage.insert(&vector).unwrap();
+    }
+    
+    // Verify all vectors can be accessed correctly
+    for i in 0..1000 {
+        let slice = storage.get_vector_slice(i).unwrap();
+        assert_eq!(slice.len(), 128);
+        assert!(slice.iter().all(|&v| v == i as f32));
+    }
+}
+
+#[test]
+fn test_get_vector_slice_after_reopen() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    // Insert and commit
+    {
+        let mut storage = Storage::open(path, 256).unwrap();
+        for i in 0..10 {
+            let vector = vec![i as f32 + 0.5; 256];
+            storage.insert(&vector).unwrap();
+        }
+        storage.commit().unwrap();
+    }
+    
+    // Reopen and verify slices
+    {
+        let storage = Storage::open(path, 256).unwrap();
+        for i in 0..10 {
+            let slice = storage.get_vector_slice(i).unwrap();
+            assert_eq!(slice.len(), 256);
+            assert!(slice.iter().all(|&v| v == (i as f32 + 0.5)));
+        }
+    }
+}
+
+#[test]
+fn test_get_vector_slice_no_allocation() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 128).unwrap();
+    let vector = vec![PI; 128];
+    storage.insert(&vector).unwrap();
+    
+    // Get two slices - they should point to same memory
+    let slice1 = storage.get_vector_slice(0).unwrap();
+    let slice2 = storage.get_vector_slice(0).unwrap();
+    
+    // Verify they point to the same memory address
+    let ptr1 = slice1.as_ptr();
+    let ptr2 = slice2.as_ptr();
+    assert_eq!(ptr1, ptr2, "Slices should point to the same memory (zero-copy)");
+    
+    // Verify data is correct
+    assert_eq!(slice1, slice2);
+    assert!(slice1.iter().all(|&v| v == PI));
+}
+
+#[test]
+fn test_get_vector_slice_alignment() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 768).unwrap();
+    
+    for i in 0..10 {
+        storage.insert(&vec![i as f32; 768]).unwrap();
+    }
+    
+    // Verify all slices are properly aligned for f32 (4-byte alignment)
+    for i in 0..10 {
+        let slice = storage.get_vector_slice(i).unwrap();
+        let ptr = slice.as_ptr() as usize;
+        assert_eq!(
+            ptr % 4, 
+            0, 
+            "Slice at index {} has misaligned pointer: 0x{:x}", 
+            i, 
+            ptr
+        );
+    }
+}
+
+#[test]
+fn test_get_vector_slice_distance_calculation() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 128).unwrap();
+    
+    // Insert two vectors for distance calculation
+    let v1 = vec![1.0; 128];
+    let v2 = vec![2.0; 128];
+    storage.insert(&v1).unwrap();
+    storage.insert(&v2).unwrap();
+    
+    // Use slices to calculate Euclidean distance (HNSW-style usage)
+    let slice1 = storage.get_vector_slice(0).unwrap();
+    let slice2 = storage.get_vector_slice(1).unwrap();
+    
+    let distance: f32 = slice1.iter()
+        .zip(slice2.iter())
+        .map(|(a, b)| {
+            let diff = a - b;
+            diff * diff
+        })
+        .sum::<f32>()
+        .sqrt();
+    
+    // Expected distance: sqrt(128 * (1.0 - 2.0)^2) = sqrt(128) ≈ 11.31
+    let expected = (128.0_f32).sqrt();
+    assert!((distance - expected).abs() < 0.01, 
+        "Distance calculation incorrect: expected {}, got {}", expected, distance);
+}
+
+#[test]
+fn test_multiple_simultaneous_slices() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 128).unwrap();
+    
+    for i in 0..5 {
+        storage.insert(&vec![i as f32; 128]).unwrap();
+    }
+    
+    // Get multiple slices simultaneously (all borrow &self immutably)
+    let slice0 = storage.get_vector_slice(0).unwrap();
+    let slice1 = storage.get_vector_slice(1).unwrap();
+    let slice2 = storage.get_vector_slice(2).unwrap();
+    let slice3 = storage.get_vector_slice(3).unwrap();
+    let slice4 = storage.get_vector_slice(4).unwrap();
+    
+    // All slices should be valid and contain correct data
+    assert!(slice0.iter().all(|&v| v == 0.0));
+    assert!(slice1.iter().all(|&v| v == 1.0));
+    assert!(slice2.iter().all(|&v| v == 2.0));
+    assert!(slice3.iter().all(|&v| v == 3.0));
+    assert!(slice4.iter().all(|&v| v == 4.0));
+}
+
+#[test]
+fn test_slice_then_read_only_operations() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    
+    let mut storage = Storage::open(path, 128).unwrap();
+    storage.insert(&vec![1.0; 128]).unwrap();
+    storage.insert(&vec![2.0; 128]).unwrap();
+    
+    // Hold a slice reference
+    let slice = storage.get_vector_slice(0).unwrap();
+    
+    // Other read-only operations should work fine
+    assert_eq!(storage.count(), 2);
+    assert_eq!(storage.dimensions(), 128);
+    
+    let other_slice = storage.get_vector_slice(1).unwrap();
+    let owned = storage.get_vector(1).unwrap();
+    
+    // All operations coexist
+    assert_eq!(slice.len(), 128);
+    assert_eq!(other_slice.len(), 128);
+    assert_eq!(owned.len(), 128);
 }

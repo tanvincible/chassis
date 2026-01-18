@@ -41,6 +41,7 @@ impl Storage {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(path)
             .with_context(|| format!("Failed to open chassis file: {}", path.display()))?;
 
@@ -169,7 +170,105 @@ impl Storage {
         Ok(())
     }
 
+    /// Retrieves a zero-copy slice view of a vector by index
+    /// 
+    /// This method returns a slice that points directly into the memory-mapped
+    /// file, avoiding heap allocation. The slice lifetime is tied to `&self`,
+    /// which prevents remapping operations while the slice is alive.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `index` - Vector index to retrieve
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a slice backed directly by the mmap (zero-copy)
+    /// 
+    /// # Errors
+    /// 
+    /// Returns an error if:
+    /// - The index is out of bounds (index >= count)
+    /// - The calculated mmap offset is invalid
+    /// 
+    /// # Safety Notes
+    /// 
+    /// This method uses `unsafe` internally but maintains safety through:
+    /// - Explicit bounds checking on both index and mmap offset
+    /// - Verification that HEADER_SIZE and vector stride are f32-aligned (4 bytes)
+    /// - Lifetime binding to `&self` prevents use-after-remap bugs
+    /// 
+    /// The returned slice is guaranteed valid as long as:
+    /// - No `&mut self` methods are called (enforced by Rust borrow checker)
+    /// - The Storage instance remains alive
+    /// 
+    /// # Example
+    /// 
+    /// ```no_run
+    /// # use chassis_core::Storage;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let storage = Storage::open("vectors.chassis", 128)?;
+    /// let slice = storage.get_vector_slice(0)?;
+    /// 
+    /// // Use slice for distance calculations without allocation
+    /// let sum: f32 = slice.iter().sum();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_vector_slice(&self, index: u64) -> Result<&[f32]> {
+        let count = self.header().count;
+        
+        // Bounds check: Ensure index is within valid range
+        if index >= count {
+            anyhow::bail!("Index out of bounds: {} (count is {})", index, count);
+        }
+
+        let dims = self.header().dimensions as usize;
+        let vector_bytes = dims * std::mem::size_of::<f32>();
+        
+        // Use checked arithmetic to prevent overflow
+        let index_usize = usize::try_from(index)
+            .context("Index too large for this platform")?;
+        
+        let byte_offset = index_usize
+            .checked_mul(vector_bytes)
+            .context("Vector offset calculation overflow")?;
+        
+        let offset = HEADER_SIZE
+            .checked_add(byte_offset)
+            .context("Offset calculation overflow")?;
+
+        // Bounds check: Ensure the calculated offset + vector data fits within mmap
+        let end_offset = offset
+            .checked_add(vector_bytes)
+            .context("End offset calculation overflow")?;
+        
+        if end_offset > self.mmap.len() {
+            anyhow::bail!(
+                "Vector at index {} extends beyond mmap bounds (offset: {}, size: {}, mmap len: {})",
+                index,
+                offset,
+                vector_bytes,
+                self.mmap.len()
+            );
+        }
+
+        // SAFETY:
+        // - offset is bounds-checked above with overflow protection
+        // - HEADER_SIZE (4096) is 4-byte aligned
+        // - vector_bytes is dims * 4, so 4-byte aligned
+        // - Therefore offset is 4-byte aligned (required for f32)
+        // - dims is the correct length for the slice
+        // - Lifetime is tied to &self, preventing use after remap
+        unsafe {
+            let ptr = self.mmap.as_ptr().add(offset) as *const f32;
+            Ok(std::slice::from_raw_parts(ptr, dims))
+        }
+    }
+
     /// Retrieves a vector by index
+    /// 
+    /// Returns an owned copy of the vector data. For zero-copy access,
+    /// use `get_vector_slice()` instead.
     /// 
     /// # Arguments
     /// 
@@ -183,24 +282,8 @@ impl Storage {
     /// 
     /// Returns an error if the index is out of bounds
     pub fn get_vector(&self, index: u64) -> Result<Vec<f32>> {
-        let count = self.header().count;
-        
-        if index >= count {
-            anyhow::bail!("Index out of bounds: {} (count is {})", index, count);
-        }
-
-        let dims = self.header().dimensions as usize;
-        let vector_bytes = dims * std::mem::size_of::<f32>();
-        let offset = HEADER_SIZE + (index as usize * vector_bytes);
-
-        let mut vector = vec![0.0f32; dims];
-        
-        unsafe {
-            let src = self.mmap.as_ptr().add(offset) as *const f32;
-            std::ptr::copy_nonoverlapping(src, vector.as_mut_ptr(), dims);
-        }
-
-        Ok(vector)
+        let slice = self.get_vector_slice(index)?;
+        Ok(slice.to_vec())
     }
 
     /// Returns the current vector count

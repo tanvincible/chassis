@@ -1,0 +1,12 @@
+error[E0597]: `storage` does not live long enough
+  --> tests/ui/slice_escapes_scope.rs:14:9
+   |
+ 8 |     let slice = {
+   |         ----- borrow later stored here
+ 9 |         let mut storage = Storage::open("/tmp/test.chassis", 128).unwrap();
+   |             ----------- binding `storage` declared here
+...
+14 |         storage.get_vector_slice(0).unwrap()
+   |         ^^^^^^^ borrowed value does not live long enough
+15 |     };
+   |     - `storage` dropped here while still borrowed
