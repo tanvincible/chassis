@@ -27,3 +27,6 @@ Thumbs.db
 # --- Debugging & Profiling ---
 *.pdb
 **/mutants.out*/
+
+# --- Additional helper tools ---
+node_modules

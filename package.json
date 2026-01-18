@@ -1,0 +1,10 @@
+{
+  "name": "chassis",
+  "version": "0.1.0",
+  "devDependencies": {
+    "auto-changelog": "*"
+  },
+  "scripts": {
+    "changelog": "auto-changelog --template changelog-template.hbs --unreleased --commit-limit false && git add CHANGELOG.md"
+  }
+}
