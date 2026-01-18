@@ -223,10 +223,25 @@ impl Storage {
 
         let dims = self.header().dimensions as usize;
         let vector_bytes = dims * std::mem::size_of::<f32>();
-        let offset = HEADER_SIZE + (index as usize * vector_bytes);
+        
+        // Use checked arithmetic to prevent overflow
+        let index_usize = usize::try_from(index)
+            .context("Index too large for this platform")?;
+        
+        let byte_offset = index_usize
+            .checked_mul(vector_bytes)
+            .context("Vector offset calculation overflow")?;
+        
+        let offset = HEADER_SIZE
+            .checked_add(byte_offset)
+            .context("Offset calculation overflow")?;
 
         // Bounds check: Ensure the calculated offset + vector data fits within mmap
-        if offset + vector_bytes > self.mmap.len() {
+        let end_offset = offset
+            .checked_add(vector_bytes)
+            .context("End offset calculation overflow")?;
+        
+        if end_offset > self.mmap.len() {
             anyhow::bail!(
                 "Vector at index {} extends beyond mmap bounds (offset: {}, size: {}, mmap len: {})",
                 index,
@@ -237,7 +252,7 @@ impl Storage {
         }
 
         // SAFETY:
-        // - offset is bounds-checked above
+        // - offset is bounds-checked above with overflow protection
         // - HEADER_SIZE (4096) is 4-byte aligned
         // - vector_bytes is dims * 4, so 4-byte aligned
         // - Therefore offset is 4-byte aligned (required for f32)
