@@ -45,8 +45,12 @@
 //! These concerns are left to the application layer. Chassis is a storage
 //! primitive, like SQLite for relational data.
 
+mod distance;
 mod header;
+mod hnsw;
 mod storage;
 
+pub use distance::{cosine_distance, euclidean_distance, DistanceMetric};
 pub use header::{Header, HEADER_SIZE, MAGIC, VERSION};
+pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, SearchResult};
 pub use storage::Storage;

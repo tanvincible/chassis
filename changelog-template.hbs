@@ -14,6 +14,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
     {{summary}}
   {{/if}}
 
+  {{!-- This section catches Pull Request Merges (like your #2) --}}
+  {{#if merges}}
+    ### Merged
+    {{#each merges}}
+      - {{{message}}} {{#if href}}[`#{{id}}`]({{href}}){{/if}}
+    {{/each}}
+  {{/if}}
+
+  {{!-- Categorized individual commits --}}
   {{#commit-list commits heading="### Added" message="^feat: "}}
     - {{subject}} ([{{shorthash}}]({{href}}))
   {{/commit-list}}
