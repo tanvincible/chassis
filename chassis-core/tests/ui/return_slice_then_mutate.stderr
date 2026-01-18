@@ -1,0 +1,11 @@
+error[E0502]: cannot borrow `storage` as mutable because it is also borrowed as immutable
+  --> tests/ui/return_slice_then_mutate.rs:20:5
+   |
+16 |     let slice = get_first_slice(&storage);
+   |                                 -------- immutable borrow occurs here
+...
+20 |     storage.insert(&vec![2.0; 128]).unwrap();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+21 |
+22 |     println!("{}", slice[0]);
+   |                    -------- immutable borrow later used here
