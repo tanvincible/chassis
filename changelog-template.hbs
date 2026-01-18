@@ -1,0 +1,37 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+{{#each releases}}
+  {{#if href}}
+    ## [{{title}}]({{href}}) - {{niceDate}}
+  {{else}}
+    ## {{title}} - {{niceDate}}
+  {{/if}}
+
+  {{#if summary}}
+    {{summary}}
+  {{/if}}
+
+  {{#commit-list commits heading="### Added" message="^feat: "}}
+    - {{subject}} ([{{shorthash}}]({{href}}))
+  {{/commit-list}}
+
+  {{#commit-list commits heading="### Fixed" message="^fix: "}}
+    - {{subject}} ([{{shorthash}}]({{href}}))
+  {{/commit-list}}
+
+  {{#commit-list commits heading="### Documentation" message="^docs: "}}
+    - {{subject}} ([{{shorthash}}]({{href}}))
+  {{/commit-list}}
+
+  {{#commit-list commits heading="### Infrastructure" message="^(build|chore|ci): "}}
+    - {{subject}} ([{{shorthash}}]({{href}}))
+  {{/commit-list}}
+
+  {{#commit-list commits heading="### Performance" message="^perf: "}}
+    - {{subject}} ([{{shorthash}}]({{href}}))
+  {{/commit-list}}
+
+{{/each}}
