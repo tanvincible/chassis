@@ -8,3 +8,9 @@ repository.workspace = true
 description = "The foundational engine for the Chassis vector storage primitive."
 
 [dependencies]
+anyhow = { workspace = true }
+fs2 = { workspace = true }
+memmap2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
