@@ -1,5 +1,5 @@
-use crate::hnsw::node::{Node, NodeHeader, NodeId, Offset};
-use crate::hnsw::HnswParams;
+use crate::hnsw::node::{Node, NodeId, Offset};
+use crate::hnsw::{HnswParams, compute_node_offset};
 use crate::Storage;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -78,19 +78,25 @@ impl HnswGraph {
     
     /// Writes node to disk at next available offset
     fn write_node(&mut self, node: &Node) -> Result<Offset> {
-        let offset = self.allocate_node_space(node.disk_size())?;
+        let record_params = self.params.to_record_params();
+        let record_size = record_params.record_size();
         
-        // Write node header
-        let _header = NodeHeader::new(node.id, node.layers.len() as u8);
+        // O(1) addressing: offset = graph_start + (node_id * record_size)
+        let offset = compute_node_offset(self.graph_start, node.id, record_size);
         
-        // TODO: Write header, neighbor counts, and neighbor offsets to mmap
+        // Convert to fixed-size record and serialize
+        let record = node.to_record(record_params);
+        let _bytes = record.to_bytes();
+        
+        // TODO: Write bytes to mmap at offset
         
         self.node_offsets.insert(node.id, offset);
         
         Ok(offset)
     }
-    
+
     /// Allocates space for a node in the graph zone
+    #[allow(dead_code)]
     fn allocate_node_space(&self, _size: usize) -> Result<Offset> {
         // Find next available offset
         let current_end = self.graph_start + self.total_graph_size();
@@ -98,6 +104,7 @@ impl HnswGraph {
     }
     
     /// Returns total size of graph data written so far
+    #[allow(dead_code)]
     fn total_graph_size(&self) -> u64 {
         // TODO: Track actual graph size
         0
