@@ -47,7 +47,7 @@
 
 mod distance;
 mod header;
-mod hnsw;
+pub mod hnsw;
 mod storage;
 
 pub use distance::{cosine_distance, euclidean_distance, DistanceMetric};

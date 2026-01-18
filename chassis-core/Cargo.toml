@@ -18,6 +18,10 @@ rand = { workspace = true }
 name = "storage"
 harness = false
 
+[[bench]]
+name = "hnsw_node"
+harness = false
+
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }

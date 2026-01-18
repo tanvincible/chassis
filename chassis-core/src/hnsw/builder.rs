@@ -30,7 +30,7 @@ impl HnswBuilder {
     /// Select layer for new node using exponential decay
     fn select_layer(&self) -> usize {
         let uniform: f32 = rand::random();
-        let level = (-uniform.ln() * self.params.ml).floor() as usize;
-        level
+        
+        (-uniform.ln() * self.params.ml).floor() as usize
     }
 }
