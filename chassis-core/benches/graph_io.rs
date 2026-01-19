@@ -1,61 +1,85 @@
-use chassis_core::hnsw::{HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
+//! Benchmarks for Graph I/O operations. 
+//!
+//! These benchmarks measure the performance of:
+//! - Graph header read/write
+//! - Node record read/write
+//! - Neighbor iteration from mmap
+
+use chassis_core::hnsw::{
+    compute_node_offset, HnswGraph, HnswParams, NodeId, NodeRecord, NodeRecordParams,
+};
 use chassis_core::Storage;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 use tempfile::NamedTempFile;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-fn setup_graph_with_nodes(node_count: usize) -> (NamedTempFile, HnswGraph) {
+/// Setup helper: creates an HnswGraph with nodes
+fn create_test_graph(node_count: usize, dims:  u32) -> (HnswGraph, NamedTempFile) {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
-    
-    let mut storage = Storage::open(path, 128).unwrap();
-    for i in 0..node_count {
-        let vector = vec![i as f32; 128];
-        storage.insert(&vector).unwrap();
+
+    let mut storage = Storage::open(path, dims).unwrap();
+
+    // Insert vectors first
+    let vector = vec![1.0f32; dims as usize];
+    for _ in 0.. node_count {
+        storage. insert(&vector).unwrap();
     }
     storage.commit().unwrap();
-    drop(storage);
-    
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
-    
-    let params = NodeRecordParams::default();
-    
-    // Create and write node records with varying neighbor counts
-    for node_id in 0..node_count as u64 {
-        let layer_count = (node_id % 4 + 1) as u8; // 1-4 layers
-        let mut record = NodeRecord::new(node_id, layer_count, params);
-        
-        // Fill layer 0 with some neighbors
-        let layer0_neighbors: Vec<u64> = (0..10.min(node_count as u64))
-            .map(|i| (node_id + i + 1) % node_count as u64)
-            .collect();
-        record.set_neighbors(0, &layer0_neighbors);
-        
-        // Fill layer 1 if exists
-        if layer_count > 1 {
-            let layer1_neighbors: Vec<u64> = (0..5.min(node_count as u64))
-                .map(|i| (node_id + i * 2 + 1) % node_count as u64)
-                .collect();
-            record.set_neighbors(1, &layer1_neighbors);
-        }
-        
-        // Fill layer 2 if exists
-        if layer_count > 2 {
-            let layer2_neighbors: Vec<u64> = (0..3.min(node_count as u64))
-                .map(|i| (node_id + i * 3 + 1) % node_count as u64)
-                .collect();
-            record.set_neighbors(2, &layer2_neighbors);
-        }
-        
-        graph.write_node_record(&record).unwrap();
+
+    // Create graph
+    let params = HnswParams::default();
+    let mut graph = HnswGraph:: open(storage, params).unwrap();
+
+    // Insert nodes with varying layers
+    for i in 0..node_count {
+        let layer = if i % 10 == 0 {
+            2
+        } else if i % 3 == 0 {
+            1
+        } else {
+            0
+        };
+        graph. insert(i as NodeId, layer).unwrap();
     }
-    
-    (temp_file, graph)
+
+    (graph, temp_file)
+}
+
+/// Setup helper: creates an HnswGraph with custom params
+fn create_test_graph_with_params(
+    node_count: usize,
+    dims: u32,
+    params: HnswParams,
+) -> (HnswGraph, NamedTempFile) {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+
+    let mut storage = Storage::open(path, dims).unwrap();
+
+    // Insert vectors first
+    let vector = vec![1.0f32; dims as usize];
+    for _ in 0.. node_count {
+        storage. insert(&vector).unwrap();
+    }
+    storage.commit().unwrap();
+
+    // Create graph with specified params
+    let mut graph = HnswGraph::open(storage, params).unwrap();
+
+    // Insert nodes with varying layers
+    for i in 0.. node_count {
+        let layer = if i % 10 == 0 {
+            2
+        } else if i % 3 == 0 {
+            1
+        } else {
+            0
+        };
+        graph. insert(i as NodeId, layer).unwrap();
+    }
+
+    (graph, temp_file)
 }
 
 // ============================================================================
@@ -63,45 +87,36 @@ fn setup_graph_with_nodes(node_count: usize) -> (NamedTempFile, HnswGraph) {
 // ============================================================================
 
 fn bench_graph_header_read(c: &mut Criterion) {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-    
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
-    
-    // Write some state
-    graph.insert(0, 2).unwrap();
-    graph.commit().unwrap();
-    
-    c.bench_function("graph_header_read", |b| {
+    let mut group = c.benchmark_group("graph_header");
+
+    // Create graph ONCE before benchmark loop
+    let (graph, _temp_file) = create_test_graph(100, 128);
+
+    group.bench_function("read", |b| {
         b.iter(|| {
-            // Read via the internal read method (by reopening)
-            let storage = Storage::open(path, 128).unwrap();
-            let graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
-            black_box(&graph.entry_point);
-            black_box(&graph.max_layer);
-        });
+            // Only benchmark the header read operation
+            black_box(graph.read_graph_header().unwrap())
+        })
     });
+
+    group.finish();
 }
 
 fn bench_graph_header_write(c: &mut Criterion) {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-    
-    c.bench_function("graph_header_write", |b| {
+    let mut group = c. benchmark_group("graph_header");
+
+    // Create graph ONCE - we'll write to the same graph repeatedly
+    // This is safe because write_graph_header just updates the header in place
+    let (mut graph, _temp_file) = create_test_graph(10, 128);
+
+    group.bench_function("write", |b| {
         b.iter(|| {
-            let storage = Storage::open(path, 128).unwrap();
-            let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
-            
-            // Modify state
-            graph.entry_point = Some(42);
-            graph.max_layer = 5;
-            
-            // Write header (part of commit)
-            graph.commit().unwrap();
-            black_box(&graph);
-        });
+            // Benchmark:  write header (overwrites same location each time)
+            black_box(graph.write_graph_header().unwrap())
+        })
     });
+
+    group.finish();
 }
 
 // ============================================================================
@@ -109,269 +124,261 @@ fn bench_graph_header_write(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_node_record_read(c: &mut Criterion) {
-    let (_temp_file, graph) = setup_graph_with_nodes(1000);
-    
-    c.bench_function("node_record_read", |b| {
+    let mut group = c.benchmark_group("node_record");
+
+    // Create graph with nodes ONCE
+    let (graph, _temp_file) = create_test_graph(1000, 128);
+
+    group.bench_function("read", |b| {
+        let mut node_id = 0u64;
         b.iter(|| {
-            for node_id in (0..1000).step_by(10) {
-                let record = graph.read_node_record(node_id).unwrap();
-                black_box(&record);
-            }
-        });
+            // Cycle through different nodes to avoid cache effects
+            let record = graph.read_node_record(node_id % 1000).unwrap();
+            node_id += 1;
+            black_box(record)
+        })
     });
+
+    group.bench_function("read_sequential", |b| {
+        b.iter(|| {
+            // Read multiple nodes sequentially (cache-friendly)
+            for i in 0..10 {
+                black_box(graph.read_node_record(i).unwrap());
+            }
+        })
+    });
+
+    group.bench_function("read_random", |b| {
+        // Pre-generate random indices
+        let indices: Vec<NodeId> = vec![42, 7, 999, 123, 456, 789, 0, 500, 250, 750];
+        let mut idx = 0;
+
+        b.iter(|| {
+            let node_id = indices[idx % indices.len()];
+            idx += 1;
+            black_box(graph.read_node_record(node_id).unwrap())
+        })
+    });
+
+    group.finish();
 }
 
 fn bench_node_record_write(c: &mut Criterion) {
+    let mut group = c.benchmark_group("node_record");
+
+    // Create graph ONCE with default params
+    let params = HnswParams::default();
+    let (mut graph, _temp_file) = create_test_graph_with_params(100, 128, params);
+
+    // Get the record params from the graph's params to ensure consistency
+    let record_params = params.to_record_params();
+
+    group.bench_function("write", |b| {
+        let mut node_id = 0u64;
+        b.iter(|| {
+            // Create record with MATCHING params from the graph
+            let mut record = NodeRecord::new(node_id % 100, 3, record_params);
+            record.set_neighbors(0, &[1, 2, 3, 4, 5, 6, 7, 8]);
+            record.set_neighbors(1, &[100, 200, 300]);
+            record.set_neighbors(2, &[1000]);
+            node_id += 1;
+            black_box(graph.write_node_record(&record).unwrap())
+        })
+    });
+
+    group.finish();
+}
+
+// ============================================================================
+// Neighbor Iteration Benchmarks (Zero-Allocation)
+// ============================================================================
+
+fn bench_neighbors_from_mmap(c: &mut Criterion) {
+    let mut group = c.benchmark_group("neighbors_mmap");
+
+    // Create graph with populated neighbors
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-    
+    let path = temp_file. path();
+
     let mut storage = Storage::open(path, 128).unwrap();
-    for i in 0..100 {
-        let vector = vec![i as f32; 128];
-        storage.insert(&vector).unwrap();
+    for _ in 0..100 {
+        storage.insert(&vec![1.0f32; 128]).unwrap();
     }
     storage.commit().unwrap();
-    drop(storage);
-    
-    c.bench_function("node_record_write", |b| {
-        b.iter(|| {
-            let storage = Storage::open(path, 128).unwrap();
-            let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
-            
-            let params = NodeRecordParams::default();
-            let mut record = NodeRecord::new(0, 3, params);
-            record.set_neighbors(0, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-            record.set_neighbors(1, &[11, 12, 13, 14, 15]);
-            record.set_neighbors(2, &[21, 22, 23]);
-            
-            graph.write_node_record(&record).unwrap();
-            black_box(&graph);
-        });
-    });
-}
 
-// ============================================================================
-// Neighbor Iteration Benchmarks
-// ============================================================================
+    let params = HnswParams::default();
+    let mut graph = HnswGraph::open(storage, params).unwrap();
 
-fn bench_neighbors_from_mmap_layer0(c: &mut Criterion) {
-    let (_temp_file, graph) = setup_graph_with_nodes(1000);
-    
-    c.bench_function("neighbors_from_mmap_layer0", |b| {
-        b.iter(|| {
-            for node_id in (0..100).step_by(10) {
-                let sum: u64 = graph
-                    .neighbors_iter_from_mmap(node_id, 0)
-                    .unwrap()
-                    .sum();
-                black_box(sum);
-            }
-        });
-    });
-}
-
-fn bench_neighbors_from_mmap_layer1(c: &mut Criterion) {
-    let (_temp_file, graph) = setup_graph_with_nodes(1000);
-    
-    c.bench_function("neighbors_from_mmap_layer1", |b| {
-        b.iter(|| {
-            for node_id in (0..100).step_by(10) {
-                let sum: u64 = graph
-                    .neighbors_iter_from_mmap(node_id, 1)
-                    .unwrap()
-                    .sum();
-                black_box(sum);
-            }
-        });
-    });
-}
-
-// Compare mmap iteration vs record deserialization
-fn bench_neighbors_comparison(c: &mut Criterion) {
-    let (_temp_file, graph) = setup_graph_with_nodes(1000);
-    let mut group = c.benchmark_group("neighbors_comparison");
-    
-    // Via mmap iterator (zero-allocation)
-    group.bench_function("mmap_iter", |b| {
-        b.iter(|| {
-            let sum: u64 = graph
-                .neighbors_iter_from_mmap(42, 0)
-                .unwrap()
-                .sum();
-            black_box(sum);
-        });
-    });
-    
-    // Via full record deserialization (allocates)
-    group.bench_function("full_record", |b| {
-        b.iter(|| {
-            let record = graph.read_node_record(42).unwrap();
-            let neighbors = record.get_neighbors(0);
-            let sum: u64 = neighbors.iter().sum();
-            black_box(sum);
-        });
-    });
-    
-    group.finish();
-}
-
-// ============================================================================
-// Random Access Pattern Benchmarks
-// ============================================================================
-
-fn bench_random_node_access(c: &mut Criterion) {
-    use rand::Rng;
-    
-    let (_temp_file, graph) = setup_graph_with_nodes(10000);
-    
-    // Generate random access pattern (simulates search)
-    let mut rng = rand::rng();
-    let random_nodes: Vec<u64> = (0..1000).map(|_| rng.random_range(0..10000)).collect();
-    
-    let mut group = c.benchmark_group("random_node_access");
-    
-    group.bench_function("read_records", |b| {
-        b.iter(|| {
-            for &node_id in random_nodes.iter().take(100) {
-                let record = graph.read_node_record(node_id).unwrap();
-                black_box(&record);
-            }
-        });
-    });
-    
-    group.bench_function("get_bytes", |b| {
-        b.iter(|| {
-            for &node_id in random_nodes.iter().take(100) {
-                let bytes = graph.get_node_bytes(node_id).unwrap();
-                black_box(bytes);
-            }
-        });
-    });
-    
-    group.bench_function("neighbors_iter", |b| {
-        b.iter(|| {
-            for &node_id in random_nodes.iter().take(100) {
-                let sum: u64 = graph
-                    .neighbors_iter_from_mmap(node_id, 0)
-                    .unwrap()
-                    .sum();
-                black_box(sum);
-            }
-        });
-    });
-    
-    group.finish();
-}
-
-// ============================================================================
-// Sequential Access Benchmarks
-// ============================================================================
-
-fn bench_sequential_access(c: &mut Criterion) {
-    let (_temp_file, graph) = setup_graph_with_nodes(1000);
-    
-    let mut group = c.benchmark_group("sequential_access");
-    
-    group.bench_function("read_100_records", |b| {
-        b.iter(|| {
-            for node_id in 0..100 {
-                let record = graph.read_node_record(node_id).unwrap();
-                black_box(&record);
-            }
-        });
-    });
-    
-    group.bench_function("iter_100_neighbors", |b| {
-        b.iter(|| {
-            for node_id in 0..100 {
-                let sum: u64 = graph
-                    .neighbors_iter_from_mmap(node_id, 0)
-                    .unwrap()
-                    .sum();
-                black_box(sum);
-            }
-        });
-    });
-    
-    group.finish();
-}
-
-// ============================================================================
-// Record Size Variations
-// ============================================================================
-
-fn bench_different_record_sizes(c: &mut Criterion) {
-    let mut group = c.benchmark_group("record_sizes");
-    
-    for (m, max_layers) in [(8, 4), (16, 8), (32, 16), (64, 16)] {
-        let params = HnswParams {
-            max_connections: m,
-            ef_construction: 200,
-            ef_search: 50,
-            ml: 1.0 / (m as f32).ln(),
-            max_layers,
-        };
-        
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        
-        let mut storage = Storage::open(path, 128).unwrap();
-        for i in 0..100 {
-            let vector = vec![i as f32; 128];
-            storage.insert(&vector).unwrap();
-        }
-        storage.commit().unwrap();
-        drop(storage);
-        
-        let storage = Storage::open(path, 128).unwrap();
-        let mut graph = HnswGraph::open(storage, params).unwrap();
-        
-        let record_params = params.to_record_params();
-        let mut record = NodeRecord::new(0, 2, record_params);
-        record.set_neighbors(0, &vec![1u64; m as usize]);
-        record.set_neighbors(1, &vec![2u64; m as usize / 2]);
-        graph.write_node_record(&record).unwrap();
-        
-        group.bench_with_input(
-            BenchmarkId::new("write", format!("m{}_l{}", m, max_layers)),
-            &graph,
-            |b, g| {
-                b.iter(|| {
-                    let mut rec = NodeRecord::new(1, 2, record_params);
-                    rec.set_neighbors(0, &vec![1u64; m as usize]);
-                    black_box(g);
-                    black_box(&rec);
-                });
-            },
-        );
-        
-        group.bench_with_input(
-            BenchmarkId::new("read", format!("m{}_l{}", m, max_layers)),
-            &graph,
-            |b, g| {
-                b.iter(|| {
-                    let record = g.read_node_record(0).unwrap();
-                    black_box(&record);
-                });
-            },
-        );
+    // Insert nodes and manually set neighbors for benchmark
+    for i in 0..100u64 {
+        let layer = if i < 10 { 2 } else { 0 };
+        graph.insert(i, layer).unwrap();
     }
-    
+
+    // Update node 0 with many neighbors for realistic benchmark
+    // Use the graph's record params to ensure consistency
+    let record_params = params.to_record_params();
+    let mut record = NodeRecord::new(0, 3, record_params);
+    record.set_neighbors(0, &(1..=20).collect::<Vec<_>>());
+    record.set_neighbors(1, &(100..=110).map(|x| x as u64).collect::<Vec<_>>());
+    record.set_neighbors(2, &[50, 51, 52]);
+    graph.write_node_record(&record).unwrap();
+
+    group.bench_function("iter_layer0", |b| {
+        b.iter(|| {
+            let sum:  u64 = graph.neighbors_iter_from_mmap(0, 0).unwrap().sum();
+            black_box(sum)
+        })
+    });
+
+    group.bench_function("iter_layer1", |b| {
+        b.iter(|| {
+            let sum: u64 = graph.neighbors_iter_from_mmap(0, 1).unwrap().sum();
+            black_box(sum)
+        })
+    });
+
+    group.bench_function("iter_layer2", |b| {
+        b.iter(|| {
+            let sum: u64 = graph. neighbors_iter_from_mmap(0, 2).unwrap().sum();
+            black_box(sum)
+        })
+    });
+
+    // Compare with NodeRecord-based iteration (to show the win)
+    group.bench_function("iter_via_record_layer0", |b| {
+        b.iter(|| {
+            let record = graph.read_node_record(0).unwrap();
+            let sum: u64 = record.neighbors_iter(0).sum();
+            black_box(sum)
+        })
+    });
+
     group.finish();
 }
+
+// ============================================================================
+// Get Node Bytes (Zero-Copy) Benchmarks
+// ============================================================================
+
+fn bench_get_node_bytes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("node_bytes");
+
+    let (graph, _temp_file) = create_test_graph(1000, 128);
+
+    group.bench_function("get_bytes", |b| {
+        let mut node_id = 0u64;
+        b.iter(|| {
+            let bytes = graph.get_node_bytes(node_id % 1000).unwrap();
+            node_id += 1;
+            black_box(bytes)
+        })
+    });
+
+    group.finish();
+}
+
+// ============================================================================
+// Offset Computation Benchmark
+// ============================================================================
+
+fn bench_offset_computation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("offset");
+
+    let params = NodeRecordParams::default();
+    let record_size = params.record_size();
+    let graph_start = 8192u64; // 2 pages
+
+    group.bench_function("compute_single", |b| {
+        let mut node_id = 0u64;
+        b.iter(|| {
+            let offset = compute_node_offset(graph_start, node_id, record_size);
+            node_id = node_id. wrapping_add(1);
+            black_box(offset)
+        })
+    });
+
+    group.bench_function("compute_batch_1000", |b| {
+        b.iter(|| {
+            for node_id in 0..1000u64 {
+                black_box(compute_node_offset(graph_start, node_id, record_size));
+            }
+        })
+    });
+
+    group.finish();
+}
+
+// ============================================================================
+// Simulated Search Pattern Benchmark
+// ============================================================================
+
+fn bench_search_pattern(c: &mut Criterion) {
+    let mut group = c.benchmark_group("search_pattern");
+
+    // Create a larger graph for realistic search simulation
+    let (graph, _temp_file) = create_test_graph(10000, 128);
+
+    // Simulate a search that visits ~100 nodes
+    let visit_pattern:  Vec<NodeId> = (0..100).map(|i| (i * 97) % 10000).collect();
+
+    group.bench_function("visit_100_nodes", |b| {
+        b.iter(|| {
+            for &node_id in &visit_pattern {
+                // Read node and iterate neighbors (typical search operation)
+                let record = graph. read_node_record(node_id).unwrap();
+                for neighbor in record.neighbors_iter(0) {
+                    black_box(neighbor);
+                }
+            }
+        })
+    });
+
+    // Compare with mmap-based iteration
+    group.bench_function("visit_100_nodes_mmap", |b| {
+        b.iter(|| {
+            for &node_id in &visit_pattern {
+                // Use mmap-based neighbor iteration
+                for neighbor in graph.neighbors_iter_from_mmap(node_id, 0).unwrap() {
+                    black_box(neighbor);
+                }
+            }
+        })
+    });
+
+    group.finish();
+}
+
+// ============================================================================
+// Criterion Groups
+// ============================================================================
 
 criterion_group!(
-    benches,
+    header_benches,
     bench_graph_header_read,
     bench_graph_header_write,
-    bench_node_record_read,
-    bench_node_record_write,
-    bench_neighbors_from_mmap_layer0,
-    bench_neighbors_from_mmap_layer1,
-    bench_neighbors_comparison,
-    bench_random_node_access,
-    bench_sequential_access,
-    bench_different_record_sizes,
 );
 
-criterion_main!(benches);
+criterion_group!(
+    node_record_benches,
+    bench_node_record_read,
+    bench_node_record_write,
+);
+
+criterion_group!(neighbor_benches, bench_neighbors_from_mmap,);
+
+criterion_group!(
+    utility_benches,
+    bench_get_node_bytes,
+    bench_offset_computation,
+);
+
+criterion_group!(integration_benches, bench_search_pattern,);
+
+criterion_main!(
+    header_benches,
+    node_record_benches,
+    neighbor_benches,
+    utility_benches,
+    integration_benches,
+);

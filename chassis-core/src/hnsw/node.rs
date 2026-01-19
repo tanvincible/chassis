@@ -63,8 +63,8 @@ pub struct NodeHeader {
 }
 
 impl NodeHeader {
-    /// Size of the header in bytes
-    pub const SIZE: usize = mem::size_of::<Self>();
+        /// Size of the header in bytes
+    pub const SIZE: usize = std::mem::size_of:: <Self>();
 
     /// Create a new node header
     #[must_use]
@@ -75,6 +75,62 @@ impl NodeHeader {
             flags:  0,
             _padding:  [0; 6],
         }
+    }
+
+    /// Read header from bytes with validation. 
+    ///
+    /// # Safety Guarantees
+    ///
+    /// This method is safe because it: 
+    /// - Checks slice length before reading
+    /// - Uses `read_unaligned` to handle arbitrary alignment
+    /// - Validates header fields for sanity
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if: 
+    /// - Slice is too small
+    /// - `layer_count` is 0 (invalid)
+    /// - `layer_count` exceeds reasonable maximum (255)
+    /// - `node_id` is `INVALID_NODE_ID` (reserved sentinel)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
+        if bytes.len() < Self::SIZE {
+            return Err("Buffer too small for NodeHeader");
+        }
+
+        // Use read_unaligned for safety - don't assume alignment
+        let header = unsafe {
+            std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>())
+        };
+
+        // Validate fields
+        if header.layer_count == 0 {
+            return Err("Invalid NodeHeader:  layer_count cannot be 0");
+        }
+
+        // node_id == INVALID_NODE_ID is reserved for empty slots
+        // A valid header should never have this value
+        if header.node_id == INVALID_NODE_ID {
+            return Err("Invalid NodeHeader: node_id is INVALID_NODE_ID sentinel");
+        }
+
+        Ok(header)
+    }
+
+    /// Read header from bytes WITHOUT validation (for performance-critical paths).
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure:
+    /// - `bytes.len() >= NodeHeader::SIZE`
+    /// - The bytes represent a valid, previously-written header
+    ///
+    /// Use this only when reading from known-good locations (e.g., after
+    /// successful write or when iterating over validated node records).
+    #[inline]
+    pub unsafe fn from_bytes_unchecked(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for NodeHeader");
+        unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>()) }
     }
 
     /// Check if the node is marked as deleted
@@ -393,23 +449,20 @@ impl NodeRecord {
         bytes
     }
 
-    /// Deserialize a node record from bytes.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure the byte slice is at least `params.record_size()` bytes. 
+    /// Deserialize a node record from bytes. 
     ///
     /// # Errors
     ///
-    /// Returns an error if the byte slice is too small.
+    /// Returns an error if:
+    /// - Byte slice is too small
+    /// - Header validation fails
     pub fn from_bytes(bytes: &[u8], params: NodeRecordParams) -> Result<Self, &'static str> {
         let expected_size = params.record_size();
         if bytes.len() < expected_size {
             return Err("Byte slice too small for node record");
         }
 
-        // Read header
-        let header = unsafe { *(bytes.as_ptr().cast::<NodeHeader>()) };
+        let header = NodeHeader::from_bytes(bytes)?;
 
         // Read neighbors
         let total_slots = params.total_max_neighbors();
@@ -417,6 +470,9 @@ impl NodeRecord {
 
         let mut offset = NodeHeader::SIZE;
         for _ in 0..total_slots {
+            if offset + 8 > bytes.len() {
+                return Err("Byte slice too small for neighbor data");
+            }
             let neighbor = u64::from_le_bytes(
                 bytes[offset..offset + 8]
                     .try_into()
