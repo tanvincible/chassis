@@ -38,22 +38,22 @@ pub struct GraphHeader {
     version: u32,
     
     /// Entry point node ID (INVALID_NODE_ID if empty)
-    entry_point: NodeId,
+    pub entry_point: NodeId,
     
     /// Highest layer in graph
-    max_layer: u32,
+    pub max_layer: u32,
     
     /// Number of nodes written
-    node_count: u64,
+    pub node_count: u64,
     
     /// Max connections per layer
-    m: u16,
+    pub m: u16,
     
     /// Max connections at layer 0
-    m0: u16,
+    pub m0: u16,
     
     /// Maximum layers
-    max_layers: u8,
+    pub max_layers: u8,
     
     /// Padding to 64 bytes
     _reserved: [u8; 31],
@@ -159,7 +159,7 @@ pub struct HnswGraph {
     graph_start: Offset,
     
     /// Entry point node ID (highest layer node)
-    pub(crate) entry_point: Option<NodeId>,
+    pub entry_point: Option<NodeId>,
     
     /// Maximum layer in the graph
     pub max_layer: usize,
