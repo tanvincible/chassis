@@ -46,7 +46,6 @@ fn bench_record_serialization(c: &mut Criterion) {
     let params = NodeRecordParams::new(16, 32, 8);
     let mut record = NodeRecord::new(0, 4, params);
 
-    // Fill with some data
     record.set_neighbors(0, &(1..=20).collect::<Vec<_>>());
     record.set_neighbors(1, &[100, 200, 300]);
     record.set_neighbors(2, &[1000, 2000]);

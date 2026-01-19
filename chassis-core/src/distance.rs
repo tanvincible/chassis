@@ -18,7 +18,6 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
         }
     }
     
-    // Fallback scalar implementation
     euclidean_distance_scalar(a, b)
 }
 

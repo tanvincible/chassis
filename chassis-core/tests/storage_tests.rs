@@ -248,7 +248,7 @@ fn test_raw_fsync_cost() {
     println!("Raw fsync took: {:?}", elapsed);
 }
 
-// ===== Zero-Copy Vector Slice Tests =====
+// Zero-copy vector slice
 
 #[test]
 fn test_get_vector_slice_returns_correct_data() {

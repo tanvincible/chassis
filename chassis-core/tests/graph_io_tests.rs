@@ -4,9 +4,7 @@ use chassis_core::hnsw::{
 use chassis_core::Storage;
 use tempfile::NamedTempFile;
 
-// ============================================================================
-// Header Persistence Tests
-// ============================================================================
+// Header persistence
 
 #[test]
 fn test_graph_header_roundtrip() {
@@ -73,9 +71,7 @@ fn test_graph_header_magic_validation() {
     assert!(!corrupted.is_valid());
 }
 
-// ============================================================================
-// Node Record I/O Tests
-// ============================================================================
+// Node record I/O
 
 #[test]
 fn test_write_and_read_node_record() {
@@ -184,9 +180,7 @@ fn test_node_record_update_in_place() {
     assert_eq!(read_record.get_neighbors(1), vec![100, 200]);
 }
 
-// ============================================================================
-// Neighbor Access Tests
-// ============================================================================
+// Neighbor access
 
 #[test]
 fn test_neighbors_iter_from_mmap() {
@@ -261,9 +255,7 @@ fn test_neighbors_iter_out_of_bounds_layer() {
     assert!(neighbors.is_empty());
 }
 
-// ============================================================================
 // Integration Tests
-// ============================================================================
 
 #[test]
 fn test_graph_with_multiple_layers() {

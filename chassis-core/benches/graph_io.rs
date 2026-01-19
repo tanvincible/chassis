@@ -1,9 +1,6 @@
-//! Benchmarks for Graph I/O operations. 
+//! Benchmarks for HNSW graph I/O and traversal.
 //!
-//! These benchmarks measure the performance of:
-//! - Graph header read/write
-//! - Node record read/write
-//! - Neighbor iteration from mmap
+//! Focus: persistence overhead, mmap-based access, and allocation-free hot paths.
 
 use chassis_core::hnsw::{
     compute_node_offset, HnswGraph, HnswParams, NodeId, NodeRecord, NodeRecordParams,
@@ -20,18 +17,15 @@ fn create_test_graph(node_count: usize, dims:  u32) -> (HnswGraph, NamedTempFile
 
     let mut storage = Storage::open(path, dims).unwrap();
 
-    // Insert vectors first
     let vector = vec![1.0f32; dims as usize];
     for _ in 0.. node_count {
         storage. insert(&vector).unwrap();
     }
     storage.commit().unwrap();
 
-    // Create graph
     let params = HnswParams::default();
     let mut graph = HnswGraph:: open(storage, params).unwrap();
 
-    // Insert nodes with varying layers
     for i in 0..node_count {
         let layer = if i % 10 == 0 {
             2
@@ -57,17 +51,14 @@ fn create_test_graph_with_params(
 
     let mut storage = Storage::open(path, dims).unwrap();
 
-    // Insert vectors first
     let vector = vec![1.0f32; dims as usize];
     for _ in 0.. node_count {
         storage. insert(&vector).unwrap();
     }
     storage.commit().unwrap();
 
-    // Create graph with specified params
     let mut graph = HnswGraph::open(storage, params).unwrap();
 
-    // Insert nodes with varying layers
     for i in 0.. node_count {
         let layer = if i % 10 == 0 {
             2
@@ -82,19 +73,15 @@ fn create_test_graph_with_params(
     (graph, temp_file)
 }
 
-// ============================================================================
-// Graph Header Benchmarks
-// ============================================================================
+// Graph header I/O (persistence overhead)
 
 fn bench_graph_header_read(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_header");
 
-    // Create graph ONCE before benchmark loop
     let (graph, _temp_file) = create_test_graph(100, 128);
 
     group.bench_function("read", |b| {
         b.iter(|| {
-            // Only benchmark the header read operation
             black_box(graph.read_graph_header().unwrap())
         })
     });
@@ -105,7 +92,6 @@ fn bench_graph_header_read(c: &mut Criterion) {
 fn bench_graph_header_write(c: &mut Criterion) {
     let mut group = c. benchmark_group("graph_header");
 
-    // Create graph ONCE - we'll write to the same graph repeatedly
     // This is safe because write_graph_header just updates the header in place
     let (mut graph, _temp_file) = create_test_graph(10, 128);
 
@@ -119,14 +105,11 @@ fn bench_graph_header_write(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Node Record I/O Benchmarks
-// ============================================================================
+// Node record I/O (fixed-size mmap records)
 
 fn bench_node_record_read(c: &mut Criterion) {
     let mut group = c.benchmark_group("node_record");
 
-    // Create graph with nodes ONCE
     let (graph, _temp_file) = create_test_graph(1000, 128);
 
     group.bench_function("read", |b| {
@@ -141,7 +124,6 @@ fn bench_node_record_read(c: &mut Criterion) {
 
     group.bench_function("read_sequential", |b| {
         b.iter(|| {
-            // Read multiple nodes sequentially (cache-friendly)
             for i in 0..10 {
                 black_box(graph.read_node_record(i).unwrap());
             }
@@ -149,7 +131,6 @@ fn bench_node_record_read(c: &mut Criterion) {
     });
 
     group.bench_function("read_random", |b| {
-        // Pre-generate random indices
         let indices: Vec<NodeId> = vec![42, 7, 999, 123, 456, 789, 0, 500, 250, 750];
         let mut idx = 0;
 
@@ -166,17 +147,14 @@ fn bench_node_record_read(c: &mut Criterion) {
 fn bench_node_record_write(c: &mut Criterion) {
     let mut group = c.benchmark_group("node_record");
 
-    // Create graph ONCE with default params
     let params = HnswParams::default();
     let (mut graph, _temp_file) = create_test_graph_with_params(100, 128, params);
 
-    // Get the record params from the graph's params to ensure consistency
     let record_params = params.to_record_params();
 
     group.bench_function("write", |b| {
         let mut node_id = 0u64;
         b.iter(|| {
-            // Create record with MATCHING params from the graph
             let mut record = NodeRecord::new(node_id % 100, 3, record_params);
             record.set_neighbors(0, &[1, 2, 3, 4, 5, 6, 7, 8]);
             record.set_neighbors(1, &[100, 200, 300]);
@@ -189,14 +167,11 @@ fn bench_node_record_write(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Neighbor Iteration Benchmarks (Zero-Allocation)
-// ============================================================================
+// Neighbor iteration: mmap vs NodeRecord (allocation regression guard)
 
 fn bench_neighbors_from_mmap(c: &mut Criterion) {
     let mut group = c.benchmark_group("neighbors_mmap");
 
-    // Create graph with populated neighbors
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file. path();
 
@@ -209,14 +184,11 @@ fn bench_neighbors_from_mmap(c: &mut Criterion) {
     let params = HnswParams::default();
     let mut graph = HnswGraph::open(storage, params).unwrap();
 
-    // Insert nodes and manually set neighbors for benchmark
     for i in 0..100u64 {
         let layer = if i < 10 { 2 } else { 0 };
         graph.insert(i, layer).unwrap();
     }
 
-    // Update node 0 with many neighbors for realistic benchmark
-    // Use the graph's record params to ensure consistency
     let record_params = params.to_record_params();
     let mut record = NodeRecord::new(0, 3, record_params);
     record.set_neighbors(0, &(1..=20).collect::<Vec<_>>());
@@ -245,7 +217,6 @@ fn bench_neighbors_from_mmap(c: &mut Criterion) {
         })
     });
 
-    // Compare with NodeRecord-based iteration (to show the win)
     group.bench_function("iter_via_record_layer0", |b| {
         b.iter(|| {
             let record = graph.read_node_record(0).unwrap();
@@ -257,9 +228,7 @@ fn bench_neighbors_from_mmap(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Get Node Bytes (Zero-Copy) Benchmarks
-// ============================================================================
+// Zero-copy access to node bytes
 
 fn bench_get_node_bytes(c: &mut Criterion) {
     let mut group = c.benchmark_group("node_bytes");
@@ -278,9 +247,7 @@ fn bench_get_node_bytes(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Offset Computation Benchmark
-// ============================================================================
+// O(1) node offset computation
 
 fn bench_offset_computation(c: &mut Criterion) {
     let mut group = c.benchmark_group("offset");
@@ -309,23 +276,18 @@ fn bench_offset_computation(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Simulated Search Pattern Benchmark
-// ============================================================================
+// Search-like traversal (hot-path behavior)
 
 fn bench_search_pattern(c: &mut Criterion) {
     let mut group = c.benchmark_group("search_pattern");
 
-    // Create a larger graph for realistic search simulation
     let (graph, _temp_file) = create_test_graph(10000, 128);
 
-    // Simulate a search that visits ~100 nodes
     let visit_pattern:  Vec<NodeId> = (0..100).map(|i| (i * 97) % 10000).collect();
 
     group.bench_function("visit_100_nodes", |b| {
         b.iter(|| {
             for &node_id in &visit_pattern {
-                // Read node and iterate neighbors (typical search operation)
                 let record = graph. read_node_record(node_id).unwrap();
                 for neighbor in record.neighbors_iter(0) {
                     black_box(neighbor);
@@ -334,11 +296,9 @@ fn bench_search_pattern(c: &mut Criterion) {
         })
     });
 
-    // Compare with mmap-based iteration
     group.bench_function("visit_100_nodes_mmap", |b| {
         b.iter(|| {
             for &node_id in &visit_pattern {
-                // Use mmap-based neighbor iteration
                 for neighbor in graph.neighbors_iter_from_mmap(node_id, 0).unwrap() {
                     black_box(neighbor);
                 }
@@ -348,10 +308,6 @@ fn bench_search_pattern(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Criterion Groups
-// ============================================================================
 
 criterion_group!(
     header_benches,
