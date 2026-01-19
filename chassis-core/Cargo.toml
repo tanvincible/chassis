@@ -22,6 +22,10 @@ harness = false
 name = "hnsw_node"
 harness = false
 
+[[bench]]
+name = "graph_io"
+harness = false
+
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }

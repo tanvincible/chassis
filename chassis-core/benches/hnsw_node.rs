@@ -1,7 +1,5 @@
-use chassis_core::hnsw::node::{
-    compute_node_offset, Node, NodeRecord, NodeRecordParams,
-};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use chassis_core::hnsw::node::{Node, NodeRecord, NodeRecordParams, compute_node_offset};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
 fn bench_record_size_calculation(c: &mut Criterion) {
@@ -46,7 +44,6 @@ fn bench_record_serialization(c: &mut Criterion) {
     let params = NodeRecordParams::new(16, 32, 8);
     let mut record = NodeRecord::new(0, 4, params);
 
-    // Fill with some data
     record.set_neighbors(0, &(1..=20).collect::<Vec<_>>());
     record.set_neighbors(1, &[100, 200, 300]);
     record.set_neighbors(2, &[1000, 2000]);
@@ -89,17 +86,17 @@ fn bench_neighbor_access(c: &mut Criterion) {
         });
     });
 
-    // Add to the bench_neighbor_access function, after the existing benchmarks: 
+    // Add to the bench_neighbor_access function, after the existing benchmarks:
 
     group.bench_function("neighbors_iter_layer0", |b| {
         b.iter(|| {
-            let sum:  u64 = record.neighbors_iter(0).sum();
+            let sum: u64 = record.neighbors_iter(0).sum();
             black_box(sum)
         });
     });
-    
+
     group.bench_function("neighbors_iter_layer1", |b| {
-        b. iter(|| {
+        b.iter(|| {
             let sum: u64 = record.neighbors_iter(1).sum();
             black_box(sum)
         });

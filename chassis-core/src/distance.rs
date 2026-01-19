@@ -10,15 +10,14 @@ pub enum DistanceMetric {
 #[inline]
 pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
-    
+
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
             return unsafe { euclidean_distance_avx2(a, b) };
         }
     }
-    
-    // Fallback scalar implementation
+
     euclidean_distance_scalar(a, b)
 }
 
@@ -26,12 +25,12 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 #[inline]
 fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {
     let mut sum = 0.0_f32;
-    
+
     for i in 0..a.len() {
         let diff = a[i] - b[i];
         sum += diff * diff;
     }
-    
+
     sum.sqrt()
 }
 
@@ -58,7 +57,7 @@ unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
         let mut result = [0.0f32; 8];
         _mm256_storeu_ps(result.as_mut_ptr(), sum);
 
-        let mut total = result. iter().sum::<f32>();
+        let mut total = result.iter().sum::<f32>();
 
         // Handle remaining elements
         for i in (chunks * 8)..a.len() {
@@ -74,34 +73,34 @@ unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
 #[inline]
 pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
-    
+
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    
+
     1.0 - (dot / (norm_a * norm_b))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_euclidean_distance() {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0, 6.0];
-        
+
         let dist = euclidean_distance(&a, &b);
         let expected = ((3.0_f32).powi(2) * 3.0).sqrt();
-        
+
         assert!((dist - expected).abs() < 1e-6);
     }
-    
+
     #[test]
     fn test_cosine_distance() {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![0.0, 1.0, 0.0];
-        
+
         let dist = cosine_distance(&a, &b);
         assert!((dist - 1.0).abs() < 1e-6); // Orthogonal vectors
     }

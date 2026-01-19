@@ -1,4 +1,4 @@
-//! Fixed-width HNSW node record layout for O(1) addressing. 
+//! Fixed-width HNSW node record layout for O(1) addressing.
 //!
 //! # Design Principles
 //!
@@ -26,15 +26,15 @@ pub type NodeId = u64;
 pub const INVALID_NODE_ID: NodeId = NodeId::MAX;
 
 /// Default maximum connections per layer (M parameter)
-pub const DEFAULT_M:  u16 = 16;
+pub const DEFAULT_M: u16 = 16;
 
 /// Default maximum layers in the graph
 pub const DEFAULT_MAX_LAYERS: u8 = 16;
 
 /// Maximum connections at layer 0 (typically 2*M)
-pub const DEFAULT_M0:  u16 = DEFAULT_M * 2;
+pub const DEFAULT_M0: u16 = DEFAULT_M * 2;
 
-/// Fixed-size on-disk node header. 
+/// Fixed-size on-disk node header.
 ///
 /// # Layout (16 bytes, 8-byte aligned)
 ///
@@ -53,7 +53,7 @@ pub struct NodeHeader {
     pub node_id: NodeId,
 
     /// Number of layers this node participates in (1 = layer 0 only)
-    pub layer_count:  u8,
+    pub layer_count: u8,
 
     /// Flags for future extensions (deleted flag, etc.)
     pub flags: u8,
@@ -64,17 +64,66 @@ pub struct NodeHeader {
 
 impl NodeHeader {
     /// Size of the header in bytes
-    pub const SIZE: usize = mem::size_of::<Self>();
+    pub const SIZE: usize = std::mem::size_of::<Self>();
 
     /// Create a new node header
     #[must_use]
     pub const fn new(node_id: NodeId, layer_count: u8) -> Self {
-        Self {
-            node_id,
-            layer_count,
-            flags:  0,
-            _padding:  [0; 6],
+        Self { node_id, layer_count, flags: 0, _padding: [0; 6] }
+    }
+
+    /// Read header from bytes with validation.
+    ///
+    /// # Safety Guarantees
+    ///
+    /// This method is safe because it:
+    /// - Checks slice length before reading
+    /// - Uses `read_unaligned` to handle arbitrary alignment
+    /// - Validates header fields for sanity
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Slice is too small
+    /// - `layer_count` is 0 (invalid)
+    /// - `layer_count` exceeds reasonable maximum (255)
+    /// - `node_id` is `INVALID_NODE_ID` (reserved sentinel)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
+        if bytes.len() < Self::SIZE {
+            return Err("Buffer too small for NodeHeader");
         }
+
+        // Use read_unaligned for safety - don't assume alignment
+        let header = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>()) };
+
+        // Validate fields
+        if header.layer_count == 0 {
+            return Err("Invalid NodeHeader:  layer_count cannot be 0");
+        }
+
+        // node_id == INVALID_NODE_ID is reserved for empty slots
+        // A valid header should never have this value
+        if header.node_id == INVALID_NODE_ID {
+            return Err("Invalid NodeHeader: node_id is INVALID_NODE_ID sentinel");
+        }
+
+        Ok(header)
+    }
+
+    /// Read header from bytes WITHOUT validation (for performance-critical paths).
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure:
+    /// - `bytes.len() >= NodeHeader::SIZE`
+    /// - The bytes represent a valid, previously-written header
+    ///
+    /// Use this only when reading from known-good locations (e.g., after
+    /// successful write or when iterating over validated node records).
+    #[inline]
+    pub unsafe fn from_bytes_unchecked(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for NodeHeader");
+        unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>()) }
     }
 
     /// Check if the node is marked as deleted
@@ -89,7 +138,7 @@ impl NodeHeader {
     }
 }
 
-/// Parameters that determine the fixed record size. 
+/// Parameters that determine the fixed record size.
 ///
 /// These parameters are set at index creation and cannot be changed
 /// without rebuilding the index.
@@ -107,11 +156,7 @@ pub struct NodeRecordParams {
 
 impl Default for NodeRecordParams {
     fn default() -> Self {
-        Self {
-            m: DEFAULT_M,
-            m0: DEFAULT_M0,
-            max_layers: DEFAULT_MAX_LAYERS,
-        }
+        Self { m: DEFAULT_M, m0: DEFAULT_M0, max_layers: DEFAULT_MAX_LAYERS }
     }
 }
 
@@ -122,7 +167,7 @@ impl NodeRecordParams {
         Self { m, m0, max_layers }
     }
 
-    /// Calculate the fixed record size for these parameters. 
+    /// Calculate the fixed record size for these parameters.
     ///
     /// # Layout
     ///
@@ -131,7 +176,7 @@ impl NodeRecordParams {
     /// [Layer 0 neighbors: m0 * 8 bytes]
     /// [Layer 1 neighbors: m * 8 bytes]
     /// [Layer 2 neighbors: m * 8 bytes]
-    /// ... 
+    /// ...
     /// [Layer (max_layers-1) neighbors: m * 8 bytes]
     /// ```
     ///
@@ -145,7 +190,7 @@ impl NodeRecordParams {
 
         // Layers 1 to max_layers-1 each have m connections
         let upper_layers_size = if self.max_layers > 1 {
-            (self.max_layers as usize - 1) * self.m as usize * mem:: size_of::<NodeId>()
+            (self.max_layers as usize - 1) * self.m as usize * mem::size_of::<NodeId>()
         } else {
             0
         };
@@ -180,33 +225,26 @@ impl NodeRecordParams {
         Some(offset)
     }
 
-    /// Get the maximum number of neighbors for a given layer. 
+    /// Get the maximum number of neighbors for a given layer.
     #[must_use]
     pub const fn max_neighbors(&self, layer: usize) -> usize {
-        if layer == 0 {
-            self. m0 as usize
-        } else {
-            self.m as usize
-        }
+        if layer == 0 { self.m0 as usize } else { self.m as usize }
     }
 
     /// Calculate the total maximum neighbors across all layers.
     #[must_use]
     pub const fn total_max_neighbors(&self) -> usize {
         let layer0 = self.m0 as usize;
-        let upper = if self.max_layers > 1 {
-            (self. max_layers as usize - 1) * self.m as usize
-        } else {
-            0
-        };
+        let upper =
+            if self.max_layers > 1 { (self.max_layers as usize - 1) * self.m as usize } else { 0 };
         layer0 + upper
     }
 }
 
 /// Fixed-size node record that can be directly mapped to/from disk.
 ///
-/// This struct represents the complete on-disk format of a node. 
-/// The size is determined by `NodeRecordParams` at index creation. 
+/// This struct represents the complete on-disk format of a node.
+/// The size is determined by `NodeRecordParams` at index creation.
 ///
 /// # Addressing Formula
 ///
@@ -214,14 +252,14 @@ impl NodeRecordParams {
 /// node_offset = graph_start + (node_id * NODE_RECORD_SIZE)
 /// ```
 ///
-/// No hash maps or indirection required. 
+/// No hash maps or indirection required.
 #[derive(Debug)]
 pub struct NodeRecord {
     /// Node header
     pub header: NodeHeader,
 
     /// Neighbor IDs for all layers (flattened).
-    /// Layout: [layer0_neighbors... ][layer1_neighbors...][layer2_neighbors...]... 
+    /// Layout: [layer0_neighbors... ][layer1_neighbors...][layer2_neighbors...]...
     /// Unused slots contain `INVALID_NODE_ID`.
     pub neighbors: Vec<NodeId>,
 
@@ -230,17 +268,13 @@ pub struct NodeRecord {
 }
 
 impl NodeRecord {
-    /// Create a new empty node record. 
+    /// Create a new empty node record.
     #[must_use]
-    pub fn new(node_id: NodeId, layer_count: u8, params:  NodeRecordParams) -> Self {
+    pub fn new(node_id: NodeId, layer_count: u8, params: NodeRecordParams) -> Self {
         let total_slots = params.total_max_neighbors();
         let neighbors = vec![INVALID_NODE_ID; total_slots];
 
-        Self {
-            header: NodeHeader:: new(node_id, layer_count),
-            neighbors,
-            params,
-        }
+        Self { header: NodeHeader::new(node_id, layer_count), neighbors, params }
     }
 
     /// Get the fixed record size.
@@ -253,7 +287,7 @@ impl NodeRecord {
     ///
     /// Returns only valid neighbors (excludes `INVALID_NODE_ID`).
     #[must_use]
-    pub fn get_neighbors(&self, layer:  usize) -> Vec<NodeId> {
+    pub fn get_neighbors(&self, layer: usize) -> Vec<NodeId> {
         if layer >= self.header.layer_count as usize {
             return Vec::new();
         }
@@ -267,7 +301,7 @@ impl NodeRecord {
     }
 
     // In chassis-core/src/hnsw/node.rs, inside impl NodeRecord, after get_neighbors()
-    
+
     /// Iterator over valid neighbors at a specific layer (zero-allocation).
     ///
     /// This is more efficient than `get_neighbors()` in hot paths like HNSW search
@@ -278,13 +312,10 @@ impl NodeRecord {
         let (start, count) = if layer >= self.header.layer_count as usize {
             (0, 0) // Empty iterator for out-of-bounds layer
         } else {
-            self. layer_slice_bounds(layer)
+            self.layer_slice_bounds(layer)
         };
-    
-        self.neighbors[start..start + count]
-            .iter()
-            .copied()
-            .filter(|&id| id != INVALID_NODE_ID)
+
+        self.neighbors[start..start + count].iter().copied().filter(|&id| id != INVALID_NODE_ID)
     }
     /// Set neighbors for a specific layer.
     ///
@@ -300,12 +331,7 @@ impl NodeRecord {
         );
 
         let max = self.params.max_neighbors(layer);
-        assert!(
-            neighbors.len() <= max,
-            "Too many neighbors:  {} > {}",
-            neighbors.len(),
-            max
-        );
+        assert!(neighbors.len() <= max, "Too many neighbors:  {} > {}", neighbors.len(), max);
 
         let (start, count) = self.layer_slice_bounds(layer);
 
@@ -349,10 +375,7 @@ impl NodeRecord {
         }
 
         let (start, count) = self.layer_slice_bounds(layer);
-        self.neighbors[start..start + count]
-            .iter()
-            .filter(|&&id| id != INVALID_NODE_ID)
-            .count()
+        self.neighbors[start..start + count].iter().filter(|&&id| id != INVALID_NODE_ID).count()
     }
 
     /// Get the slice bounds for a layer's neighbors.
@@ -375,7 +398,7 @@ impl NodeRecord {
         let mut bytes = vec![0u8; size];
 
         // Write header
-        let header_bytes:  &[u8] = unsafe {
+        let header_bytes: &[u8] = unsafe {
             std::slice::from_raw_parts(
                 (&self.header as *const NodeHeader).cast::<u8>(),
                 NodeHeader::SIZE,
@@ -395,21 +418,18 @@ impl NodeRecord {
 
     /// Deserialize a node record from bytes.
     ///
-    /// # Safety
-    ///
-    /// The caller must ensure the byte slice is at least `params.record_size()` bytes. 
-    ///
     /// # Errors
     ///
-    /// Returns an error if the byte slice is too small.
+    /// Returns an error if:
+    /// - Byte slice is too small
+    /// - Header validation fails
     pub fn from_bytes(bytes: &[u8], params: NodeRecordParams) -> Result<Self, &'static str> {
         let expected_size = params.record_size();
         if bytes.len() < expected_size {
             return Err("Byte slice too small for node record");
         }
 
-        // Read header
-        let header = unsafe { *(bytes.as_ptr().cast::<NodeHeader>()) };
+        let header = NodeHeader::from_bytes(bytes)?;
 
         // Read neighbors
         let total_slots = params.total_max_neighbors();
@@ -417,20 +437,17 @@ impl NodeRecord {
 
         let mut offset = NodeHeader::SIZE;
         for _ in 0..total_slots {
+            if offset + 8 > bytes.len() {
+                return Err("Byte slice too small for neighbor data");
+            }
             let neighbor = u64::from_le_bytes(
-                bytes[offset..offset + 8]
-                    .try_into()
-                    .map_err(|_| "Invalid neighbor bytes")?,
+                bytes[offset..offset + 8].try_into().map_err(|_| "Invalid neighbor bytes")?,
             );
-            neighbors. push(neighbor);
+            neighbors.push(neighbor);
             offset += 8;
         }
 
-        Ok(Self {
-            header,
-            neighbors,
-            params,
-        })
+        Ok(Self { header, neighbors, params })
     }
 }
 
@@ -454,11 +471,7 @@ impl Node {
     /// Create a new empty node.
     #[must_use]
     pub fn new(id: NodeId, layer_count: usize) -> Self {
-        Self {
-            id,
-            offset: 0,
-            layers:  vec![Vec::new(); layer_count],
-        }
+        Self { id, offset: 0, layers: vec![Vec::new(); layer_count] }
     }
 
     /// Returns the highest layer this node belongs to.
@@ -486,18 +499,14 @@ impl Node {
         let mut layers = Vec::with_capacity(layer_count);
 
         for layer in 0..layer_count {
-            layers.push(record. get_neighbors(layer));
+            layers.push(record.get_neighbors(layer));
         }
 
-        Self {
-            id: record.header.node_id,
-            offset: 0,
-            layers,
-        }
+        Self { id: record.header.node_id, offset: 0, layers }
     }
 }
 
-/// Compute the offset of a node given its ID. 
+/// Compute the offset of a node given its ID.
 ///
 /// # Formula
 ///
@@ -506,7 +515,11 @@ impl Node {
 /// ```
 #[inline]
 #[must_use]
-pub const fn compute_node_offset(graph_start: Offset, node_id: NodeId, record_size: usize) -> Offset {
+pub const fn compute_node_offset(
+    graph_start: Offset,
+    node_id: NodeId,
+    record_size: usize,
+) -> Offset {
     graph_start + (node_id * record_size as u64)
 }
 
@@ -521,11 +534,7 @@ mod tests {
 
     #[test]
     fn test_node_header_alignment() {
-        assert_eq!(
-            std::mem::align_of:: <NodeHeader>(),
-            8,
-            "NodeHeader must be 8-byte aligned"
-        );
+        assert_eq!(std::mem::align_of::<NodeHeader>(), 8, "NodeHeader must be 8-byte aligned");
     }
 
     #[test]
@@ -573,7 +582,7 @@ mod tests {
         assert_eq!(params.layer_offset(0), Some(16));
 
         // Layer 1 starts after header + layer0
-        assert_eq!(params. layer_offset(1), Some(16 + 32 * 8));
+        assert_eq!(params.layer_offset(1), Some(16 + 32 * 8));
 
         // Layer 2 starts after header + layer0 + layer1
         assert_eq!(params.layer_offset(2), Some(16 + 32 * 8 + 16 * 8));
@@ -600,7 +609,7 @@ mod tests {
         let params = NodeRecordParams::new(16, 32, 4);
 
         // 32 (layer 0) + 3 * 16 (layers 1-3) = 80
-        assert_eq!(params. total_max_neighbors(), 80);
+        assert_eq!(params.total_max_neighbors(), 80);
     }
 
     #[test]
@@ -622,15 +631,15 @@ mod tests {
         let mut record = NodeRecord::new(0, 3, params);
 
         // Set layer 0 neighbors
-        record. set_neighbors(0, &[1, 2, 3, 4, 5]);
+        record.set_neighbors(0, &[1, 2, 3, 4, 5]);
         assert_eq!(record.get_neighbors(0), vec![1, 2, 3, 4, 5]);
 
         // Set layer 1 neighbors
         record.set_neighbors(1, &[10, 20]);
-        assert_eq!(record. get_neighbors(1), vec![10, 20]);
+        assert_eq!(record.get_neighbors(1), vec![10, 20]);
 
         // Layer 2 should still be empty
-        assert!(record. get_neighbors(2).is_empty());
+        assert!(record.get_neighbors(2).is_empty());
     }
 
     #[test]
@@ -642,8 +651,8 @@ mod tests {
         assert!(record.add_neighbor(0, 1));
         assert!(record.add_neighbor(0, 2));
         assert!(record.add_neighbor(0, 3));
-        assert!(record. add_neighbor(0, 4));
-        assert! (!record.add_neighbor(0, 5)); // Layer full
+        assert!(record.add_neighbor(0, 4));
+        assert!(!record.add_neighbor(0, 5)); // Layer full
 
         assert_eq!(record.get_neighbors(0), vec![1, 2, 3, 4]);
     }
@@ -656,7 +665,7 @@ mod tests {
         assert_eq!(record.neighbor_count(0), 0);
 
         record.set_neighbors(0, &[1, 2, 3]);
-        assert_eq!(record. neighbor_count(0), 3);
+        assert_eq!(record.neighbor_count(0), 3);
 
         record.set_neighbors(1, &[10, 20, 30, 40, 50]);
         assert_eq!(record.neighbor_count(1), 5);
@@ -677,7 +686,7 @@ mod tests {
         let restored = NodeRecord::from_bytes(&bytes, params).unwrap();
 
         assert_eq!(restored.header.node_id, 123);
-        assert_eq!(restored. header.layer_count, 3);
+        assert_eq!(restored.header.layer_count, 3);
         assert_eq!(restored.get_neighbors(0), vec![1, 2, 3, 4, 5]);
         assert_eq!(restored.get_neighbors(1), vec![10, 20]);
         assert_eq!(restored.get_neighbors(2), vec![100]);
@@ -696,7 +705,7 @@ mod tests {
 
         assert_eq!(record.header.node_id, 42);
         assert_eq!(record.get_neighbors(0), vec![1, 2, 3]);
-        assert_eq!(record. get_neighbors(1), vec![10, 20]);
+        assert_eq!(record.get_neighbors(1), vec![10, 20]);
         assert_eq!(record.get_neighbors(2), vec![100]);
 
         let restored = Node::from_record(&record);
@@ -708,23 +717,20 @@ mod tests {
 
     #[test]
     fn test_compute_node_offset() {
-        let graph_start:  Offset = 8192; // 2 pages
+        let graph_start: Offset = 8192; // 2 pages
         let record_size = 656; // From earlier test
 
         assert_eq!(compute_node_offset(graph_start, 0, record_size), 8192);
         assert_eq!(compute_node_offset(graph_start, 1, record_size), 8192 + 656);
         assert_eq!(compute_node_offset(graph_start, 2, record_size), 8192 + 1312);
-        assert_eq!(
-            compute_node_offset(graph_start, 100, record_size),
-            8192 + 100 * 656
-        );
+        assert_eq!(compute_node_offset(graph_start, 100, record_size), 8192 + 100 * 656);
     }
 
     #[test]
     fn test_node_header_deleted_flag() {
         let mut header = NodeHeader::new(0, 1);
 
-        assert! (!header.is_deleted());
+        assert!(!header.is_deleted());
 
         header.set_deleted();
         assert!(header.is_deleted());
@@ -734,7 +740,7 @@ mod tests {
     fn test_addressing_formula_consistency() {
         // Verify that the addressing formula works for various node IDs
         let params = NodeRecordParams::default();
-        let graph_start:  Offset = 4096;
+        let graph_start: Offset = 4096;
         let record_size = params.record_size();
 
         for node_id in [0, 1, 10, 100, 1000, 10000] {

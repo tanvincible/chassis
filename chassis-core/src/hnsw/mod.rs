@@ -4,10 +4,10 @@ pub mod node;
 mod search;
 
 pub use builder::HnswBuilder;
-pub use graph::HnswGraph;
+pub use graph::{GraphHeader, HnswGraph};
 pub use node::{
-    compute_node_offset, Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset,
-    INVALID_NODE_ID,
+    INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset,
+    compute_node_offset,
 };
 pub use search::SearchResult;
 
@@ -34,10 +34,10 @@ impl Default for HnswParams {
     fn default() -> Self {
         Self {
             max_connections: 16,
-            ef_construction:  200,
+            ef_construction: 200,
             ef_search: 50,
             ml: 1.0 / (16.0_f32).ln(),
-            max_layers:  16,
+            max_layers: 16,
         }
     }
 }
