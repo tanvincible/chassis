@@ -50,7 +50,7 @@ mod header;
 pub mod hnsw;
 mod storage;
 
-pub use distance::{cosine_distance, euclidean_distance, DistanceMetric};
-pub use header::{Header, HEADER_SIZE, MAGIC, VERSION};
+pub use distance::{DistanceMetric, cosine_distance, euclidean_distance};
+pub use header::{HEADER_SIZE, Header, MAGIC, VERSION};
 pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, SearchResult};
 pub use storage::Storage;

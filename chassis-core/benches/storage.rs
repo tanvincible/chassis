@@ -1,5 +1,5 @@
 use chassis_core::Storage;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::fs;
 use std::hint::black_box;
 use tempfile::TempDir;
@@ -7,9 +7,7 @@ use tempfile::TempDir;
 const DIMENSIONS: u32 = 768;
 
 fn generate_vector(seed: u64) -> Vec<f32> {
-    (0..DIMENSIONS)
-        .map(|i| ((seed + i as u64) % 1000) as f32 / 1000.0)
-        .collect()
+    (0..DIMENSIONS).map(|i| ((seed + i as u64) % 1000) as f32 / 1000.0).collect()
 }
 
 fn bench_raw_insert(c: &mut Criterion) {
@@ -41,7 +39,7 @@ fn bench_durable_insert(c: &mut Criterion) {
         let path = temp_dir.path().join("bench.chassis");
         let mut storage = Storage::open(&path, DIMENSIONS).unwrap();
         let vector = generate_vector(0);
-        
+
         b.iter(|| {
             storage.insert(black_box(&vector)).unwrap();
             storage.commit().unwrap();
@@ -64,10 +62,9 @@ fn bench_batch_insert(c: &mut Criterion) {
                 let temp_dir = TempDir::new().unwrap();
                 let path = temp_dir.path().join("bench.chassis");
                 let mut storage = Storage::open(&path, DIMENSIONS).unwrap();
-                
-                let vectors: Vec<Vec<f32>> = (0..batch_size)
-                    .map(|i| generate_vector(i as u64))
-                    .collect();
+
+                let vectors: Vec<Vec<f32>> =
+                    (0..batch_size).map(|i| generate_vector(i as u64)).collect();
 
                 b.iter(|| {
                     for vector in &vectors {
@@ -113,7 +110,7 @@ fn bench_cold_read(c: &mut Criterion) {
     group.bench_function("get_vector_cold_start", |b| {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("bench.chassis");
-        
+
         {
             let mut storage = Storage::open(&path, DIMENSIONS).unwrap();
             for i in 0..10000 {
@@ -124,7 +121,7 @@ fn bench_cold_read(c: &mut Criterion) {
 
         b.iter(|| {
             drop(fs::File::open(&path).unwrap());
-            
+
             let storage = Storage::open(&path, DIMENSIONS).unwrap();
             let idx = black_box(5000);
             let _vector = storage.get_vector(idx).unwrap();

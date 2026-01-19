@@ -11,7 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Added
 
-- feat:  implement Graph I/O with persistent header and zero-allocation iteration ([67bd495](https://github.com/tanvincible/chassis/commit/67bd495965be7c59b8761166a66c2165e4ff5a03))
+- feat: implement Graph I/O with persistent header and zero-allocation iteration ([fe46503](https://github.com/tanvincible/chassis/commit/fe46503cb6e6409c8e7a7add17150ac87ea123cc))
+- feat: add GraphHeader and graph I/O methods to HnswGraph and Storage ([fc5b465](https://github.com/tanvincible/chassis/commit/fc5b4655972b39981b696141cfce685d5cf308ee))
 
 ### Documentation
 

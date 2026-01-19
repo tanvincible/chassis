@@ -1,4 +1,4 @@
-//!  HNSW Graph with persistent storage and zero-allocation neighbor iteration. 
+//!  HNSW Graph with persistent storage and zero-allocation neighbor iteration.
 //!
 //! # Design Principles
 //!
@@ -7,9 +7,11 @@
 //! - **Zero-allocation iteration**: `neighbors_iter_from_mmap` reads directly from mmap
 //! - **Persistent header**: Entry point and max layer survive restarts
 
-use crate::hnsw::node::{Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset, INVALID_NODE_ID};
-use crate::hnsw::{HnswParams};
 use crate::Storage;
+use crate::hnsw::HnswParams;
+use crate::hnsw::node::{
+    INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset,
+};
 use anyhow::Result;
 
 /// Size of the graph header in bytes
@@ -43,25 +45,25 @@ pub struct GraphHeader {
     version: u32,
 
     /// Entry point node ID (INVALID_NODE_ID if empty)
-    pub entry_point: NodeId,  // u64 - naturally aligned at offset 8
+    pub entry_point: NodeId, // u64 - naturally aligned at offset 8
 
     /// Number of nodes written  
-    pub node_count: u64,       // u64 - naturally aligned at offset 16
+    pub node_count: u64, // u64 - naturally aligned at offset 16
 
     /// Highest layer in graph
-    pub max_layer: u32,        // u32 at offset 24
+    pub max_layer: u32, // u32 at offset 24
 
     /// Max connections per layer
-    pub m: u16,                // u16 at offset 28
+    pub m: u16, // u16 at offset 28
 
     /// Max connections at layer 0
-    pub m0: u16,               // u16 at offset 30
+    pub m0: u16, // u16 at offset 30
 
     /// Maximum layers
-    pub max_layers: u8,        // u8 at offset 32
+    pub max_layers: u8, // u8 at offset 32
 
     /// Padding to 64 bytes
-    _reserved: [u8; 31],       // 31 bytes:  offset 33-63
+    _reserved: [u8; 31], // 31 bytes:  offset 33-63
 }
 
 impl GraphHeader {
@@ -77,7 +79,7 @@ impl GraphHeader {
         Self {
             magic: *Self::MAGIC,
             version: Self::VERSION,
-            entry_point:  INVALID_NODE_ID,
+            entry_point: INVALID_NODE_ID,
             node_count: 0,
             max_layer: 0,
             m: params.m,
@@ -121,10 +123,10 @@ impl GraphHeader {
 
         let version = u32::from_le_bytes(bytes[4..8].try_into()?);
         let entry_point = u64::from_le_bytes(bytes[8..16].try_into()?);
-        let node_count = u64::from_le_bytes(bytes[16.. 24].try_into()?);
+        let node_count = u64::from_le_bytes(bytes[16..24].try_into()?);
         let max_layer = u32::from_le_bytes(bytes[24..28].try_into()?);
-        let m = u16::from_le_bytes(bytes[28..30]. try_into()?);
-        let m0 = u16:: from_le_bytes(bytes[30..32].try_into()?);
+        let m = u16::from_le_bytes(bytes[28..30].try_into()?);
+        let m0 = u16::from_le_bytes(bytes[30..32].try_into()?);
         let max_layers = bytes[32];
 
         let mut reserved = [0u8; 31];
@@ -146,7 +148,7 @@ impl GraphHeader {
     /// Get record params from header
     #[must_use]
     pub const fn to_record_params(&self) -> NodeRecordParams {
-        NodeRecordParams:: new(self.m, self.m0, self.max_layers)
+        NodeRecordParams::new(self.m, self.m0, self.max_layers)
     }
 }
 
@@ -174,7 +176,7 @@ pub struct HnswGraph {
     pub entry_point: Option<NodeId>,
 
     /// Maximum layer in the graph
-    pub max_layer:  usize,
+    pub max_layer: usize,
 
     /// Number of nodes in the graph (tracked for header persistence)
     node_count: u64,
@@ -212,15 +214,7 @@ impl HnswGraph {
                 }
             };
 
-        Ok(Self {
-            storage,
-            params,
-            record_params,
-            graph_start,
-            entry_point,
-            max_layer,
-            node_count,
-        })
+        Ok(Self { storage, params, record_params, graph_start, entry_point, max_layer, node_count })
     }
 
     /// Try to read graph header if it exists
@@ -251,9 +245,7 @@ impl HnswGraph {
 
     /// Read graph header from mmap
     pub fn read_graph_header(&self) -> Result<GraphHeader> {
-        let zone = self
-            .storage
-            .graph_zone(self.graph_start as usize, GRAPH_HEADER_SIZE)?;
+        let zone = self.storage.graph_zone(self.graph_start as usize, GRAPH_HEADER_SIZE)?;
         let header = GraphHeader::from_bytes(zone)?;
 
         if !header.is_valid() {
@@ -266,26 +258,23 @@ impl HnswGraph {
     /// Write graph header to mmap
     pub fn write_graph_header(&mut self) -> Result<()> {
         let mut header = GraphHeader::new(self.record_params);
-        header.entry_point = self.entry_point. unwrap_or(INVALID_NODE_ID);
+        header.entry_point = self.entry_point.unwrap_or(INVALID_NODE_ID);
         header.max_layer = self.max_layer as u32;
         header.node_count = self.node_count;
 
-        let bytes = header. to_bytes();
-        let zone = self
-            .storage
-            .graph_zone_mut(self.graph_start as usize, GRAPH_HEADER_SIZE)?;
+        let bytes = header.to_bytes();
+        let zone = self.storage.graph_zone_mut(self.graph_start as usize, GRAPH_HEADER_SIZE)?;
         zone.copy_from_slice(&bytes);
 
         Ok(())
     }
 
-
-    /// Compute the file offset for a node record. 
+    /// Compute the file offset for a node record.
     ///
     /// # Centralized Offset Computation
     ///
     /// **ALL** node read/write operations MUST use this method.
-    /// This ensures: 
+    /// This ensures:
     /// - Consistent addressing formula across all code paths
     /// - Single point of change for layout modifications
     /// - No off-by-one bugs from manual offset arithmetic
@@ -298,17 +287,17 @@ impl HnswGraph {
     #[inline]
     pub(crate) fn node_offset(&self, node_id: NodeId) -> Offset {
         let base = self.graph_start + GRAPH_HEADER_SIZE as u64;
-        base + (node_id * self. record_params.record_size() as u64)
+        base + (node_id * self.record_params.record_size() as u64)
     }
 
     /// Read a node record directly from mmap.
     pub fn read_node_record(&self, node_id: NodeId) -> Result<NodeRecord> {
         let record_size = self.record_params.record_size();
-        let offset = self.node_offset(node_id);  // ✅ Centralized
+        let offset = self.node_offset(node_id);
 
         let zone = self.storage.graph_zone(offset as usize, record_size)?;
         NodeRecord::from_bytes(zone, self.record_params)
-            .map_err(|e| anyhow::anyhow! ("Failed to read node record: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to read node record: {}", e))
     }
 
     /// Write a node record directly to mmap.
@@ -329,14 +318,14 @@ impl HnswGraph {
     /// Get raw bytes slice for a node (zero-copy).
     pub fn get_node_bytes(&self, node_id: NodeId) -> Result<&[u8]> {
         let record_size = self.record_params.record_size();
-        let offset = self. node_offset(node_id);
+        let offset = self.node_offset(node_id);
 
         self.storage.graph_zone(offset as usize, record_size)
     }
 
     /// Iterate neighbors directly from mmap bytes (zero-allocation).
     ///
-    /// This is the **preferred method** for search hot paths because it: 
+    /// This is the **preferred method** for search hot paths because it:
     /// - Does NOT allocate any `Vec`
     /// - Reads directly from memory-mapped bytes
     /// - Filters out `INVALID_NODE_ID` entries lazily
@@ -362,17 +351,12 @@ impl HnswGraph {
         let bytes = self.get_node_bytes(node_id)?;
 
         // Validated header read with alignment handling
-        let header = NodeHeader:: from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow! ("Invalid node header for node {}: {}", node_id, e))?;
+        let header = NodeHeader::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid node header for node {}: {}", node_id, e))?;
 
         // Check if layer is valid
         if layer >= header.layer_count as usize {
-            return Ok(NeighborIterator {
-                bytes:  &[],
-                start_offset: 0,
-                count: 0,
-                pos: 0,
-            });
+            return Ok(NeighborIterator { bytes: &[], start_offset: 0, count: 0, pos: 0 });
         }
 
         let layer_offset = self
@@ -381,15 +365,10 @@ impl HnswGraph {
             .ok_or_else(|| anyhow::anyhow!("Invalid layer"))?;
         let neighbor_count = self.record_params.max_neighbors(layer);
 
-        Ok(NeighborIterator {
-            bytes,
-            start_offset: layer_offset,
-            count: neighbor_count,
-            pos: 0,
-        })
+        Ok(NeighborIterator { bytes, start_offset: layer_offset, count: neighbor_count, pos: 0 })
     }
 
-    /// Compute distance using zero-copy vector slice access. 
+    /// Compute distance using zero-copy vector slice access.
     ///
     /// This is the **preferred method** for search because it:
     /// - Does NOT allocate a `Vec<f32>` for the vector
@@ -432,7 +411,7 @@ impl HnswGraph {
     fn find_or_create_graph_start(storage: &Storage) -> Result<Offset> {
         // Graph starts after all vector data
         let vector_count = storage.count();
-        let vector_size = storage.dimensions() as usize * std::mem::size_of:: <f32>();
+        let vector_size = storage.dimensions() as usize * std::mem::size_of::<f32>();
         let vector_zone_end = crate::header::HEADER_SIZE + (vector_count as usize * vector_size);
 
         // Align to page boundary
@@ -447,7 +426,7 @@ impl HnswGraph {
     ///
     /// **Node IDs MUST be dense and monotonically increasing.**
     ///
-    /// This means: 
+    /// This means:
     /// - First node must have `vector_id = 0`
     /// - Each subsequent node must have `vector_id = previous + 1`
     /// - No gaps, no out-of-order insertions, no overwrites
@@ -506,11 +485,7 @@ impl HnswGraph {
             );
         }
 
-        let node = Node {
-            id: vector_id,
-            offset: 0,
-            layers: vec![Vec::new(); layer + 1],
-        };
+        let node = Node { id: vector_id, offset: 0, layers: vec![Vec::new(); layer + 1] };
 
         // TODO: Connect to neighbors using HNSW algorithm
 
@@ -532,24 +507,21 @@ impl HnswGraph {
     /// This is enforced by `insert()`.
     fn write_node(&mut self, node: &Node) -> Result<Offset> {
         // Double-check invariant (belt and suspenders)
-        debug_assert!(
-            node.id == self.node_count,
-            "write_node called with non-sequential node ID"
-        );
+        debug_assert!(node.id == self.node_count, "write_node called with non-sequential node ID");
 
         // Convert to fixed-size record and write directly to mmap
-        let record = node. to_record(self.record_params);
+        let record = node.to_record(self.record_params);
         self.write_node_record(&record)?;
 
         // Increment count AFTER successful write (crash safety)
         self.node_count += 1;
 
-        Ok(self.node_offset(node. id))
+        Ok(self.node_offset(node.id))
     }
 
     /// Update an existing node's neighbors (does NOT increment node_count).
     ///
-    /// Use this for: 
+    /// Use this for:
     /// - Updating neighbor connections during HNSW construction
     /// - Modifying an existing node's links
     ///
@@ -575,7 +547,7 @@ impl HnswGraph {
         }
 
         // Write without incrementing count
-        let record_size = self.record_params. record_size();
+        let record_size = self.record_params.record_size();
         let offset = self.node_offset(node_id);
 
         let bytes = record.to_bytes();
@@ -594,7 +566,7 @@ impl HnswGraph {
     /// Returns the record params for this graph
     #[inline]
     pub fn record_params(&self) -> NodeRecordParams {
-        self. record_params
+        self.record_params
     }
 
     /// Returns the current node count
@@ -604,11 +576,11 @@ impl HnswGraph {
     }
 }
 
-/// Zero-allocation iterator over neighbors in a layer. 
+/// Zero-allocation iterator over neighbors in a layer.
 ///
-/// Reads NodeId values directly from mmap bytes, filtering out INVALID_NODE_ID. 
+/// Reads NodeId values directly from mmap bytes, filtering out INVALID_NODE_ID.
 pub struct NeighborIterator<'a> {
-    bytes:  &'a [u8],
+    bytes: &'a [u8],
     start_offset: usize,
     count: usize,
     pos: usize,
@@ -625,9 +597,7 @@ impl<'a> Iterator for NeighborIterator<'a> {
 
             if offset + 8 <= self.bytes.len() {
                 // SAFETY: We've bounds-checked above
-                let neighbor = u64::from_le_bytes(
-                    self.bytes[offset..offset + 8].try_into().ok()?
-                );
+                let neighbor = u64::from_le_bytes(self.bytes[offset..offset + 8].try_into().ok()?);
 
                 if neighbor != INVALID_NODE_ID {
                     return Some(neighbor);
@@ -659,7 +629,7 @@ mod tests {
     #[test]
     fn test_graph_header_size() {
         assert_eq!(
-            std::mem::size_of:: <GraphHeader>(),
+            std::mem::size_of::<GraphHeader>(),
             GRAPH_HEADER_SIZE,
             "GraphHeader must be exactly 64 bytes"
         );
@@ -667,11 +637,7 @@ mod tests {
 
     #[test]
     fn test_graph_header_alignment() {
-        assert_eq!(
-            std::mem::align_of::<GraphHeader>(),
-            8,
-            "GraphHeader must be 8-byte aligned"
-        );
+        assert_eq!(std::mem::align_of::<GraphHeader>(), 8, "GraphHeader must be 8-byte aligned");
     }
 
     #[test]
@@ -687,7 +653,7 @@ mod tests {
 
         assert!(restored.is_valid());
         assert_eq!(restored.entry_point, 42);
-        assert_eq!(restored. max_layer, 3);
+        assert_eq!(restored.max_layer, 3);
         assert_eq!(restored.node_count, 1000);
         assert_eq!(restored.m, 16);
         assert_eq!(restored.m0, 32);
@@ -717,7 +683,11 @@ mod tests {
         // Check linear spacing (O(1) formula property)
         assert_eq!(offset_1 - offset_0, record_size, "Offset spacing should equal record_size");
         assert_eq!(offset_2 - offset_1, record_size, "Offset spacing should equal record_size");
-        assert_eq!(offset_99 - offset_0, 99 * record_size, "Offset for node 99 should be 99 * record_size from node 0");
+        assert_eq!(
+            offset_99 - offset_0,
+            99 * record_size,
+            "Offset for node 99 should be 99 * record_size from node 0"
+        );
 
         // Verify formula:  offset_n = offset_0 + n * record_size
         for n in [0u64, 1, 10, 50, 99] {
@@ -734,7 +704,7 @@ mod tests {
 
         // Create and populate graph
         {
-            let mut storage = Storage:: open(path, 128).unwrap();
+            let mut storage = Storage::open(path, 128).unwrap();
             for _ in 0..10 {
                 storage.insert(&vec![1.0; 128]).unwrap();
             }
@@ -755,7 +725,7 @@ mod tests {
             let params = HnswParams::default();
             let graph = HnswGraph::open(storage, params).unwrap();
 
-            assert!(graph.entry_point. is_some());
+            assert!(graph.entry_point.is_some());
             assert!(graph.node_count() > 0);
         }
     }
@@ -774,8 +744,8 @@ mod tests {
         let params = HnswParams::default();
         let mut graph = HnswGraph::open(storage, params).unwrap();
 
-        graph.insert(0, 0).unwrap();  // OK:  node_count was 0
-        graph.insert(5, 0).unwrap();  // PANIC: expected 1, got 5
+        graph.insert(0, 0).unwrap(); // OK:  node_count was 0
+        graph.insert(5, 0).unwrap(); // PANIC: expected 1, got 5
     }
 
     #[test]
@@ -792,8 +762,8 @@ mod tests {
         let params = HnswParams::default();
         let mut graph = HnswGraph::open(storage, params).unwrap();
 
-        graph.insert(0, 0).unwrap();  // OK
-        graph.insert(0, 0).unwrap();  // PANIC: expected 1, got 0
+        graph.insert(0, 0).unwrap(); // OK
+        graph.insert(0, 0).unwrap(); // PANIC: expected 1, got 0
     }
 
     #[test]
@@ -803,11 +773,11 @@ mod tests {
 
         let mut storage = Storage::open(path, 128).unwrap();
         for _ in 0..10 {
-            storage. insert(&vec![1.0; 128]).unwrap();
+            storage.insert(&vec![1.0; 128]).unwrap();
         }
 
         let params = HnswParams::default();
-        let mut graph = HnswGraph:: open(storage, params).unwrap();
+        let mut graph = HnswGraph::open(storage, params).unwrap();
 
         // Insert node
         graph.insert(0, 1).unwrap();
@@ -820,7 +790,7 @@ mod tests {
         record.set_neighbors(1, &[10, 20]);
 
         graph.update_node_record(&record).unwrap();
-        assert_eq!(graph.node_count(), 1);  // Still 1, not 2
+        assert_eq!(graph.node_count(), 1); // Still 1, not 2
 
         // Verify update
         let read_back = graph.read_node_record(0).unwrap();

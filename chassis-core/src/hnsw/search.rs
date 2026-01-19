@@ -1,4 +1,4 @@
-//!  HNSW search implementation with zero-allocation optimizations. 
+//!  HNSW search implementation with zero-allocation optimizations.
 //!
 //! # Performance Optimizations
 //!
@@ -6,11 +6,10 @@
 //!  - `neighbors_iter_from_mmap()` - Zero-allocation neighbor iteration (~100ns vs ~400ns)
 //! - `compute_distance_zero_copy()` - Zero-allocation vector access
 
-use crate::distance:: euclidean_distance;
 use crate::hnsw::graph::HnswGraph;
 use crate::hnsw::node::NodeId;
 use anyhow::Result;
-use std::cmp:: Reverse;
+use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
 
 /// Search result with distance
@@ -29,7 +28,7 @@ impl PartialEq for SearchResult {
 impl Eq for SearchResult {}
 
 impl PartialOrd for SearchResult {
-    fn partial_cmp(&self, other:  &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.distance.partial_cmp(&other.distance)
     }
 }
@@ -41,7 +40,7 @@ impl Ord for SearchResult {
 }
 
 impl HnswGraph {
-    /// Search for k nearest neighbors. 
+    /// Search for k nearest neighbors.
     ///
     /// # Arguments
     ///
@@ -60,7 +59,7 @@ impl HnswGraph {
         // Greedy search from top layer to layer 1
         let mut current = entry;
         while current_layer > 0 {
-            current = self.search_layer_optimized(query, current, 1, current_layer)?[0]. id;
+            current = self.search_layer_optimized(query, current, 1, current_layer)?[0].id;
             current_layer -= 1;
         }
 
@@ -78,7 +77,7 @@ impl HnswGraph {
     ///
     /// 1. **Zero-allocation neighbor iteration**:  Uses `neighbors_iter_from_mmap()`
     ///    instead of `get_neighbors()` which allocates a `Vec<NodeId>`.
-    ///    Benchmark:  ~100ns vs ~400ns per node. 
+    ///    Benchmark:  ~100ns vs ~400ns per node.
     ///
     /// 2. **Zero-copy distance computation**: Uses `compute_distance_zero_copy()`
     ///    instead of `get_vector()` which allocates a `Vec<f32>`.
@@ -87,12 +86,12 @@ impl HnswGraph {
     /// No `Node::from_record()` calls
     /// No `Vec<NodeId>` allocation for neighbors  
     /// No `Vec<f32>` allocation for vectors
-    
+
     fn search_layer_optimized(
         &self,
-        query:  &[f32],
+        query: &[f32],
         entry: NodeId,
-        ef:  usize,
+        ef: usize,
         layer: usize,
     ) -> Result<Vec<SearchResult>> {
         let mut visited = HashSet::new();
@@ -101,18 +100,12 @@ impl HnswGraph {
 
         // Zero-copy distance computation
         let entry_dist = self.compute_distance_zero_copy(query, entry)?;
-        candidates.push(Reverse(SearchResult {
-            id: entry,
-            distance: entry_dist,
-        }));
-        results.push(SearchResult {
-            id: entry,
-            distance: entry_dist,
-        });
+        candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
+        results.push(SearchResult { id: entry, distance: entry_dist });
         visited.insert(entry);
 
         while let Some(Reverse(current)) = candidates.pop() {
-            if results.len() >= ef && current.distance > results. peek().unwrap().distance {
+            if results.len() >= ef && current.distance > results.peek().unwrap().distance {
                 break;
             }
 
@@ -125,14 +118,8 @@ impl HnswGraph {
                     let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
 
                     if results.len() < ef || dist < results.peek().unwrap().distance {
-                        candidates. push(Reverse(SearchResult {
-                            id: neighbor_id,
-                            distance: dist,
-                        }));
-                        results.push(SearchResult {
-                            id: neighbor_id,
-                            distance: dist,
-                        });
+                        candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
+                        results.push(SearchResult { id: neighbor_id, distance: dist });
 
                         if results.len() > ef {
                             results.pop();
@@ -142,51 +129,9 @@ impl HnswGraph {
             }
         }
 
-        let mut sorted:  Vec<_> = results.into_iter().collect();
+        let mut sorted: Vec<_> = results.into_iter().collect();
         sorted.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
         Ok(sorted)
-    }
-
-    // =========================================================================
-    // DEPRECATED METHODS - Kept for backwards compatibility but should not be used
-    // =========================================================================
-
-    /// Search within a single layer (DEPRECATED - uses allocating path).
-    ///
-    /// **DEPRECATED**: Use `search()` which internally calls `search_layer_optimized()`.
-    /// This method is 6.3x slower due to allocations.
-    #[allow(dead_code)]
-    #[deprecated(note = "Use search() which uses the optimized path internally")]
-    fn search_layer(
-        &self,
-        query: &[f32],
-        entry: NodeId,
-        ef:  usize,
-        layer: usize,
-    ) -> Result<Vec<SearchResult>> {
-        self.search_layer_optimized(query, entry, ef, layer)
-    }
-
-    /// Compute distance between query and stored vector (DEPRECATED).
-    ///
-    /// **DEPRECATED**: Use `compute_distance_zero_copy()` instead.
-    /// This method allocates a `Vec<f32>` for each call.
-    #[allow(dead_code)]
-    #[deprecated(note = "Use compute_distance_zero_copy() for zero-allocation")]
-    fn compute_distance(&self, query: &[f32], node_id: NodeId) -> Result<f32> {
-        let vector = self.storage.get_vector(node_id)?;
-        Ok(euclidean_distance(query, &vector))
-    }
-
-    /// Get neighbors of a node at specific layer (DEPRECATED).
-    ///
-    /// **DEPRECATED**: Use `neighbors_iter_from_mmap()` instead.
-    /// This method allocates a `Vec<NodeId>` and is ~4x slower.
-    #[allow(dead_code)]
-    #[deprecated(note = "Use neighbors_iter_from_mmap() for zero-allocation")]
-    fn get_neighbors(&self, node_id: NodeId, layer: usize) -> Result<Vec<NodeId>> {
-        // Use the optimized iterator and collect (for backwards compatibility)
-        Ok(self.neighbors_iter_from_mmap(node_id, layer)?.collect())
     }
 }
 
@@ -196,18 +141,9 @@ mod tests {
 
     #[test]
     fn test_search_result_ordering() {
-        let r1 = SearchResult {
-            id: 1,
-            distance: 0.5,
-        };
-        let r2 = SearchResult {
-            id: 2,
-            distance: 1.0,
-        };
-        let r3 = SearchResult {
-            id: 3,
-            distance: 0.5,
-        };
+        let r1 = SearchResult { id: 1, distance: 0.5 };
+        let r2 = SearchResult { id: 2, distance: 1.0 };
+        let r3 = SearchResult { id: 3, distance: 0.5 };
 
         assert!(r1 < r2);
         assert!(r1 == r3); // Same distance
@@ -218,18 +154,9 @@ mod tests {
     fn test_search_result_in_heap() {
         let mut heap = BinaryHeap::new();
 
-        heap.push(SearchResult {
-            id: 1,
-            distance: 0.5,
-        });
-        heap.push(SearchResult {
-            id: 2,
-            distance: 1.0,
-        });
-        heap.push(SearchResult {
-            id: 3,
-            distance: 0.1,
-        });
+        heap.push(SearchResult { id: 1, distance: 0.5 });
+        heap.push(SearchResult { id: 2, distance: 1.0 });
+        heap.push(SearchResult { id: 3, distance: 0.1 });
 
         // Max-heap:  largest distance first
         assert_eq!(heap.pop().unwrap().id, 2); // distance 1.0

@@ -17,16 +17,16 @@ const MAX_DIMENSIONS: u32 = 4096;
 pub struct Header {
     /// Magic bytes for file type identification
     pub magic: [u8; 8],
-    
+
     /// File format version
     pub version: u32,
-    
+
     /// Number of dimensions per vector
     pub dimensions: u32,
-    
+
     /// Number of vectors currently stored
     pub count: u64,
-    
+
     /// Reserved space for future use (padding to 4096 bytes)
     pub reserved: [u8; 4072],
 }
@@ -37,13 +37,7 @@ pub const HEADER_SIZE: usize = mem::size_of::<Header>();
 impl Header {
     /// Creates a new header with the specified dimensions
     pub fn new(dimensions: u32) -> Self {
-        Self {
-            magic: *MAGIC,
-            version: VERSION,
-            dimensions,
-            count: 0,
-            reserved: [0; 4072],
-        }
+        Self { magic: *MAGIC, version: VERSION, dimensions, count: 0, reserved: [0; 4072] }
     }
 
     /// Validates the header for correctness and compatibility
@@ -57,12 +51,7 @@ impl Header {
 
     /// Returns the header as a byte slice for writing to disk
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self as *const Self as *const u8,
-                HEADER_SIZE,
-            )
-        }
+        unsafe { std::slice::from_raw_parts(self as *const Self as *const u8, HEADER_SIZE) }
     }
 
     /// Copies data from another header
