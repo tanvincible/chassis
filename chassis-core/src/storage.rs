@@ -330,6 +330,83 @@ impl Storage {
     fn header_mut(&mut self) -> &mut Header {
         unsafe { &mut *(self.mmap.as_mut_ptr() as *mut Header) }
     }
+    
+    /// Get immutable mmap slice for graph zone
+    /// 
+    /// # Arguments
+    /// 
+    /// * `offset` - Byte offset from the start of the file
+    /// * `len` - Number of bytes to return
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a slice backed directly by the mmap (zero-copy)
+    /// 
+    /// # Errors
+    /// 
+    /// Returns an error if the requested range is out of bounds
+    pub fn graph_zone(&self, offset: usize, len: usize) -> Result<&[u8]> {
+        let end = offset.checked_add(len)
+            .context("Graph zone end offset overflow")?;
+        
+        if end > self.mmap.len() {
+            anyhow::bail!(
+                "Graph zone access out of bounds: offset={}, len={}, mmap_len={}",
+                offset,
+                len,
+                self.mmap.len()
+            );
+        }
+        
+        Ok(&self.mmap[offset..end])
+    }
+    
+    /// Get mutable mmap slice for graph zone
+    /// 
+    /// # Arguments
+    /// 
+    /// * `offset` - Byte offset from the start of the file
+    /// * `len` - Number of bytes to return
+    /// 
+    /// # Returns
+    /// 
+    /// Returns a mutable slice backed directly by the mmap (zero-copy)
+    /// 
+    /// # Errors
+    /// 
+    /// Returns an error if the requested range is out of bounds
+    pub fn graph_zone_mut(&mut self, offset: usize, len: usize) -> Result<&mut [u8]> {
+        let end = offset.checked_add(len)
+            .context("Graph zone end offset overflow")?;
+        
+        if end > self.mmap.len() {
+            anyhow::bail!(
+                "Graph zone access out of bounds: offset={}, len={}, mmap_len={}",
+                offset,
+                len,
+                self.mmap.len()
+            );
+        }
+        
+        Ok(&mut self.mmap[offset..end])
+    }
+    
+    /// Ensure graph zone has enough capacity
+    /// 
+    /// This method grows the file and remaps it if necessary to accommodate
+    /// the required size.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `required_size` - Minimum required file size in bytes
+    /// 
+    /// # Warning
+    /// 
+    /// This method invalidates all existing pointers into the mmap.
+    /// Do not hold references across calls to this method.
+    pub fn ensure_graph_capacity(&mut self, required_size: usize) -> Result<()> {
+        self.ensure_capacity(required_size)
+    }
 }
 
 impl Drop for Storage {

@@ -4,7 +4,7 @@ pub mod node;
 mod search;
 
 pub use builder::HnswBuilder;
-pub use graph::HnswGraph;
+pub use graph::{GraphHeader, HnswGraph};
 pub use node::{
     compute_node_offset, Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset,
     INVALID_NODE_ID,
