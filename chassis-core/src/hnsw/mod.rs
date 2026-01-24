@@ -1,5 +1,6 @@
 mod builder;
 mod graph;
+mod link;
 pub mod node;
 mod search;
 

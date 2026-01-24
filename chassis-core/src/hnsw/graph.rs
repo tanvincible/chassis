@@ -167,7 +167,7 @@ pub struct HnswGraph {
     params: HnswParams,
 
     /// Cached record parameters for O(1) lookup
-    record_params: NodeRecordParams,
+    pub record_params: NodeRecordParams,
 
     /// Offset where graph section begins (includes header)
     graph_start: Offset,
@@ -179,7 +179,7 @@ pub struct HnswGraph {
     pub max_layer: usize,
 
     /// Number of nodes in the graph (tracked for header persistence)
-    node_count: u64,
+    pub node_count: u64,
 }
 
 impl HnswGraph {

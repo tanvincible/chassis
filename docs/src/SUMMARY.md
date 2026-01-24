@@ -11,6 +11,7 @@
 
 - [Overview](./architecture/overview.md)
 - [Storage Layer](./architecture/storage.md)
+- [Graph Topology & Construction](./architecture/graph.md)            
 - [File Format](./architecture/file-format.md)
 
 # Development
