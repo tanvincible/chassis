@@ -8,16 +8,20 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 ## Current Capabilities
 
-At its current stage, Chassis provides a minimal vector storage layer with explicit invariants:
+Chassis provides a high-performance vector storage and graph construction core:
 
-* Create or open a `.chassis` file with a validated header
-* Append fixed-dimension vectors to disk
-* Retrieve vectors by index (returns owned copies)
-* Memory-mapped read and write paths
-* Explicit durability via commit (`fsync`-backed)
-* Exclusive file locking to prevent concurrent corruption
+### Storage Layer
+* **Zero-Copy I/O**: Memory-mapped vectors allow accessing 1536d embeddings in nanoseconds.
+* **ACID Persistence**: Explicit `fsync`-backed commit strategy.
+* **Fixed-Width Geometry**: O(1) deterministic addressing for all on-disk lookups.
 
-Chassis currently implements **storage only**. Indexing and search are not yet implemented.
+### Graph Layer (New in v0.2.0)
+* **HNSW Construction**: Fully persistent, crash-safe graph topology builder.
+* **Bidirectional Linking**: Maintains graph navigability with "Small World" guarantees.
+* **Diversity Heuristics**: Implements robust neighbor pruning (Heuristic 2) to prevent clustering.
+* **Crash Consistency**: Atomic write ordering ensures the graph structure is never corrupted, even on power loss.
+
+*Note: Vector Search (ANN) is currently in development (v0.3.0).*
 
 ## Design Principles
 
