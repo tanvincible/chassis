@@ -4,7 +4,7 @@ resolver = "3"
 members = ["chassis-core", "chassis-ffi"]
 
 [workspace.package]
-version = "0.2.0-alpha"
+version = "0.3.0-alpha"
 edition = "2024"
 authors = ["Tanvi Pooranmal Meena (tanvipm19@gmail.com)"]
 license = "MIT & Apache-2.0"

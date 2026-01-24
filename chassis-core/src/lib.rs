@@ -45,7 +45,7 @@
 //! These concerns are left to the application layer. Chassis is a storage
 //! primitive, like SQLite for relational data.
 
-mod distance;
+pub mod distance;
 mod header;
 pub mod hnsw;
 mod storage;

@@ -30,6 +30,14 @@ harness = false
 name = "link_benchmarks"
 harness = false
 
+[[bench]]
+name = "search_benchmarks"
+harness = false
+
+[[bench]]
+name = "distance_benchmarks"
+harness = false
+
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }

@@ -377,17 +377,16 @@ impl HnswGraph {
         }
 
         // CONNECTIVITY GUARANTEE: Ensure new_node if close enough
-        if !includes_new && selected.len() < max_count {
-            if let Some(pos) = distances.iter().position(|(id, _, _)| *id == new_node) {
-                if pos < max_count {
-                    if !selected.contains(&new_node) {
-                        if selected.len() >= max_count {
-                            selected.pop();
-                        }
-                        selected.push(new_node);
-                    }
-                }
+        if !includes_new
+            && selected.len() < max_count
+            && let Some(pos) = distances.iter().position(|(id, _, _)| *id == new_node)
+            && pos < max_count
+            && !selected.contains(&new_node)
+        {
+            if selected.len() >= max_count {
+                selected.pop();
             }
+            selected.push(new_node);
         }
 
         let includes_new = selected.contains(&new_node);
