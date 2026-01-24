@@ -3,7 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.2.0-alpha...HEAD) - 24 January 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.3.0-alpha...HEAD) - 24 January 2026
+
+## [v0.3.0-alpha](https://github.com/tanvincible/chassis/compare/v0.2.0-alpha...v0.3.0-alpha) - 24 January 2026
+
+### Added
+
+- feat: implement SIMD acceleration & harden search ([e65348b](https://github.com/tanvincible/chassis/commit/e65348b39c0645b85aab366258dc7a0fe17e3f2b))
 
 ## [v0.2.0-alpha](https://github.com/tanvincible/chassis/compare/v0.1.0-alpha.1...v0.2.0-alpha) - 24 January 2026
 
@@ -26,8 +32,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Infrastructure
 
-- chore: release v0.1.0-alpha.1 ([8c90ddf](https://github.com/tanvincible/chassis/commit/8c90ddf7338a24aaf65f82256d7165b7b6a7c643))
-- chore: release v0.1.0-alpha.1 ([b75d694](https://github.com/tanvincible/chassis/commit/b75d69454056ce76aef695e33064a85061e3a8b4))
 - build: implement precise changelog template and workflow ([194945a](https://github.com/tanvincible/chassis/commit/194945a38ba90646aa4e6015684cdb065aa8684c))
 - build: harden quality standards with Rust 2024 and strict lints ([1f68b58](https://github.com/tanvincible/chassis/commit/1f68b58110a83fb8d3eb9357862e4a594bb01ff4))
 - chore: release v0.2.0-alpha ([74339bf](https://github.com/tanvincible/chassis/commit/74339bfab9c717b86669fc497f56ffcec86527e6))
@@ -47,7 +51,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Infrastructure
 
-- chore: release v0.1.0-alpha.1 ([4b616fd](https://github.com/tanvincible/chassis/commit/4b616fdc0873e982ab03e4f04092460b69241d0f))
 - build: implement precise changelog template and workflow ([a071044](https://github.com/tanvincible/chassis/commit/a0710441effdcf28cad5648e1a4ed64c3e7d197a))
 - build: initialize project workspace and foundational structure ([cc08f6d](https://github.com/tanvincible/chassis/commit/cc08f6d86c75ea5fa882ebd07cb8b7610cb3cf41))
 - build: configure git environment and initialize documentation ([d7bc0e5](https://github.com/tanvincible/chassis/commit/d7bc0e55c1f218c65ef0b4267acfcc269f8a1c94))
