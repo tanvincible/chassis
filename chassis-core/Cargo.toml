@@ -15,27 +15,27 @@ memmap2 = { workspace = true }
 rand = { workspace = true }
 
 [[bench]]
-name = "storage"
+name = "storage_bench"
 harness = false
 
 [[bench]]
-name = "hnsw_node"
+name = "hnsw_node_bench"
 harness = false
 
 [[bench]]
-name = "graph_io"
+name = "graph_io_bench"
 harness = false
 
 [[bench]]
-name = "link_benchmarks"
+name = "link_bench"
 harness = false
 
 [[bench]]
-name = "search_benchmarks"
+name = "search_bench"
 harness = false
 
 [[bench]]
-name = "distance_benchmarks"
+name = "distance_bench"
 harness = false
 
 [dev-dependencies]
