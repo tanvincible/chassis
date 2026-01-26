@@ -34,7 +34,7 @@ The core storage engine and graph algorithms are feature-complete. The API is ex
 
 ## Requirements
 
-* Rust 1.90 or later
+* Rust 1.85 or later
 * A filesystem that supports memory mapping (Linux, macOS, Windows) and `fsync` for durability.
 
 ## License
