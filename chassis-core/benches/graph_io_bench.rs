@@ -3,7 +3,7 @@
 //! Focus: persistence overhead, mmap-based access, and allocation-free hot paths.
 
 use chassis_core::Storage;
-use chassis_core::hnsw::{
+use chassis_core::{
     HnswGraph, HnswParams, NodeId, NodeRecord, NodeRecordParams, compute_node_offset,
 };
 use criterion::{Criterion, criterion_group, criterion_main};

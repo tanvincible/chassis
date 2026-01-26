@@ -5,10 +5,15 @@ pub mod node;
 mod search;
 
 pub use builder::HnswBuilder;
-pub use graph::{GraphHeader, HnswGraph};
+pub use graph::HnswGraph;
+
+#[cfg(any(test, feature = "internals"))]
+pub use graph::GraphHeader;
+pub use node::NodeRecordParams;
+
+#[cfg(any(test, feature = "internals"))]
 pub use node::{
-    INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset,
-    compute_node_offset,
+    INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, Offset, compute_node_offset,
 };
 pub use search::SearchResult;
 

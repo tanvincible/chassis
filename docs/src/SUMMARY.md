@@ -7,6 +7,7 @@
 - [Getting Started](./guide/getting-started.md)
 - [Basic Usage](./guide/basic-usage.md)
 - [API Reference](./guide/api-reference.md)
+- [C API Reference](./guide/c-api.md)
 
 # Architecture
 

@@ -13,6 +13,7 @@
 //! - Record size is immutable once an index is created
 //! - Changing `M` or `max_layers` requires rebuilding the index
 //! - Record size is always a multiple of 8 bytes
+#![cfg_attr(not(any(test, feature = "internals")), allow(dead_code, unused_imports))]
 
 use std::mem;
 

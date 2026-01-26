@@ -48,15 +48,11 @@
 
 pub mod distance;
 mod header;
-#[cfg(feature = "internals")]
-pub mod hnsw;
-#[cfg(not(feature = "internals"))]
-pub(crate) mod hnsw;
+mod hnsw;
+mod storage;
 
 #[cfg(feature = "internals")]
-pub mod storage;
-#[cfg(not(feature = "internals"))]
-pub(crate) mod storage;
+pub use hnsw::*;
 
 pub use distance::{DistanceMetric, cosine_distance, euclidean_distance};
 pub use header::{HEADER_SIZE, Header, MAGIC, VERSION};

@@ -1,5 +1,5 @@
 use chassis_core::Storage;
-use chassis_core::hnsw::{GraphHeader, HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
+use chassis_core::{GraphHeader, HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
 use tempfile::NamedTempFile;
 
 // Header persistence

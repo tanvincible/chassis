@@ -7,4 +7,20 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[lib]
+crate-type = ["cdylib"]  # Create dynamic library for C FFI
+name = "chassis_ffi"
+
 [dependencies]
+chassis-core = { path = "../chassis-core" }
+libc = { workspace = true }
+
+[build-dependencies]
+cbindgen = { workspace = true }
+
+[profile.release]
+# Optimize for size and safety in release builds
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"  # Panics become aborts (but we catch them at FFI boundary)

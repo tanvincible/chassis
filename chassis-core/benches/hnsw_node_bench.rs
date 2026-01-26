@@ -1,4 +1,4 @@
-use chassis_core::hnsw::node::{Node, NodeRecord, NodeRecordParams, compute_node_offset};
+use chassis_core::node::{Node, NodeRecord, NodeRecordParams, compute_node_offset};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 

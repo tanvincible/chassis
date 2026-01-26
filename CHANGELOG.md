@@ -3,7 +3,22 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.4.1-alpha...HEAD) - 26 January 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.5.0...HEAD) - 26 January 2026
+
+## [v0.5.0](https://github.com/tanvincible/chassis/compare/v0.4.1-alpha...v0.5.0) - 27 January 2026
+
+### Added
+
+- feat: implement C-compatible FFI layer (v0.5.0-alpha) ([2e8528f](https://github.com/tanvincible/chassis/commit/2e8528f56ef5ce4e915cbd1fbc1035264703c490))
+
+### Documentation
+
+- docs: add GitHub Actions workflow for docs auto-deployment ([3c18b49](https://github.com/tanvincible/chassis/commit/3c18b49c0b819980047be022419df8d9a8dc2469))
+
+### Infrastructure
+
+- chore: prepare v0.5.0 ([a9eb1ac](https://github.com/tanvincible/chassis/commit/a9eb1acfcbb07627c1ae37165bd8230c72ed2b12))
+- chore: release v0.4.1-alpha ([88a8629](https://github.com/tanvincible/chassis/commit/88a8629ebba49e1d88798fd924443f66baf4dd43))
 
 ## [v0.4.1-alpha](https://github.com/tanvincible/chassis/compare/v0.4.0-alpha...v0.4.1-alpha) - 26 January 2026
 
