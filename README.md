@@ -10,7 +10,12 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 Chassis provides a high-performance vector storage, graph construction, and search core:
 
-### High-Level API (New in v0.4.0)
+### Universal Interface (New in v0.5.0)
+* **Stable C ABI**: A fully compliant C-compatible FFI layer enables Chassis to be embedded in C, C++, Python, Node.js, and Go.
+* **Safety Fortress**: The `ffi_guard` architecture guarantees that Rust panics never crash the host process.
+* **Opaque Handle Design**: Uses the "Pimpl" pattern to ensure ABI stability while hiding internal Rust implementation details.
+
+### High-Level API
 * **`VectorIndex` Facade**: A clean, unified entry point that orchestrates storage, compute, and graph operations.
 * **Consistency Orchestration**: Automates the "Register Last" insertion protocol to guarantee readers never see uninitialized data.
 * **Ghost Node Recovery**: Automatically detects and recovers from partial writes during power loss ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
@@ -55,11 +60,14 @@ These concerns are intentionally left to the embedding application.
 
 ## Status
 
-**Alpha (v0.4.0)**
+**Alpha (v0.5.0)**
 
-The core storage engine is feature-complete. It now exposes a stable Rust API (`VectorIndex`) that handles crash consistency and orchestration.
+The core storage engine and C FFI layer are feature-complete.
 
-Work is currently underway on the **Foreign Function Interface (FFI)** layer to support bindings for Python, Node.js, and C++.
+* **Core Engine**: Stable Rust API (`VectorIndex`) with crash consistency.
+* **Universal Interface**: Stable C ABI (`chassis.h`) for embedding.
+
+Work is currently underway on **native language bindings** (`chassis-py` and `chassis-node`) to make the engine installable via `pip` and `npm`.
 
 ## License
 
