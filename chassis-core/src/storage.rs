@@ -389,11 +389,108 @@ impl Storage {
     pub fn ensure_graph_capacity(&mut self, required_size: usize) -> Result<()> {
         self.ensure_capacity(required_size)
     }
+
+    /// Truncate the logical count of vectors to handle ghost node recovery.
+    ///
+    /// This method is used during index opening to recover from crashes where
+    /// vectors were written to storage but not indexed in the graph. It updates
+    /// the in-memory header count without physically truncating the file.
+    ///
+    /// # Ghost Node Recovery
+    ///
+    /// When we detect `storage.count() > graph.node_count()`, we have "ghost nodes"
+    /// (vectors written but not indexed). We truncate the logical count so the next
+    /// `insert()` will reuse the ghost node's space.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_count` - The new logical vector count (must be ≤ current count)
+    ///
+    /// # Safety
+    ///
+    /// This does NOT physically truncate the file or free space. Ghost vectors
+    /// remain on disk but are logically "invisible" until overwritten by the
+    /// next insert operations.
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// Before crash:
+    ///   storage.count() = 3 (vectors 0, 1, 2)
+    ///   graph.node_count() = 3 (nodes 0, 1, 2)
+    ///
+    /// After crash (vector 3 written but not indexed):
+    ///   storage.count() = 4 (vectors 0, 1, 2, 3)
+    ///   graph.node_count() = 3 (nodes 0, 1, 2)
+    ///
+    /// After truncate_logical(3):
+    ///   storage.count() = 3 (vector 3 is now a ghost)
+    ///   Next insert() will reuse ID 3
+    /// ```
+    pub(crate) fn truncate_logical(&mut self, new_count: u64) {
+        let current_count = self.header().count;
+
+        debug_assert!(
+            new_count <= current_count,
+            "Cannot truncate to higher count: current={}, new={}",
+            current_count,
+            new_count
+        );
+
+        // Update in-memory header count
+        self.header_mut().count = new_count;
+
+        // Note: We don't commit here - this is an in-memory adjustment only.
+        // The next insert() will overwrite ghost nodes and then commit atomically.
+    }
 }
 
 impl Drop for Storage {
     fn drop(&mut self) {
         // Explicitly unlock the file (happens automatically, but being explicit)
         let _ = self.file.unlock();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_logical() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut storage = Storage::open(temp_file.path(), 128).unwrap();
+
+        // Insert 5 vectors
+        for i in 0..5 {
+            let vec = vec![i as f32; 128];
+            storage.insert(&vec).unwrap();
+        }
+
+        assert_eq!(storage.count(), 5);
+
+        // Truncate to 3 (simulating ghost node recovery)
+        storage.truncate_logical(3);
+
+        assert_eq!(storage.count(), 3);
+
+        // Next insert should reuse ID 3
+        let vec = vec![99.0; 128];
+        let id = storage.insert(&vec).unwrap();
+
+        assert_eq!(id, 3);
+        assert_eq!(storage.count(), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot truncate to higher count")]
+    fn test_truncate_logical_invalid() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut storage = Storage::open(temp_file.path(), 128).unwrap();
+
+        storage.insert(&vec![1.0; 128]).unwrap();
+
+        // Try to truncate to higher count (should panic in debug)
+        storage.truncate_logical(5);
     }
 }

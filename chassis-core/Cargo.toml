@@ -14,6 +14,10 @@ libc = { workspace = true }
 memmap2 = { workspace = true }
 rand = { workspace = true }
 
+[features]
+default = []
+internals = []  # Enables public access to internal modules
+
 [[bench]]
 name = "storage_bench"
 harness = false
@@ -42,3 +46,4 @@ harness = false
 criterion = { workspace = true }
 tempfile = { workspace = true }
 trybuild = { workspace = true }
+chassis-core = { path = ".", features = ["internals"] }

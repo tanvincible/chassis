@@ -83,6 +83,7 @@ name = "chassis-core"
 version = "0.3.1-alpha"
 dependencies = [
  "anyhow",
+ "chassis-core",
  "criterion",
  "fs2",
  "libc",

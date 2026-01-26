@@ -10,7 +10,7 @@
 //! - NEON: 3-5x speedup on 768-1536D
 
 use chassis_core::distance::{euclidean_distance, euclidean_distance_scalar};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 /// Benchmark: Pure distance computation at various dimensions
@@ -25,25 +25,13 @@ fn bench_distance_by_dimension(c: &mut Criterion) {
         let a: Vec<f32> = (0..dims).map(|i| (i as f32).sin() * 0.5).collect();
         let b: Vec<f32> = (0..dims).map(|i| (i as f32).cos() * 0.5).collect();
 
-        group.bench_with_input(
-            BenchmarkId::new("simd", dims),
-            &dims,
-            |bench, _| {
-                bench.iter(|| {
-                    black_box(euclidean_distance(black_box(&a), black_box(&b)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("simd", dims), &dims, |bench, _| {
+            bench.iter(|| black_box(euclidean_distance(black_box(&a), black_box(&b))));
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("scalar", dims),
-            &dims,
-            |bench, _| {
-                bench.iter(|| {
-                    black_box(euclidean_distance_scalar(black_box(&a), black_box(&b)))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scalar", dims), &dims, |bench, _| {
+            bench.iter(|| black_box(euclidean_distance_scalar(black_box(&a), black_box(&b))));
+        });
     }
 
     group.finish();
@@ -62,15 +50,11 @@ fn bench_high_dimensional(c: &mut Criterion) {
     group.throughput(Throughput::Elements(dims));
 
     group.bench_function("simd_1536d", |bench| {
-        bench.iter(|| {
-            black_box(euclidean_distance(&a, &b))
-        });
+        bench.iter(|| black_box(euclidean_distance(&a, &b)));
     });
 
     group.bench_function("scalar_1536d", |bench| {
-        bench.iter(|| {
-            black_box(euclidean_distance_scalar(&a, &b))
-        });
+        bench.iter(|| black_box(euclidean_distance_scalar(&a, &b)));
     });
 
     group.finish();
@@ -85,9 +69,8 @@ fn bench_batch_distances(c: &mut Criterion) {
     let batch_size = 100;
 
     let query: Vec<f32> = (0..dims).map(|i| (i as f32) * 0.01).collect();
-    let vectors: Vec<Vec<f32>> = (0..batch_size)
-        .map(|j| (0..dims).map(|i| ((i + j) as f32) * 0.01).collect())
-        .collect();
+    let vectors: Vec<Vec<f32>> =
+        (0..batch_size).map(|j| (0..dims).map(|i| ((i + j) as f32) * 0.01).collect()).collect();
 
     group.throughput(Throughput::Elements(batch_size * dims));
 
@@ -116,11 +99,11 @@ fn bench_unaligned_access(c: &mut Criterion) {
     group.sample_size(500);
 
     let dims = 1024;
-    
+
     // Create vectors with offset to test unaligned loads
     let mut buffer_a = vec![0.0f32; dims + 3];
     let mut buffer_b = vec![0.0f32; dims + 3];
-    
+
     for i in 0..dims {
         buffer_a[i + 1] = (i as f32).sin();
         buffer_b[i + 2] = (i as f32).cos();
@@ -130,9 +113,7 @@ fn bench_unaligned_access(c: &mut Criterion) {
     let b = &buffer_b[2..dims + 2]; // Offset by 8 bytes
 
     group.bench_function("simd_unaligned", |bench| {
-        bench.iter(|| {
-            black_box(euclidean_distance(black_box(a), black_box(b)))
-        });
+        bench.iter(|| black_box(euclidean_distance(black_box(a), black_box(b))));
     });
 
     group.finish();
@@ -149,15 +130,9 @@ fn bench_small_vectors(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(dims));
 
-        group.bench_with_input(
-            BenchmarkId::new("dims", dims),
-            &dims,
-            |bench, _| {
-                bench.iter(|| {
-                    black_box(euclidean_distance(&a, &b))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("dims", dims), &dims, |bench, _| {
+            bench.iter(|| black_box(euclidean_distance(&a, &b)));
+        });
     }
 
     group.finish();
@@ -179,15 +154,11 @@ fn bench_sparse_vectors(c: &mut Criterion) {
     }
 
     group.bench_function("simd_sparse_10pct", |bench| {
-        bench.iter(|| {
-            black_box(euclidean_distance(&a, &b))
-        });
+        bench.iter(|| black_box(euclidean_distance(&a, &b)));
     });
 
     group.bench_function("scalar_sparse_10pct", |bench| {
-        bench.iter(|| {
-            black_box(euclidean_distance_scalar(&a, &b))
-        });
+        bench.iter(|| black_box(euclidean_distance_scalar(&a, &b)));
     });
 
     group.finish();
@@ -210,15 +181,9 @@ fn bench_density_impact(c: &mut Criterion) {
             b[i] = (i as f32).cos();
         }
 
-        group.bench_with_input(
-            BenchmarkId::new("simd_density", density),
-            &density,
-            |bench, _| {
-                bench.iter(|| {
-                    black_box(euclidean_distance(&a, &b))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("simd_density", density), &density, |bench, _| {
+            bench.iter(|| black_box(euclidean_distance(&a, &b)));
+        });
     }
 
     group.finish();
@@ -253,15 +218,11 @@ fn bench_realistic_embeddings(c: &mut Criterion) {
         .collect();
 
     group.bench_function("simd_realistic_768d", |bench| {
-        bench.iter(|| {
-            black_box(euclidean_distance(&a, &b))
-        });
+        bench.iter(|| black_box(euclidean_distance(&a, &b)));
     });
 
     group.bench_function("scalar_realistic_768d", |bench| {
-        bench.iter(|| {
-            black_box(euclidean_distance_scalar(&a, &b))
-        });
+        bench.iter(|| black_box(euclidean_distance_scalar(&a, &b)));
     });
 
     group.finish();
@@ -279,15 +240,9 @@ fn bench_memory_bandwidth(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes((dims * 8 * std::mem::size_of::<f32>()) as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("simd", dims),
-            &dims,
-            |bench, _| {
-                bench.iter(|| {
-                    black_box(euclidean_distance(&a, &b))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("simd", dims), &dims, |bench, _| {
+            bench.iter(|| black_box(euclidean_distance(&a, &b)));
+        });
     }
 
     group.finish();

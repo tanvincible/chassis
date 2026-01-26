@@ -6,6 +6,8 @@
 //! - Visited filter correctness
 //! - Cyclic graph handling
 //! - Result invariants
+//!
+//! Updated to use two-phase protocol: write_node_and_backlinks + publish_node
 
 use chassis_core::{HnswGraph, HnswParams, Storage};
 use tempfile::NamedTempFile;
@@ -38,7 +40,8 @@ fn build_sequential_graph(graph: &mut HnswGraph, n: usize) {
             vec![vec![]]
         };
 
-        graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+        graph.write_node_and_backlinks(i, 1, &neighbors).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
 }
 
@@ -58,7 +61,8 @@ fn test_search_single_node() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
     // Link just one node
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     let query = vec![0.0; 128];
     let results = graph.search(&query, 5, 10).unwrap();
@@ -134,11 +138,9 @@ fn test_cyclic_graph_terminates() {
     // Build a ring topology (cyclic)
     for i in 0..10u64 {
         let neighbors = if i > 0 { vec![vec![i - 1]] } else { vec![vec![]] };
-        graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+        graph.write_node_and_backlinks(i, 1, &neighbors).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
-
-    // Now make it cyclic by linking back
-    // (In practice this would require updating node 0's neighbors)
 
     let query = vec![0.5; 128];
     let results = graph.search(&query, 5, 20).unwrap();
@@ -152,10 +154,17 @@ fn test_visited_filter_prevents_revisits() {
     let (mut graph, _temp) = create_test_graph(50, 128);
 
     // Build a diamond graph: 0 -> 1,2 -> 3
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
-    graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
-    graph.link_node_bidirectional(2, 1, &[vec![0]]).unwrap();
-    graph.link_node_bidirectional(3, 1, &[vec![1, 2]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
+
+    graph.write_node_and_backlinks(1, 1, &[vec![0]]).unwrap();
+    graph.publish_node(1, 1).unwrap();
+
+    graph.write_node_and_backlinks(2, 1, &[vec![0]]).unwrap();
+    graph.publish_node(2, 1).unwrap();
+
+    graph.write_node_and_backlinks(3, 1, &[vec![1, 2]]).unwrap();
+    graph.publish_node(3, 1).unwrap();
 
     let query = vec![0.0; 128];
     let results = graph.search(&query, 10, 20).unwrap();
@@ -180,8 +189,6 @@ fn test_search_quality_improves_with_ef() {
     let results_ef100 = graph.search(&query, 5, 100).unwrap();
 
     // Higher ef should find better or equal results
-    // (We can't strictly enforce "better" without knowing optimal results,
-    //  but we can check that we get results)
     assert_eq!(results_ef10.len(), results_ef50.len());
     assert_eq!(results_ef50.len(), results_ef100.len());
 
@@ -257,7 +264,8 @@ fn test_multi_layer_search() {
             vec![vec![]; layers]
         };
 
-        graph.link_node_bidirectional(i, layers, &neighbors).unwrap();
+        graph.write_node_and_backlinks(i, layers, &neighbors).unwrap();
+        graph.publish_node(i, layers).unwrap();
     }
 
     let query = vec![0.5; 128];
@@ -309,7 +317,8 @@ fn test_greedy_layer_descent() {
         };
         let neighbors = if i > 0 { vec![vec![i - 1]; layers] } else { vec![vec![]; layers] };
 
-        graph.link_node_bidirectional(i, layers, &neighbors).unwrap();
+        graph.write_node_and_backlinks(i, layers, &neighbors).unwrap();
+        graph.publish_node(i, layers).unwrap();
     }
 
     let query = vec![0.5; 128];
@@ -322,12 +331,6 @@ fn test_greedy_layer_descent() {
 #[test]
 fn test_search_correctness_on_small_graph() {
     let (mut graph, _temp) = create_test_graph(10, 2);
-
-    // Build a simple graph with known distances
-    // Vector 0: [0.0, 0.0]
-    // Vector 1: [0.1, 0.0]
-    // Vector 2: [0.2, 0.0]
-    // etc.
 
     build_sequential_graph(&mut graph, 5);
 

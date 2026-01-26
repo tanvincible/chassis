@@ -134,10 +134,7 @@ unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
     }
 
     // Reduce accumulators: Combine the 4 independent sums
-    let sum_combined = _mm256_add_ps(
-        _mm256_add_ps(sum0, sum1),
-        _mm256_add_ps(sum2, sum3),
-    );
+    let sum_combined = _mm256_add_ps(_mm256_add_ps(sum0, sum1), _mm256_add_ps(sum2, sum3));
 
     // Horizontal reduction: Sum 8 lanes into a scalar
     // Extract high 128 bits and add to low 128 bits
@@ -362,7 +359,7 @@ mod tests {
         let mut f = vec![0.0; 512];
         e[100] = 100.0;
         f[100] = 0.0;
-        
+
         let dist = euclidean_distance(&e, &f);
         assert!((dist - 100.0).abs() < 1e-5);
     }
@@ -373,7 +370,8 @@ mod tests {
         let b = vec![1.0, 2.0, 3.0, 4.0];
 
         let dist = euclidean_distance(&a, &b);
-        let expected = ((2.0_f32.powi(2) + 4.0_f32.powi(2) + 6.0_f32.powi(2) + 8.0_f32.powi(2))).sqrt();
+        let expected =
+            (2.0_f32.powi(2) + 4.0_f32.powi(2) + 6.0_f32.powi(2) + 8.0_f32.powi(2)).sqrt();
 
         assert!((dist - expected).abs() < 1e-5);
     }

@@ -160,6 +160,7 @@ impl GraphHeader {
 /// - **No HashMap for node offsets**: Uses O(1) formula `compute_node_offset()`
 /// - **Persistent header**: Entry point, max layer, and node count survive restarts
 /// - **Zero-allocation neighbor iteration**: `neighbors_iter_from_mmap()` for hot paths
+#[derive(Debug)]
 pub struct HnswGraph {
     pub(crate) storage: Storage,
 
@@ -409,15 +410,25 @@ impl HnswGraph {
 
     /// Finds where graph data starts in file
     fn find_or_create_graph_start(storage: &Storage) -> Result<Offset> {
-        // Graph starts after all vector data
+        // FIXED: Use a Sparse Layout.
+        // Reserve the first 1GB for vectors.
+        // The OS will not allocate physical disk space for the empty gap (sparse file).
+        const GRAPH_ZONE_START: u64 = 1024 * 1024 * 1024; // 1 GiB
+
+        // Safety check: Ensure we haven't already overflowed the vector zone
         let vector_count = storage.count();
         let vector_size = storage.dimensions() as usize * std::mem::size_of::<f32>();
-        let vector_zone_end = crate::header::HEADER_SIZE + (vector_count as usize * vector_size);
+        let vector_zone_current_end =
+            crate::header::HEADER_SIZE + (vector_count as usize * vector_size);
 
-        // Align to page boundary
-        let graph_start = ((vector_zone_end + 4095) & !4095) as u64;
+        if vector_zone_current_end as u64 > GRAPH_ZONE_START {
+            anyhow::bail!(
+                "Vector storage exceeded 1GB limit. Migration required. (Current: {} bytes)",
+                vector_zone_current_end
+            );
+        }
 
-        Ok(graph_start)
+        Ok(GRAPH_ZONE_START)
     }
 
     /// Inserts a new node into the graph.

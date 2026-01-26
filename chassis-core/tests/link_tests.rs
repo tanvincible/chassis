@@ -4,6 +4,8 @@
 //!
 //! All tests must respect the invariant: nodes can only link to already-existing nodes.
 //! This means we must build graphs sequentially (node 0, then 1, then 2, etc.).
+//!
+//! Updated to use two-phase protocol: write_node_and_backlinks + publish_node
 
 use chassis_core::{HnswGraph, HnswParams, Storage};
 use tempfile::NamedTempFile;
@@ -33,13 +35,16 @@ fn test_forward_links_written_before_backward_links() {
     let (mut graph, _temp) = create_test_graph(100, 128);
 
     // Model A: Node 0 cannot link to non-existent nodes
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     // Node 1 can now link to node 0
-    graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
+    graph.write_node_and_backlinks(1, 1, &[vec![0]]).unwrap();
+    graph.publish_node(1, 1).unwrap();
 
     // Node 2 can link to nodes 0 and 1
-    graph.link_node_bidirectional(2, 1, &[vec![0, 1]]).unwrap();
+    graph.write_node_and_backlinks(2, 1, &[vec![0, 1]]).unwrap();
+    graph.publish_node(2, 1).unwrap();
 
     // Verify forward links exist
     let node2 = graph.read_node_record(2).unwrap();
@@ -51,7 +56,8 @@ fn test_forward_links_written_before_backward_links() {
 fn test_empty_neighbor_list() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     let record = graph.read_node_record(0).unwrap();
     assert!(record.get_neighbors(0).is_empty());
@@ -62,8 +68,11 @@ fn test_single_neighbor() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
     // Sequential construction
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
-    graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
+
+    graph.write_node_and_backlinks(1, 1, &[vec![0]]).unwrap();
+    graph.publish_node(1, 1).unwrap();
 
     // Verify forward link
     let node1 = graph.read_node_record(1).unwrap();
@@ -82,12 +91,14 @@ fn test_maximum_neighbors_no_pruning() {
     let m0 = params.m0 as usize;
 
     // Build sequentially
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     for i in 1..=m0.min(50) as u64 {
         // Each node links to all previous nodes up to m0
         let neighbors: Vec<u64> = (0..i).take(m0).collect();
-        graph.link_node_bidirectional(i, 1, &[neighbors]).unwrap();
+        graph.write_node_and_backlinks(i, 1, &[neighbors]).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
 
     // Check a node has correct count
@@ -103,11 +114,13 @@ fn test_exceeds_maximum_triggers_pruning() {
     let m0 = params.m0 as usize;
 
     // Build hub node sequentially
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     // Many nodes link to node 0
     for i in 1..=(m0 + 10) as u64 {
-        graph.link_node_bidirectional(i, 1, &[vec![0]]).unwrap();
+        graph.write_node_and_backlinks(i, 1, &[vec![0]]).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
 
     // Node 0 should have pruned its list
@@ -123,10 +136,12 @@ fn test_diversity_respects_capacity() {
     let m0 = params.m0 as usize;
 
     // Build hub
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     for i in 1..=m0.min(50) {
-        graph.link_node_bidirectional(i as u64, 1, &[vec![0]]).unwrap();
+        graph.write_node_and_backlinks(i as u64, 1, &[vec![0]]).unwrap();
+        graph.publish_node(i as u64, 1).unwrap();
     }
 
     let record = graph.read_node_record(0).unwrap();
@@ -141,10 +156,12 @@ fn test_starvation_fallback_maintains_minimum_degree() {
     let m0 = params.m0 as usize;
     let min_neighbors = m0 / 2;
 
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     for i in 1..=m0.min(50) {
-        graph.link_node_bidirectional(i as u64, 1, &[vec![0]]).unwrap();
+        graph.write_node_and_backlinks(i as u64, 1, &[vec![0]]).unwrap();
+        graph.publish_node(i as u64, 1).unwrap();
     }
 
     let record = graph.read_node_record(0).unwrap();
@@ -158,10 +175,17 @@ fn test_layer_independence_preserved() {
     let (mut graph, _temp) = create_test_graph(100, 128);
 
     // Build multi-layer graph sequentially
-    graph.link_node_bidirectional(0, 3, &[vec![], vec![], vec![]]).unwrap();
-    graph.link_node_bidirectional(1, 3, &[vec![0], vec![0], vec![]]).unwrap();
-    graph.link_node_bidirectional(2, 3, &[vec![0, 1], vec![], vec![]]).unwrap();
-    graph.link_node_bidirectional(3, 3, &[vec![0, 1], vec![0], vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 3, &[vec![], vec![], vec![]]).unwrap();
+    graph.publish_node(0, 3).unwrap();
+
+    graph.write_node_and_backlinks(1, 3, &[vec![0], vec![0], vec![]]).unwrap();
+    graph.publish_node(1, 3).unwrap();
+
+    graph.write_node_and_backlinks(2, 3, &[vec![0, 1], vec![], vec![]]).unwrap();
+    graph.publish_node(2, 3).unwrap();
+
+    graph.write_node_and_backlinks(3, 3, &[vec![0, 1], vec![0], vec![]]).unwrap();
+    graph.publish_node(3, 3).unwrap();
 
     // Verify forward links
     let record = graph.read_node_record(3).unwrap();
@@ -180,9 +204,14 @@ fn test_idempotency_retry_safety() {
     let (mut graph, _temp) = create_test_graph(100, 128);
 
     // Build small graph
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
-    graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
-    graph.link_node_bidirectional(2, 1, &[vec![0]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
+
+    graph.write_node_and_backlinks(1, 1, &[vec![0]]).unwrap();
+    graph.publish_node(1, 1).unwrap();
+
+    graph.write_node_and_backlinks(2, 1, &[vec![0]]).unwrap();
+    graph.publish_node(2, 1).unwrap();
 
     // Simulate retry
     graph.add_backward_link_with_pruning(1, 0, 0).unwrap();
@@ -201,9 +230,12 @@ fn test_idempotency_retry_safety() {
 fn test_self_links_filtered() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
+
     // Try to link node 1 to itself and to node 0
-    graph.link_node_bidirectional(1, 1, &[vec![0, 1]]).unwrap();
+    graph.write_node_and_backlinks(1, 1, &[vec![0, 1]]).unwrap();
+    graph.publish_node(1, 1).unwrap();
 
     // Self-link should be filtered
     let record = graph.read_node_record(1).unwrap();
@@ -216,14 +248,16 @@ fn test_invalid_neighbor_ids_handled_gracefully() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
     // Try to link to nodes that don't exist yet (Model A filters them)
-    graph.link_node_bidirectional(0, 1, &[vec![1, 999, 1000]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![1, 999, 1000]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     // All non-existent neighbors filtered
     let record = graph.read_node_record(0).unwrap();
     assert_eq!(record.get_neighbors(0), vec![]);
 
     // Now add node 1
-    graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
+    graph.write_node_and_backlinks(1, 1, &[vec![0]]).unwrap();
+    graph.publish_node(1, 1).unwrap();
 
     // Node 0 should have backward link from node 1
     let node0 = graph.read_node_record(0).unwrap();
@@ -237,7 +271,8 @@ fn test_sequential_linking_maintains_consistency() {
     // Build ring topology
     for i in 0..50u64 {
         let neighbors = if i > 0 { vec![vec![i - 1]] } else { vec![vec![]] };
-        graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+        graph.write_node_and_backlinks(i, 1, &neighbors).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
 
     assert_eq!(graph.node_count(), 50);
@@ -259,10 +294,12 @@ fn test_high_degree_hub_respects_limits() {
     let params = graph.record_params();
     let m0 = params.m0 as usize;
 
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     for i in 1..100u64 {
-        graph.link_node_bidirectional(i, 1, &[vec![0]]).unwrap();
+        graph.write_node_and_backlinks(i, 1, &[vec![0]]).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
 
     let hub = graph.read_node_record(0).unwrap();
@@ -284,10 +321,12 @@ fn test_identical_vectors_diversity() {
 
     let m0 = graph.record_params().m0 as usize;
 
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     for i in 1..=m0.min(30) {
-        graph.link_node_bidirectional(i as u64, 1, &[vec![0]]).unwrap();
+        graph.write_node_and_backlinks(i as u64, 1, &[vec![0]]).unwrap();
+        graph.publish_node(i as u64, 1).unwrap();
     }
 
     let record = graph.read_node_record(0).unwrap();
@@ -302,13 +341,15 @@ fn test_graph_header_updated_correctly() {
     assert_eq!(graph.max_layer, 0);
 
     // Link 3-layer node
-    graph.link_node_bidirectional(0, 3, &[vec![], vec![], vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 3, &[vec![], vec![], vec![]]).unwrap();
+    graph.publish_node(0, 3).unwrap();
 
     assert_eq!(graph.entry_point, Some(0));
     assert_eq!(graph.max_layer, 2);
 
     // Link higher-layer node
-    graph.link_node_bidirectional(1, 5, &[vec![0], vec![0], vec![0], vec![0], vec![0]]).unwrap();
+    graph.write_node_and_backlinks(1, 5, &[vec![0], vec![0], vec![0], vec![0], vec![0]]).unwrap();
+    graph.publish_node(1, 5).unwrap();
 
     assert_eq!(graph.entry_point, Some(1));
     assert_eq!(graph.max_layer, 4);
@@ -334,7 +375,8 @@ fn test_commit_persists_links() {
         // Sequential construction
         for i in 0..10u64 {
             let neighbors = if i > 0 { vec![vec![(i - 1)]] } else { vec![vec![]] };
-            graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+            graph.write_node_and_backlinks(i, 1, &neighbors).unwrap();
+            graph.publish_node(i, 1).unwrap();
         }
 
         graph.commit().unwrap();
@@ -362,11 +404,13 @@ fn test_new_node_gets_backward_links() {
     // Build chain
     for i in 0..20u64 {
         let neighbors = if i > 0 { vec![vec![i - 1]] } else { vec![vec![]] };
-        graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+        graph.write_node_and_backlinks(i, 1, &neighbors).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
 
     // Add new node
-    graph.link_node_bidirectional(20, 1, &[vec![0, 1, 2]]).unwrap();
+    graph.write_node_and_backlinks(20, 1, &[vec![0, 1, 2]]).unwrap();
+    graph.publish_node(20, 1).unwrap();
 
     // Verify it got backward links
     let new_record = graph.read_node_record(20).unwrap();
@@ -384,7 +428,7 @@ fn test_layer_count_mismatch_error() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
     let neighbors = vec![vec![], vec![]];
-    let result = graph.link_node_bidirectional(0, 3, &neighbors);
+    let result = graph.write_node_and_backlinks(0, 3, &neighbors);
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Layer count mismatch"));
@@ -406,10 +450,12 @@ fn test_neighbor_list_capped_at_capacity() {
     let m0 = params.m0 as usize;
 
     // Build large graph
-    graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+    graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+    graph.publish_node(0, 1).unwrap();
 
     for i in 1..=m0.min(200) as u64 {
-        graph.link_node_bidirectional(i, 1, &[vec![0]]).unwrap();
+        graph.write_node_and_backlinks(i, 1, &[vec![0]]).unwrap();
+        graph.publish_node(i, 1).unwrap();
     }
 
     let record = graph.read_node_record(0).unwrap();
@@ -420,7 +466,7 @@ fn test_neighbor_list_capped_at_capacity() {
 fn test_node_id_invariant_returns_error() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
-    let result = graph.link_node_bidirectional(5, 1, &[vec![]]);
+    let result = graph.write_node_and_backlinks(5, 1, &[vec![]]);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Node ID invariant violated"));
 }

@@ -3,7 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.3.1-alpha...HEAD) - 24 January 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.4.0-alpha...HEAD) - 26 January 2026
+
+## [v0.4.0-alpha](https://github.com/tanvincible/chassis/compare/v0.3.1-alpha...v0.4.0-alpha) - 26 January 2026
+
+### Infrastructure
+
+- chore: release v0.3.1-alpha ([fab6d9a](https://github.com/tanvincible/chassis/commit/fab6d9a90298aea8d52f529044edd35df6b1e62b))
 
 ## [v0.3.1-alpha](https://github.com/tanvincible/chassis/compare/v0.3.0-alpha...v0.3.1-alpha) - 24 January 2026
 

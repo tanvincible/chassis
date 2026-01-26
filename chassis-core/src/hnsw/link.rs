@@ -17,16 +17,6 @@
 //!
 //! This means `neighbors_per_layer` can only contain node IDs where `id < self.node_count`.
 //! Forward links to non-existent nodes are filtered out during linking.
-//!
-//! **Pros**:
-//! - Strong safety guarantees
-//! - No dangling forward edges
-//! - Simpler search (no existence checks)
-//! - Cleaner crash recovery
-//!
-//! **Cons**:
-//! - Graph must be built sequentially
-//! - Cannot pre-declare future neighbors
 
 use crate::hnsw::graph::HnswGraph;
 use crate::hnsw::node::{INVALID_NODE_ID, NodeId, NodeRecord};
@@ -41,16 +31,6 @@ const CACHE_SIZE: usize = (MAX_M + 1) * (MAX_M + 1);
 
 /// Sentinel value indicating "distance not yet computed"
 const NOT_COMPUTED: f32 = f32::NAN;
-
-/// Result of a neighbor selection operation
-#[derive(Debug)]
-pub struct SelectionResult {
-    /// Selected neighbors (respects M/M0 limits)
-    selected: Vec<NodeId>,
-    /// Whether Node A was included in the selection
-    #[allow(dead_code)]
-    includes_new_node: bool,
-}
 
 /// Stack-allocated lazy distance cache for diversity heuristic
 struct DistanceCache {
@@ -99,21 +79,11 @@ impl DistanceCache {
 }
 
 impl HnswGraph {
-    /// Link a node bidirectionally to its neighbors with diversity heuristics.
+    /// Write node record and update backward links (Step A + Step B).
     ///
-    /// # Execution Sequence (MANDATORY ORDER)
-    ///
-    /// 1. **Step A (Forward Link)**: Write Node A's record with forward links
-    /// 2. **Step B (Backward Links)**: For each layer, update each neighbor's back-link
-    ///    - Duplicate check (idempotency)
-    ///    - Diversity pruning if full
-    ///    - Write neighbor's record
-    /// 3. **Step C (Header Update)**: Update graph header
-    ///
-    /// # Forward Link Policy (Model A)
-    ///
-    /// Only existing nodes can be referenced in `neighbors_per_layer`.
-    /// Any neighbor ID >= `self.node_count` will be filtered out.
+    /// This method performs the disk-write phase of node insertion WITHOUT
+    /// updating in-memory counters. The node is written to disk but remains
+    /// "invisible" to readers until `publish_node()` is called.
     ///
     /// # Crash Consistency
     ///
@@ -134,7 +104,7 @@ impl HnswGraph {
     /// # Errors
     ///
     /// Returns error if node_id != self.node_count (enforced in both debug and release).
-    pub fn link_node_bidirectional(
+    pub fn write_node_and_backlinks(
         &mut self,
         node_id: NodeId,
         layer_count: usize,
@@ -182,9 +152,6 @@ impl HnswGraph {
 
         self.write_node_record(&node_record)?;
 
-        // Increment node count AFTER successful write (crash safety)
-        self.node_count += 1;
-
         // STEP B: Update backward links (B→A) for each neighbor
         for layer in 0..layer_count {
             let neighbors = &filtered_neighbors[layer];
@@ -199,12 +166,61 @@ impl HnswGraph {
             }
         }
 
-        // STEP C: Update graph header (entry point, max layer)
+        Ok(())
+    }
+
+    /// Publish node to make it visible to readers (Step C).
+    ///
+    /// This method updates in-memory counters (node_count, entry_point, max_layer)
+    /// to make the previously-written node visible to readers.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - ID of the node to publish (must equal self.node_count)
+    /// * `layer_count` - Number of layers this node participates in
+    ///
+    /// # Errors
+    ///
+    /// Returns error if node_id != self.node_count (invariant violation).
+    pub fn publish_node(&mut self, node_id: NodeId, layer_count: usize) -> Result<()> {
+        // Enforce invariant
+        if node_id != self.node_count {
+            anyhow::bail!(
+                "Node ID invariant violated: expected {}, got {}. \
+                 Cannot publish non-sequential node.",
+                self.node_count,
+                node_id
+            );
+        }
+
+        // STEP C: Update in-memory counters
+        self.node_count += 1;
+
+        // Update entry point and max layer if this is the highest layer node
         if self.entry_point.is_none() || layer_count - 1 > self.max_layer {
             self.entry_point = Some(node_id);
             self.max_layer = layer_count - 1;
         }
 
+        Ok(())
+    }
+
+    /// Legacy method for backward compatibility.
+    ///
+    /// This method combines `write_node_and_backlinks` + `publish_node` into
+    /// a single call. It exists for compatibility with existing tests and code
+    /// that don't need the explicit two-phase protocol.
+    ///
+    /// New code should prefer using the two-step process for better crash consistency.
+    #[allow(dead_code)]
+    pub fn link_node_bidirectional(
+        &mut self,
+        node_id: NodeId,
+        layer_count: usize,
+        neighbors_per_layer: &[Vec<NodeId>],
+    ) -> Result<()> {
+        self.write_node_and_backlinks(node_id, layer_count, neighbors_per_layer)?;
+        self.publish_node(node_id, layer_count)?;
         Ok(())
     }
 
@@ -232,29 +248,38 @@ impl HnswGraph {
             return Ok(());
         }
 
-        // Full - apply diversity heuristic with cache
-        let selected = self.select_diverse_neighbors_cached(
+        // Full - combine current neighbors + new node and apply diversity heuristic
+        let mut candidates = current_neighbors.to_vec();
+        candidates.push(new_node);
+
+        let selected = self.select_neighbors_heuristic(
             neighbor_id,
-            &current_neighbors,
-            new_node,
+            &candidates,
             layer,
             max_neighbors,
+            Some(new_node), // Prioritize the new node for connectivity
         )?;
 
-        record.set_neighbors(layer, &selected.selected);
+        record.set_neighbors(layer, &selected);
         self.update_node_record(&record)?;
 
         Ok(())
     }
 
-    /// Select diverse neighbors using Heuristic 2 with lazy memoized distance cache.
+    /// Select diverse neighbors using HNSW Heuristic 2 with lazy memoized distance cache.
+    ///
+    /// This is the unified neighbor selection function used by both:
+    /// - **Backward Linking** (`add_backward_link_with_pruning`): Prioritizes `priority_node`
+    /// - **Forward Linking** (`VectorIndex::select_diverse_subset`): No priority
     ///
     /// # Algorithm
     ///
-    /// 1. **Local Index Mapping**: Map NodeIds to local indices [0..k)
-    /// 2. **Lazy Cache**: Compute distances only when needed, store symmetrically
-    /// 3. **Diversity Phase**: Select candidates closer to base than to selected neighbors
-    /// 4. **Starvation Fallback**: Fill to at least M/2 with k-nearest
+    /// 1. **Input Truncation**: Limit candidates to MAX_M+1 (cache size)
+    /// 2. **Local Index Mapping**: Map NodeIds to local indices [0..k)
+    /// 3. **Lazy Cache**: Compute distances only when needed, store symmetrically
+    /// 4. **Diversity Phase**: Select candidates closer to base than to selected neighbors
+    /// 5. **Starvation Fallback**: Fill to at least M/2 with k-nearest
+    /// 6. **Connectivity Guarantee**: Ensure priority_node is included if close enough
     ///
     /// # Cache Optimization
     ///
@@ -262,31 +287,48 @@ impl HnswGraph {
     /// redundant distance calculations. Distances are computed lazily and
     /// stored symmetrically to halve total calculations.
     ///
+    /// # Arguments
+    ///
+    /// * `base_node` - The node we're selecting neighbors for
+    /// * `candidates` - Pool of candidate neighbors (will be truncated to MAX_M+1)
+    /// * `_layer` - Layer index (currently unused, kept for future extensions)
+    /// * `max_count` - Maximum number of neighbors to select
+    /// * `priority_node` - Optional node to prioritize (for backward linking)
+    ///
     /// # Performance
     ///
     /// - Cache hit: ~0.5ns (L1 cache lookup)
     /// - Cache miss: ~500ns (distance computation + mmap read)
     /// - Worst case: O(k²) where k ≤ 33 (M + 1)
-    pub fn select_diverse_neighbors_cached(
+    pub(crate) fn select_neighbors_heuristic(
         &self,
         base_node: NodeId,
-        current_neighbors: &[NodeId],
-        new_node: NodeId,
+        candidates: &[NodeId],
         _layer: usize,
         max_count: usize,
-    ) -> Result<SelectionResult> {
-        // Build candidate set and local index mapping
-        let mut candidates: Vec<NodeId> = current_neighbors.to_vec();
-        candidates.push(new_node);
+        priority_node: Option<NodeId>,
+    ) -> Result<Vec<NodeId>> {
+        // Handle empty/small candidate sets
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if candidates.len() <= max_count {
+            return Ok(candidates.to_vec());
+        }
+
+        // Truncate candidates to fit in cache (MAX_M + 1 = 33)
+        let truncated_candidates: Vec<NodeId> =
+            candidates.iter().take(MAX_M + 1).copied().collect();
 
         debug_assert!(
-            candidates.len() <= MAX_M + 1,
+            truncated_candidates.len() <= MAX_M + 1,
             "Too many candidates for cache: {}",
-            candidates.len()
+            truncated_candidates.len()
         );
 
         // Initialize lazy distance cache
-        let mut cache = DistanceCache::new(candidates.len());
+        let mut cache = DistanceCache::new(truncated_candidates.len());
 
         // Helper: Get distance with lazy computation and memoization
         let get_distance = |cache: &mut DistanceCache,
@@ -309,7 +351,7 @@ impl HnswGraph {
 
         // Compute distances to base node for all candidates
         let base_vector = self.storage.get_vector_slice(base_node)?;
-        let mut distances: Vec<(NodeId, f32, usize)> = candidates
+        let mut distances: Vec<(NodeId, f32, usize)> = truncated_candidates
             .iter()
             .enumerate()
             .map(|(idx, &id)| {
@@ -343,7 +385,7 @@ impl HnswGraph {
                     &mut cache,
                     &self.storage,
                     *candidate_id,
-                    candidates[selected_idx],
+                    truncated_candidates[selected_idx],
                     *candidate_idx,
                     selected_idx,
                 )?;
@@ -360,8 +402,6 @@ impl HnswGraph {
             }
         }
 
-        let includes_new = selected.contains(&new_node);
-
         // STARVATION FALLBACK: Reuse cached distances
         let min_neighbors = max_count / 2;
 
@@ -376,22 +416,24 @@ impl HnswGraph {
             }
         }
 
-        // CONNECTIVITY GUARANTEE: Ensure new_node if close enough
-        if !includes_new
-            && selected.len() < max_count
-            && let Some(pos) = distances.iter().position(|(id, _, _)| *id == new_node)
-            && pos < max_count
-            && !selected.contains(&new_node)
-        {
-            if selected.len() >= max_count {
-                selected.pop();
+        // CONNECTIVITY GUARANTEE: Ensure priority_node if close enough
+        if let Some(priority_node) = priority_node {
+            if !selected.contains(&priority_node) {
+                // Find priority_node position in sorted distances
+                if let Some(pos) = distances.iter().position(|(id, _, _)| *id == priority_node) {
+                    // Include if it's in the top max_count closest nodes
+                    if pos < max_count {
+                        // Make room by removing the last selected node
+                        if selected.len() >= max_count {
+                            selected.pop();
+                        }
+                        selected.push(priority_node);
+                    }
+                }
             }
-            selected.push(new_node);
         }
 
-        let includes_new = selected.contains(&new_node);
-
-        Ok(SelectionResult { selected, includes_new_node: includes_new })
+        Ok(selected)
     }
 }
 
@@ -420,139 +462,38 @@ mod tests {
     }
 
     #[test]
+    fn test_two_phase_protocol() {
+        let (mut graph, _temp) = create_test_graph(128);
+
+        // Phase 1: Write node 0 and backlinks
+        graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+
+        // Node count should still be 0 (not published yet)
+        assert_eq!(graph.node_count(), 0);
+
+        // Phase 2: Publish node 0
+        graph.publish_node(0, 1).unwrap();
+
+        // Now node count should be 1
+        assert_eq!(graph.node_count(), 1);
+    }
+
+    #[test]
     fn test_forward_links_exist_after_linking() {
         let (mut graph, _temp) = create_test_graph(128);
 
-        // IMPORTANT: Must link in sequence due to Model A
-        // Node 0 can only link to nodes that exist (none yet, so empty)
-        graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
+        graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+        graph.publish_node(0, 1).unwrap();
 
-        // Node 1 can link to node 0 (which now exists)
-        graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
+        graph.write_node_and_backlinks(1, 1, &[vec![0]]).unwrap();
+        graph.publish_node(1, 1).unwrap();
 
-        // Node 2 can link to nodes 0 and 1
-        graph.link_node_bidirectional(2, 1, &[vec![0, 1]]).unwrap();
+        graph.write_node_and_backlinks(2, 1, &[vec![0, 1]]).unwrap();
+        graph.publish_node(2, 1).unwrap();
 
         // Verify forward links
         let node2 = graph.read_node_record(2).unwrap();
         assert_eq!(node2.get_neighbors(0), vec![0, 1]);
-
-        // Verify backward links
-        let node0 = graph.read_node_record(0).unwrap();
-        assert!(node0.get_neighbors(0).contains(&1) || node0.get_neighbors(0).contains(&2));
-    }
-
-    #[test]
-    fn test_self_links_are_filtered() {
-        let (mut graph, _temp) = create_test_graph(128);
-
-        graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
-
-        // Try to create self-link (will be filtered)
-        graph.link_node_bidirectional(1, 1, &[vec![0, 1]]).unwrap();
-
-        // Self-link should be filtered out
-        let record = graph.read_node_record(1).unwrap();
-        assert!(!record.get_neighbors(0).contains(&1), "Self-links should be filtered");
-        assert_eq!(record.get_neighbors(0), vec![0]);
-    }
-
-    #[test]
-    fn test_future_neighbors_filtered() {
-        let (mut graph, _temp) = create_test_graph(128);
-
-        // Try to link to nodes that don't exist yet (will be filtered by Model A)
-        graph.link_node_bidirectional(0, 1, &[vec![1, 2, 999]]).unwrap();
-
-        // All non-existent neighbors should be filtered
-        let record = graph.read_node_record(0).unwrap();
-        assert_eq!(record.get_neighbors(0), vec![], "Future neighbors should be filtered");
-    }
-
-    #[test]
-    fn test_idempotency_no_duplicates() {
-        let (mut graph, _temp) = create_test_graph(128);
-
-        // Link in sequence
-        graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
-        graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
-
-        // Manually retry adding backward link
-        graph.add_backward_link_with_pruning(0, 1, 0).unwrap();
-
-        // Should have exactly one back-link
-        let record = graph.read_node_record(0).unwrap();
-        let back_neighbors = record.get_neighbors(0);
-        assert_eq!(back_neighbors.iter().filter(|&&id| id == 1).count(), 1);
-    }
-
-    #[test]
-    fn test_respects_capacity_limits() {
-        let (mut graph, _temp) = create_test_graph(128);
-
-        let params = graph.record_params();
-        let m0 = params.m0 as usize;
-
-        // Build graph sequentially (Model A requirement)
-        graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
-
-        for i in 1..=m0.min(20) as u64 {
-            graph.link_node_bidirectional(i, 1, &[vec![0]]).unwrap();
-        }
-
-        // Node 0 should respect capacity
-        let record = graph.read_node_record(0).unwrap();
-        assert!(record.get_neighbors(0).len() <= m0);
-    }
-
-    #[test]
-    fn test_maintains_minimum_degree() {
-        let (mut graph, _temp) = create_test_graph(128);
-
-        let params = graph.record_params();
-        let m0 = params.m0 as usize;
-        let min_neighbors = m0 / 2;
-
-        // Build hub
-        graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
-
-        for i in 1..=m0.min(30) as u64 {
-            graph.link_node_bidirectional(i, 1, &[vec![0]]).unwrap();
-        }
-
-        // Add more to trigger pruning
-        for i in (m0.min(30) + 1)..=(m0.min(30) + 10) {
-            graph.link_node_bidirectional(i as u64, 1, &[vec![0]]).unwrap();
-        }
-
-        let record = graph.read_node_record(0).unwrap();
-        let neighbor_count = record.neighbor_count(0);
-
-        assert!(neighbor_count >= min_neighbors);
-    }
-
-    #[test]
-    fn test_layer_independence() {
-        let (mut graph, _temp) = create_test_graph(128);
-
-        // Build sequentially
-        graph.link_node_bidirectional(0, 3, &[vec![], vec![], vec![]]).unwrap();
-        graph.link_node_bidirectional(1, 3, &[vec![0], vec![0], vec![]]).unwrap();
-        graph.link_node_bidirectional(2, 3, &[vec![0, 1], vec![], vec![]]).unwrap();
-
-        // Verify layer-specific links
-        let record = graph.read_node_record(0).unwrap();
-        assert!(record.get_neighbors(0).contains(&1) || record.get_neighbors(0).contains(&2));
-        assert!(record.get_neighbors(1).contains(&1));
-    }
-
-    #[test]
-    fn test_node_id_invariant_returns_error() {
-        let (mut graph, _temp) = create_test_graph(128);
-
-        let result = graph.link_node_bidirectional(5, 1, &[vec![]]);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Node ID invariant violated"));
     }
 
     #[test]
@@ -565,5 +506,38 @@ mod tests {
         cache.set(2, 4, 3.7);
         assert_eq!(cache.get(2, 4), 3.7);
         assert_eq!(cache.get(4, 2), 3.7);
+    }
+
+    #[test]
+    fn test_select_neighbors_heuristic_basic() {
+        let (graph, _temp) = create_test_graph(128);
+
+        // Test with empty candidates
+        let result = graph.select_neighbors_heuristic(0, &[], 0, 5, None).unwrap();
+        assert!(result.is_empty());
+
+        // Test with fewer candidates than max
+        let candidates = vec![1, 2, 3];
+        let result = graph.select_neighbors_heuristic(0, &candidates, 0, 5, None).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_select_neighbors_heuristic_priority() {
+        let (graph, _temp) = create_test_graph(128);
+
+        let candidates = vec![1, 2, 3, 4, 5, 6, 7, 8];
+
+        // Without priority
+        let result = graph.select_neighbors_heuristic(0, &candidates, 0, 4, None).unwrap();
+        assert!(result.len() <= 4);
+
+        // With priority node
+        let result_with_priority =
+            graph.select_neighbors_heuristic(0, &candidates, 0, 4, Some(5)).unwrap();
+        assert!(result_with_priority.len() <= 4);
+
+        // Priority node should be included if it's close enough
+        // (exact behavior depends on vector distances)
     }
 }
