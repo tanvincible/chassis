@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [v0.4.0-alpha](https://github.com/tanvincible/chassis/compare/v0.3.1-alpha...v0.4.0-alpha) - 26 January 2026
 
+### Added
+
+- feat: implement VectorIndex facade and crash-safe orchestration ([e1ad599](https://github.com/tanvincible/chassis/commit/e1ad599951212256f9ce1f713f31404ea229df8d))
+
 ### Infrastructure
 
 - chore: release v0.3.1-alpha ([fab6d9a](https://github.com/tanvincible/chassis/commit/fab6d9a90298aea8d52f529044edd35df6b1e62b))
