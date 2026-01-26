@@ -1,49 +1,52 @@
 # Basic Usage
 
-## Inserting Vectors
+## Workflow Overview
 
-Use the `insert` method to add a vector to storage. The vector must match the dimensions specified when opening the file.
+Using Chassis involves three steps:
+1. **Open**: Initialize the `VectorIndex`.
+2. **Write**: Add vectors and flush to disk.
+3. **Read**: Search for nearest neighbors.
 
-```rust
-let vector = vec![0.1, 0.2, 0.3]; // Must be 768 elements for a 768-dim index
-let id = storage.insert(&vector)?;
-```
-
-The method returns the index of the inserted vector, starting from 0. Inserts are append-only. Each call to `insert` increments the internal counter.
-
-If the vector has the wrong number of dimensions, `insert` returns an error.
-
-## Retrieving Vectors
-
-Retrieve a vector by its index:
+## 1. Initialization
 
 ```rust
-let vector = storage.get_vector(id)?;
+use chassis_core::{VectorIndex, IndexOptions};
+
+let options = IndexOptions {
+    max_connections: 16,
+    ef_construction: 200,
+    ef_search: 50,
+};
+
+let mut index = VectorIndex::open("./data.chassis", 1536, options)?;
 ```
 
-This returns an owned `Vec<f32>` containing a copy of the vector data. If the index is out of bounds, the method returns an error.
+## 2. Insertion
 
-## Committing Changes
-
-By default, `insert` does not guarantee durability. To ensure data survives a crash or power loss, call `commit`:
+Chassis assigns a sequential ID (`u64`) to every vector you add. You should store this ID in your external database (e.g., SQLite/Postgres) to map it back to your application data.
 
 ```rust
-storage.insert(&vector1)?;
-storage.insert(&vector2)?;
-storage.commit()?; // Flush to disk
+let embedding = compute_embedding("Example text"); // [f32; 1536]
+
+let id = index.add(&embedding)?;
+println!("Stored vector at ID: {}", id);
+
+// Important: Commit to disk!
+index.flush()?;
 ```
 
-The `commit` method forces all pending writes to disk using `fsync`. This is slow but necessary for durability.
+## 3. Search
 
-For batch operations, insert many vectors and call `commit` once at the end.
-
-## Checking Count and Dimensions
-
-Query the current state of the storage:
+Search is thread-safe and can run concurrently with other readers (but not writers).
 
 ```rust
-let count = storage.count();       // Number of vectors
-let dims = storage.dimensions();   // Vector dimensions
-```
+let query = compute_embedding("Search query");
+let k = 5;
 
-These methods do not perform I/O. They read from the in-memory header.
+let results = index.search(&query, k)?;
+
+println!("Found {} matches:", results.len());
+for res in results {
+    println!("- ID: {}, Score: {}", res.id, res.distance);
+}
+```

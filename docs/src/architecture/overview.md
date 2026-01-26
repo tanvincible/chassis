@@ -107,6 +107,9 @@ Chassis implements a **SWMR (Single-Writer, Multi-Reader)** model:
 
 ## Component Responsibilities
 
+### Orchestration Layer (`lib.rs`)
+- **`VectorIndex`**: The public facade. It manages the `Storage` and `HnswGraph` instances, ensuring that all operations follow the **Crash Consistency Protocol** (e.g., correct write ordering) and handling **Ghost Node Recovery** automatically on startup.
+
 ### Storage Layer (`storage.rs`)
 - **File lifecycle**: Open, growth, exclusive locking
 - **Vector persistence**: Append-only insertion with page-aligned growth

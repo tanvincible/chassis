@@ -10,6 +10,11 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 Chassis provides a high-performance vector storage, graph construction, and search core:
 
+### High-Level API (New in v0.4.0)
+* **`VectorIndex` Facade**: A clean, unified entry point that orchestrates storage, compute, and graph operations.
+* **Consistency Orchestration**: Automates the "Register Last" insertion protocol to guarantee readers never see uninitialized data.
+* **Ghost Node Recovery**: Automatically detects and recovers from partial writes during power loss ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
+
 ### Storage Layer
 * **Zero-Copy I/O**: Memory-mapped vectors allow accessing 1536d embeddings in nanoseconds.
 * **ACID Persistence**: Explicit `fsync`-backed commit strategy.
@@ -21,7 +26,7 @@ Chassis provides a high-performance vector storage, graph construction, and sear
 * **Diversity Heuristics**: Implements robust neighbor pruning (Heuristic 2) to prevent clustering.
 * **Crash Consistency**: Atomic write ordering ensures the graph structure is never corrupted, even on power loss.
 
-### Search Layer (New in v0.3.0)
+### Search Layer
 * **SIMD Acceleration**: Hardware-accelerated distance kernels (AVX2 for x86, NEON for ARM) provide ~23 Gelem/s throughput.
 * **Zero-Allocation Traversal**: The hot search path allocates no heap memory, ensuring consistent P99 latency.
 * **High Performance**: Achieves sub-50µs latency for 1536d vectors (OpenAI embeddings) on commodity hardware.
@@ -50,9 +55,11 @@ These concerns are intentionally left to the embedding application.
 
 ## Status
 
-**Alpha (v0.3.0)**
+**Alpha (v0.4.0)**
 
-The core storage, graph topology, and search implementation are complete and performance-hardened. The API is currently being wrapped in a high-level `VectorIndex` abstraction (Step 8).
+The core storage engine is feature-complete. It now exposes a stable Rust API (`VectorIndex`) that handles crash consistency and orchestration.
+
+Work is currently underway on the **Foreign Function Interface (FFI)** layer to support bindings for Python, Node.js, and C++.
 
 ## License
 

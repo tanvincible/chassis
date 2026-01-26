@@ -6,27 +6,37 @@ Add Chassis to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chassis-core = "0.1"
+chassis-core = "0.4.0-alpha"
 ```
 
-## Opening an Index
-
-Create or open a Chassis file by specifying a path and the number of dimensions your vectors will have:
+## Quick Start
 
 ```rust
-use chassis_core::Storage;
+use chassis_core::{VectorIndex, IndexOptions};
+use anyhow::Result;
 
-let mut storage = Storage::open("vectors.chassis", 768)?;
+fn main() -> Result<()> {
+    // 1. Open the index (creates file if missing)
+    let mut index = VectorIndex::open(
+        "quickstart.chassis", 
+        3, // 3D vectors for demo
+        IndexOptions::default()
+    )?;
+
+    // 2. Add some data
+    index.add(&[1.0, 0.0, 0.0])?; // ID 0
+    index.add(&[0.0, 1.0, 0.0])?; // ID 1
+    index.add(&[0.0, 0.0, 1.0])?; // ID 2
+    
+    index.flush()?;
+
+    // 3. Search
+    let query = vec![1.0, 0.1, 0.0];
+    let results = index.search(&query, 1)?;
+
+    assert_eq!(results[0].id, 0); // Should match ID 0 best
+    println!("Nearest neighbor: ID {}", results[0].id);
+
+    Ok(())
+}
 ```
-
-If the file does not exist, Chassis creates it. If it exists, Chassis validates that the dimensions match what you specified. A dimension mismatch returns an error.
-
-## File Locking
-
-Chassis locks the file when you open it. Only one process can open a Chassis file at a time. If another process already has the file open, `Storage::open` returns an error.
-
-The lock is released when the `Storage` object is dropped.
-
-## Error Handling
-
-All operations return `Result` types. Errors include context about what failed and why. For example, trying to open a file with mismatched dimensions produces an error message that states both the expected and actual dimensions.
