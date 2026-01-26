@@ -3,13 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.4.1...HEAD) - 26 January 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.4.1-alpha...HEAD) - 26 January 2026
 
-## [v0.4.1](https://github.com/tanvincible/chassis/compare/v0.4.0-alpha...v0.4.1) - 26 January 2026
+## [v0.4.1-alpha](https://github.com/tanvincible/chassis/compare/v0.4.0-alpha...v0.4.1-alpha) - 26 January 2026
 
 ### Documentation
 
-- docs: update documentation for VectorIndex facade API (v0.4.1) ([4ee0a62](https://github.com/tanvincible/chassis/commit/4ee0a62b3e863f1137095c1fc2ff0b74863154f9))
+- docs: update documentation for VectorIndex facade API (v0.4.1) ([4adb078](https://github.com/tanvincible/chassis/commit/4adb078714a2e9c4674010471cb8a561f0c29892))
 
 ### Infrastructure
 
