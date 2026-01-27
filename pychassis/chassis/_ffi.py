@@ -54,7 +54,7 @@ def _find_library() -> Path:
     if lib_path.exists():
         return lib_path
 
-    # 3. Development location (../../target/release from pychassis/)
+    # 3. Development location (../../target/release from chassis/)
     dev_path = this_dir.parent.parent / "target" / "release" / lib_name
     if dev_path.exists():
         return dev_path

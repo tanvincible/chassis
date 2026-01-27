@@ -1,4 +1,4 @@
-# PyChasis - Python Bindings for Chassis
+# PyChassis - Python Bindings for Chassis
 
 High-performance Python bindings for the Chassis vector storage engine.
 
@@ -20,7 +20,7 @@ High-performance Python bindings for the Chassis vector storage engine.
    cargo build --release
    ```
 
-2. Install PyChasis:
+2. Install PyChassis:
    ```bash
    cd ../pychassis
    pip install -e .
@@ -47,7 +47,7 @@ ruff check pychassis tests
 
 ```python
 import numpy as np
-from pychassis import VectorIndex
+from chassis import VectorIndex
 
 # Create or open an index
 index = VectorIndex("embeddings.chassis", dimensions=768)
@@ -283,7 +283,7 @@ with ThreadPoolExecutor() as executor:
 
 ## Library Location
 
-PyChasis looks for `libchassis_ffi` in this order:
+PyChassis looks for `libchassis_ffi` in this order:
 
 1. `CHASSIS_LIB_PATH` environment variable
 2. Next to the Python package

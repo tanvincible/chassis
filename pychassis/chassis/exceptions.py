@@ -1,4 +1,4 @@
-"""Exception classes for PyChasis."""
+"""Exception classes for PyChassis."""
 
 
 class ChassisError(Exception):
