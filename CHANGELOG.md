@@ -3,7 +3,17 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.5.0-alpha...HEAD) - 26 January 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.5.0...HEAD) - 27 January 2026
+
+## [v0.5.0](https://github.com/tanvincible/chassis/compare/v0.5.0-alpha...v0.5.0) - 27 January 2026
+
+### Added
+
+- feat: implement full python bindings and release v0.5.0 ([2796ad0](https://github.com/tanvincible/chassis/commit/2796ad0028d5e0ad4a48cf8ce114a5bc18239e4b))
+
+### Infrastructure
+
+- chore: Release v0.5.0-alpha ([ef74d03](https://github.com/tanvincible/chassis/commit/ef74d036bac02b5c80a5a60a452b9344571d441b))
 
 ## [v0.5.0-alpha](https://github.com/tanvincible/chassis/compare/v0.4.1-alpha...v0.5.0-alpha) - 27 January 2026
 
