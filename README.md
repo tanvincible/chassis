@@ -10,8 +10,13 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 Chassis provides a high-performance vector storage, graph construction, and search core:
 
-### Universal Interface (New in v0.5.0)
-* **Stable C ABI**: A fully compliant C-compatible FFI layer enables Chassis to be embedded in C, C++, Python, Node.js, and Go.
+### Python Support (New in v0.5.0)
+* **Native Bindings**: Full Python support via the `pychassis` package.
+* **Zero-Copy**: Seamless integration with NumPy for high-performance data transfer.
+* **Easy Installation**: Installable via standard tools (`pip install .`).
+
+### Universal Interface
+* **Stable C ABI**: A fully compliant C-compatible FFI layer enables Chassis to be embedded in C, C++, Node.js, and Go.
 * **Safety Fortress**: The `ffi_guard` architecture guarantees that Rust panics never crash the host process.
 * **Opaque Handle Design**: Uses the "Pimpl" pattern to ensure ABI stability while hiding internal Rust implementation details.
 
@@ -60,14 +65,13 @@ These concerns are intentionally left to the embedding application.
 
 ## Status
 
-**Alpha (v0.5.0)**
+**v0.5.0 (Stable)**
 
-The core storage engine and C FFI layer are feature-complete.
+The core storage engine, C FFI layer, and Python bindings are feature-complete and ready for use.
 
 * **Core Engine**: Stable Rust API (`VectorIndex`) with crash consistency.
-* **Universal Interface**: Stable C ABI (`chassis.h`) for embedding.
-
-Work is currently underway on **native language bindings** (`chassis-py` and `chassis-node`) to make the engine installable via `pip` and `npm`.
+* **Python**: Native `chassis` package with NumPy support.
+* **C ABI**: Stable `chassis.h` for embedding in other languages.
 
 ## License
 

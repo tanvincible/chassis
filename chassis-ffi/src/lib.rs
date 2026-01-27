@@ -119,7 +119,7 @@ where
 }
 
 //
-// === LIFECYCLE MANAGEMENT ===
+//  LIFECYCLE MANAGEMENT 
 //
 
 /// Open or create a Chassis vector index
@@ -308,7 +308,7 @@ pub unsafe extern "C" fn chassis_free(ptr: *mut ChassisIndex) {
 }
 
 //
-// === VECTOR OPERATIONS ===
+//  VECTOR OPERATIONS 
 //
 
 /// Add a vector to the index
@@ -565,7 +565,7 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
 }
 
 //
-// === INTROSPECTION ===
+//  INTROSPECTION 
 //
 
 /// Get the number of vectors in the index
@@ -654,7 +654,7 @@ pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
 }
 
 //
-// === ERROR HANDLING ===
+//  ERROR HANDLING 
 //
 
 /// Get the last error message for the current thread
@@ -693,7 +693,7 @@ pub extern "C" fn chassis_last_error_message() -> *const c_char {
 }
 
 //
-// === VERSIONING ===
+//  VERSIONING 
 //
 
 /// Get the Chassis library version
@@ -722,7 +722,7 @@ pub extern "C" fn chassis_version() -> *const c_char {
     VERSION.as_ptr() as *const c_char
 }
 //
-// === TESTS ===
+//  TESTS 
 //
 
 #[cfg(test)]
