@@ -20,18 +20,20 @@ def main():
     DIMENSIONS = 768
     NUM_VECTORS = 10_000
     BATCH_SIZE = 1000
+    K = 10
+    NUM_QUERIES = 100
 
     print("\nConfiguration:")
     print(f"  Dimensions: {DIMENSIONS}")
     print(f"  Total vectors: {NUM_VECTORS:,}")
     print(f"  Batch size: {BATCH_SIZE:,}")
+    print(f"  Search k: {K}")
+    print(f"  Search queries: {NUM_QUERIES}")
 
-    # Create index with context manager
     print("\nCreating index...")
     with VectorIndex("batch_example.chassis", dimensions=DIMENSIONS) as index:
         print(f"Index created: {index.path}")
 
-        # Generate and insert vectors in batches
         print(f"\nInserting {NUM_VECTORS:,} vectors...")
         start_time = time.time()
 
@@ -39,16 +41,13 @@ def main():
             batch_end = min(batch_start + BATCH_SIZE, NUM_VECTORS)
             batch_size = batch_end - batch_start
 
-            # Generate batch of random vectors
             batch = np.random.rand(batch_size, DIMENSIONS).astype(np.float32)
 
-            # Insert each vector in the batch
             batch_start_time = time.time()
             for vec in batch:
                 index.add(vec)
             batch_time = time.time() - batch_start_time
 
-            # Progress update
             progress = (batch_end / NUM_VECTORS) * 100
             vec_per_sec = batch_size / batch_time if batch_time > 0 else 0
             print(
@@ -63,33 +62,37 @@ def main():
         print(f"  Average: {NUM_VECTORS / insert_time:,.0f} vectors/sec")
         print(f"  Index size: {len(index):,} vectors")
 
-        # Flush to disk
         print("\nFlushing to disk...")
         flush_start = time.time()
         index.flush()
         flush_time = time.time() - flush_start
         print(f"  Flush time: {flush_time:.2f}s")
 
-        # Test search performance
         print("\nTesting search performance...")
-        num_queries = 100
+
+        # Pre-generate queries to avoid timing RNG
+        queries = np.random.rand(NUM_QUERIES, DIMENSIONS).astype(np.float32)
+
         search_times = []
 
-        for _ in range(num_queries):
-            search_start = time.time()
-            search_time = time.time() - search_start
+        for q in queries:
+            t0 = time.perf_counter()
+            results = index.search(q, k=K)
+            t1 = time.perf_counter()
 
-            search_times.append(search_time)
+            # Touch results to prevent dead-code elimination
+            _ = results[0].id
+            search_times.append(t1 - t0)
 
-        avg_search_time = sum(search_times) / len(search_times)
-        min_search_time = min(search_times)
-        max_search_time = max(search_times)
+        avg = sum(search_times) / len(search_times)
+        min_t = min(search_times)
+        max_t = max(search_times)
 
-        print(f"\nSearch performance ({num_queries} queries):")
-        print(f"  Average: {avg_search_time * 1000:.2f}ms")
-        print(f"  Min: {min_search_time * 1000:.2f}ms")
-        print(f"  Max: {max_search_time * 1000:.2f}ms")
-        print(f"  Throughput: {1 / avg_search_time:,.0f} queries/sec")
+        print(f"\nSearch performance ({NUM_QUERIES} queries, k={K}):")
+        print(f"  Average: {avg * 1000:.2f} ms")
+        print(f"  Min: {min_t * 1000:.2f} ms")
+        print(f"  Max: {max_t * 1000:.2f} ms")
+        print(f"  Throughput: {1 / avg:,.0f} queries/sec")
 
     print("\n" + "=" * 60)
     print("Example complete!")
