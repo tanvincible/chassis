@@ -1,0 +1,26 @@
+site_name: Chassis Python Docs
+site_description: Python bindings for Chassis vector storage engine
+site_url: https://tanvincible.github.io/pychassis/
+
+theme:
+  name: material
+
+docs_dir: docs
+site_dir: site
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - Quickstart: user-guide/quickstart.md
+      - Performance: user-guide/performance.md
+  - API:
+      - Overview: api/index_class.md
+      - Exceptions: api/exceptions.md
+      - Options: api/options.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
