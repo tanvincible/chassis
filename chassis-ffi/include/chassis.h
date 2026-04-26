@@ -3,7 +3,7 @@
 
 /* Thread Safety: */
 /* - chassis_open, chassis_free: Thread-safe if called with different indices */
-/* - chassis_add, chassis_flush: Single-writer (exclusive access required) */
+/* - chassis_add, chassis_add_batch, chassis_flush: Single-writer (exclusive access required) */
 /* - chassis_search: Multi-reader (shared access allowed) */
 
 
@@ -165,6 +165,55 @@ void chassis_free(struct ChassisIndex *ptr);
  * - No other thread may access `ptr` during this call
  */
 uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
+
+/**
+ * Add multiple vectors to the index in one call (row-major layout)
+ *
+ * # Arguments
+ *
+ * - `ptr`: Non-NULL pointer to index (requires exclusive access)
+ * - `vectors`: Contiguous `count * dim` floats: row `i` is
+ *   `vectors[i*dim .. (i+1)*dim]`
+ * - `count`: Number of vectors to insert
+ * - `dim`: Elements per vector (must match index dimensions)
+ * - `out_ids`: Output buffer for assigned IDs, length at least `count` (if `count > 0`)
+ *
+ * # Returns
+ *
+ * - Number of vectors successfully inserted
+ * - On first error, stops and returns the count inserted so far; use
+ *   `chassis_last_error_message()` for the reason
+ * - If `count == 0`, returns `0` and succeeds (pointers need not be valid)
+ *
+ * # Thread Safety
+ *
+ * **SINGLE-WRITER**: Same as `chassis_add()`.
+ *
+ * # Performance Note
+ *
+ * Amortizes FFI overhead across many rows; does not by itself change durability.
+ * Call `chassis_flush()` when you need data on disk.
+ *
+ * # Example (C)
+ *
+ * ```c
+ * float *batch; // count * dim elements, row-major
+ * uint64_t ids[1000];
+ * size_t n = chassis_add_batch(index, batch, 1000, 768, ids);
+ * if (n < 1000) {
+ *     fprintf(stderr, "Batch add failed: %s\n", chassis_last_error_message());
+ * }
+ * ```
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ * - If `count > 0`, `vectors` and `out_ids` must be non-NULL; `vectors` must point
+ *   to `count * dim` valid floats
+ * - `dim` must match dimensions passed to `chassis_open()`
+ * - No other thread may access `ptr` during this call
+ */
+size_t chassis_add_batch(struct ChassisIndex *ptr, const float *vectors, size_t count, size_t dim, uint64_t *out_ids);
 
 /**
  * Search for k nearest neighbors

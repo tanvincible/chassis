@@ -15,7 +15,7 @@ header = """
 
 /* Thread Safety: */
 /* - chassis_open, chassis_free: Thread-safe if called with different indices */
-/* - chassis_add, chassis_flush: Single-writer (exclusive access required) */
+/* - chassis_add, chassis_add_batch, chassis_flush: Single-writer (exclusive access required) */
 /* - chassis_search: Multi-reader (shared access allowed) */
 """
 

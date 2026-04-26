@@ -13,12 +13,14 @@
 //! # Error Handling
 //!
 //! Errors are reported through:
-//! - Return values: `u64::MAX` for add, `0` for search, `-1` for flush
+//! - Return values: `u64::MAX` for add, `size_t` insert count for `chassis_add_batch`
+//!   (on partial failure, less than requested; on total failure of a non-empty batch, `0`),
+//!   `0` for search, `-1` for flush
 //! - Thread-local error message: `chassis_last_error_message()`
 //!
 //! # Thread Safety
 //!
-//! - Single-writer: `chassis_add`, `chassis_flush` require exclusive access
+//! - Single-writer: `chassis_add`, `chassis_add_batch`, `chassis_flush` require exclusive access
 //! - Multi-reader: `chassis_search` allows concurrent readers
 //! - Each thread has its own error message storage
 
@@ -392,6 +394,132 @@ pub unsafe extern "C" fn chassis_add(
         }
     })
     .unwrap_or(u64::MAX)
+}
+
+/// Add multiple vectors to the index in one call (row-major layout)
+///
+/// # Arguments
+///
+/// - `ptr`: Non-NULL pointer to index (requires exclusive access)
+/// - `vectors`: Contiguous `count * dim` floats: row `i` is
+///   `vectors[i*dim .. (i+1)*dim]`
+/// - `count`: Number of vectors to insert
+/// - `dim`: Elements per vector (must match index dimensions)
+/// - `out_ids`: Output buffer for assigned IDs, length at least `count` (if `count > 0`)
+///
+/// # Returns
+///
+/// - Number of vectors successfully inserted
+/// - On first error, stops and returns the count inserted so far; use
+///   `chassis_last_error_message()` for the reason
+/// - If `count == 0`, returns `0` and succeeds (pointers need not be valid)
+///
+/// # Thread Safety
+///
+/// **SINGLE-WRITER**: Same as `chassis_add()`.
+///
+/// # Performance Note
+///
+/// Amortizes FFI overhead across many rows; does not by itself change durability.
+/// Call `chassis_flush()` when you need data on disk.
+///
+/// # Example (C)
+///
+/// ```c
+/// float *batch; // count * dim elements, row-major
+/// uint64_t ids[1000];
+/// size_t n = chassis_add_batch(index, batch, 1000, 768, ids);
+/// if (n < 1000) {
+///     fprintf(stderr, "Batch add failed: %s\n", chassis_last_error_message());
+/// }
+/// ```
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+/// - If `count > 0`, `vectors` and `out_ids` must be non-NULL; `vectors` must point
+///   to `count * dim` valid floats
+/// - `dim` must match dimensions passed to `chassis_open()`
+/// - No other thread may access `ptr` during this call
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_add_batch(
+    ptr: *mut ChassisIndex,
+    vectors: *const c_float,
+    count: size_t,
+    dim: size_t,
+    out_ids: *mut u64,
+) -> size_t {
+    ffi_guard(|| {
+        if ptr.is_null() {
+            set_last_error("Null index pointer");
+            return 0;
+        }
+
+        if count == 0 {
+            clear_last_error();
+            return 0;
+        }
+
+        if vectors.is_null() || out_ids.is_null() {
+            set_last_error("Null buffer pointers");
+            return 0;
+        }
+
+        if dim == 0 {
+            set_last_error("Vector dimension must be > 0");
+            return 0;
+        }
+
+        // SAFETY: Caller guarantees ptr is valid and has exclusive access
+        let state = unsafe { (ptr as *mut ChassisIndexState).as_mut() };
+        let index = match state {
+            Some(s) => &mut s.inner,
+            None => {
+                set_last_error("Null index pointer");
+                return 0;
+            }
+        };
+
+        let index_dim = index.dimensions() as usize;
+        if dim != index_dim {
+            set_last_error(format!(
+                "Vector dimension mismatch: expected {}, got {}",
+                index_dim, dim
+            ));
+            return 0;
+        }
+
+        let total = match dim.checked_mul(count) {
+            Some(t) => t,
+            None => {
+                set_last_error("Vector batch size overflow");
+                return 0;
+            }
+        };
+
+        // SAFETY: Caller guarantees `vectors` points to at least `total` floats
+        let data = unsafe { slice::from_raw_parts(vectors, total) };
+
+        for i in 0..count {
+            let start = i * dim;
+            let row = &data[start..start + dim];
+            match index.add(row) {
+                Ok(id) => {
+                    unsafe {
+                        *out_ids.add(i) = id;
+                    }
+                    clear_last_error();
+                }
+                Err(e) => {
+                    set_last_error(e);
+                    return i;
+                }
+            }
+        }
+
+        count
+    })
+    .unwrap_or(0)
 }
 
 /// Search for k nearest neighbors
@@ -862,6 +990,102 @@ mod tests {
 
         unsafe { chassis_free(ptr) };
         let _ = std::fs::remove_file("ffi_test_options.chassis");
+    }
+
+    #[test]
+    fn test_ffi_add_batch_success() {
+        const DIM: usize = 128;
+        const COUNT: usize = 3;
+        let path = CString::new("ffi_test_batch.chassis").unwrap();
+        let ptr = unsafe { chassis_open(path.as_ptr(), DIM as u32) };
+        assert!(!ptr.is_null());
+
+        let mut batch = Vec::with_capacity(COUNT * DIM);
+        for row in 0..COUNT {
+            let v = 0.1f32 + 0.1f32 * row as f32;
+            batch.extend(std::iter::repeat(v).take(DIM));
+        }
+
+        let mut out_ids = vec![0u64; COUNT];
+        let n = unsafe {
+            chassis_add_batch(
+                ptr,
+                batch.as_ptr(),
+                COUNT,
+                DIM,
+                out_ids.as_mut_ptr(),
+            )
+        };
+        assert_eq!(n, COUNT);
+        assert_eq!(out_ids, vec![0u64, 1, 2]);
+        assert_eq!(unsafe { chassis_len(ptr) }, COUNT as u64);
+
+        let query = &batch[0..DIM];
+        let mut ids = vec![0u64; 5];
+        let mut dists = vec![0.0f32; 5];
+        let n_search = unsafe {
+            chassis_search(
+                ptr,
+                query.as_ptr(),
+                DIM,
+                5,
+                ids.as_mut_ptr(),
+                dists.as_mut_ptr(),
+            )
+        };
+        assert!(n_search > 0);
+
+        let flush = unsafe { chassis_flush(ptr) };
+        assert_eq!(flush, 0);
+        unsafe { chassis_free(ptr) };
+        let _ = std::fs::remove_file("ffi_test_batch.chassis");
+    }
+
+    #[test]
+    fn test_ffi_add_batch_dimension_mismatch() {
+        let path = CString::new("ffi_test_batch_dims.chassis").unwrap();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
+        assert!(!ptr.is_null());
+
+        let batch = vec![0.1f32; 64];
+        let mut out_ids = vec![0u64; 1];
+        let n = unsafe { chassis_add_batch(ptr, batch.as_ptr(), 1, 64, out_ids.as_mut_ptr()) };
+        assert_eq!(n, 0);
+
+        let error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
+        assert!(error.to_string_lossy().to_lowercase().contains("dimension"));
+
+        unsafe { chassis_free(ptr) };
+        let _ = std::fs::remove_file("ffi_test_batch_dims.chassis");
+    }
+
+    #[test]
+    fn test_ffi_add_batch_null_out_ids() {
+        let path = CString::new("ffi_test_batch_null_out.chassis").unwrap();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
+        assert!(!ptr.is_null());
+        let batch = vec![0.1f32; 128];
+        let n = unsafe { chassis_add_batch(ptr, batch.as_ptr(), 1, 128, ptr::null_mut()) };
+        assert_eq!(n, 0);
+        let error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
+        let s = error.to_string_lossy();
+        assert!(!s.is_empty());
+        assert!(s.to_lowercase().contains("null"));
+
+        unsafe { chassis_free(ptr) };
+        let _ = std::fs::remove_file("ffi_test_batch_null_out.chassis");
+    }
+
+    #[test]
+    fn test_ffi_add_batch_count_zero() {
+        let path = CString::new("ffi_test_batch_zero.chassis").unwrap();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 64) };
+        assert!(!ptr.is_null());
+        let n = unsafe { chassis_add_batch(ptr, ptr::null(), 0, 64, ptr::null_mut()) };
+        assert_eq!(n, 0);
+        assert_eq!(unsafe { chassis_len(ptr) }, 0);
+        unsafe { chassis_free(ptr) };
+        let _ = std::fs::remove_file("ffi_test_batch_zero.chassis");
     }
 
     #[test]
