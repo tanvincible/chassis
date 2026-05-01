@@ -297,7 +297,7 @@ impl VectorIndex {
     /// Select layer for a new node using exponential decay
     fn select_layer(&self) -> usize {
         let uniform: f32 = rand::random();
-        layer_from_uniform(uniform, self.ml, self.options.max_layers)
+        layer_from_uniform(uniform, self.ml, self.graph.record_params.max_layers)
     }
 
     /// Select neighbors for a new node at each layer

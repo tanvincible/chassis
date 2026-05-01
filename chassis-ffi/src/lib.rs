@@ -262,7 +262,6 @@ pub unsafe extern "C" fn chassis_open_with_options(
             max_connections: max_connections as u16,
             ef_construction: ef_construction as usize,
             ef_search: ef_search as usize,
-            max_layers: IndexOptions::default().max_layers,
         };
 
         match VectorIndex::open(path_str, dimensions, options) {
