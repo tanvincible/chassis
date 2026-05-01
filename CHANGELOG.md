@@ -3,7 +3,9 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.5.0...HEAD) - 1 May 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.6.0...HEAD) - 1 May 2026
+
+## [v0.6.0](https://github.com/tanvincible/chassis/compare/v0.5.0...v0.6.0) - 1 May 2026
 
 ### Merged
 - bug: fix high space usage of .chassis files (≈1GB for ~10k vectors) [`#10`](https://github.com/tanvincible/chassis/pull/10)
@@ -25,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 ### Infrastructure
 
 - chore: Update CONTRIBUTING.md ([5224fdf](https://github.com/tanvincible/chassis/commit/5224fdf8c8ea1694fee56b7455838b7d1c5e6c4a))
+- chore: v0.6.0 version bump, changelog and README ([2eb2efb](https://github.com/tanvincible/chassis/commit/2eb2efbd319c3069816b180fb28ad92d15061eaa))
 - chore: Fix typo in PyChassis lib name and VectorIndex import statements ([ab94435](https://github.com/tanvincible/chassis/commit/ab944358a07bd32b9b18e65aba504bf52f5a9db1))
 - chore: Release v0.5.0 ([3361a02](https://github.com/tanvincible/chassis/commit/3361a02b74bb8765991475a2d6537908fdceaae1))
 - chore: update changelog (add mkdocs for pychassis) ([7594d4f](https://github.com/tanvincible/chassis/commit/7594d4f9a8ecf3b33741cdda9b44e0e6c5912394))

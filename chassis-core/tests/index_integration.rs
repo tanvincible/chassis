@@ -176,8 +176,7 @@ fn test_large_batch_insert() {
 fn test_custom_options() {
     let temp_file = NamedTempFile::new().unwrap();
 
-    let options =
-        IndexOptions { max_connections: 8, ef_construction: 100, ef_search: 25, max_layers: 8 };
+    let options = IndexOptions { max_connections: 8, ef_construction: 100, ef_search: 25 };
 
     let mut index = VectorIndex::open(temp_file.path(), 128, options).unwrap();
 
