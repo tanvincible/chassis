@@ -636,7 +636,6 @@ impl HnswGraph {
     }
 
     /// Returns total size of graph data written so far
-    #[allow(dead_code)]
     fn total_graph_size(&self) -> Result<u64> {
         Self::checked_total_graph_size(self.node_count, self.record_params)
     }
