@@ -11,7 +11,7 @@ The project is early-stage and focused on establishing a correct, stable storage
 Chassis provides a high-performance vector storage, graph construction, and search core:
 
 ### Python bindings
-* **Native bindings**: Full Python support via the `chassis` package (sources in `pychassis/`; version tracks the Rust release, currently **v0.6.2**).
+* **Native bindings**: Full Python support via the `chassis` package (sources in `pychassis/`; version tracks the Rust release, currently **v0.6.3**).
 * **Zero-copy**: NumPy integration for high-throughput vector transfer.
 * **Install**: `pip install .` from `pychassis/`, or install a matching wheel when published for your platform.
 
@@ -65,7 +65,9 @@ These concerns are intentionally left to the embedding application.
 
 ## Status
 
-**v0.6.2 (Stable)** — May 2026
+**v0.6.3 (Stable)** — May 2026
+
+Patch release: SPDX workspace license, `deny.toml` for `cargo deny`, and `rand` bump (RUSTSEC-2026-0097). See [CHANGELOG.md](CHANGELOG.md).
 
 The core storage engine, C FFI layer, and Python bindings are feature-complete and ready for use.
 
@@ -76,7 +78,7 @@ The core storage engine, C FFI layer, and Python bindings are feature-complete a
 * **Docs**: MkDocs-based documentation site and dependency extras for building docs locally.
 
 * **Core engine**: Stable Rust API (`VectorIndex`) with crash consistency and ghost-node recovery.
-* **Python**: Native `chassis` package (v0.6.2) with NumPy support.
+* **Python**: Native `chassis` package (v0.6.3) with NumPy support.
 * **C ABI**: Stable `chassis.h` for embedding in other languages.
 
 ## License

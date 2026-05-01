@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.6.2...HEAD) - 1 May 2026
 
+### Fixed
+
+- fix: (CI) Win storage, clippy cleanups, FFI lints ([a6d09c3](https://github.com/tanvincible/chassis/commit/a6d09c3ef20e317d5f41e7afa1045b7374424d58))
+
+### Infrastructure
+
+- chore: release v0.6.3 ([9710f37](https://github.com/tanvincible/chassis/commit/9710f3711e3e4ec964af8a9f8e997def0cb622e4))
+
 ## [v0.6.2](https://github.com/tanvincible/chassis/compare/v0.6.1...v0.6.2) - 1 May 2026
 
 ### Fixed
