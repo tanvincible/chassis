@@ -6,6 +6,16 @@ pub const MAGIC: &[u8; 8] = b"CHASSIS\0";
 /// Current file format version
 pub const VERSION: u32 = 1;
 
+/// Magic bytes for the extended layout metadata stored in `Header::reserved`.
+const LAYOUT_MAGIC: &[u8; 8] = b"CHLAYOUT";
+
+/// Current extended layout version.
+const LAYOUT_VERSION: u32 = 1;
+
+const LAYOUT_MAGIC_RANGE: std::ops::Range<usize> = 0..8;
+const LAYOUT_VERSION_RANGE: std::ops::Range<usize> = 8..12;
+const GRAPH_OFFSET_RANGE: std::ops::Range<usize> = 16..24;
+
 /// Maximum supported vector dimensions.
 /// This is a sanity check to catch corrupted headers.
 /// Typical embeddings are 384-1536 dimensions.
@@ -60,6 +70,39 @@ impl Header {
         self.version = other.version;
         self.dimensions = other.dimensions;
         self.count = other.count;
+        self.reserved = other.reserved;
+    }
+
+    /// Returns the persisted graph zone offset, if this file uses the extended layout.
+    #[must_use]
+    pub fn graph_offset(&self) -> Option<u64> {
+        if self.reserved[LAYOUT_MAGIC_RANGE] != *LAYOUT_MAGIC {
+            return None;
+        }
+
+        let layout_version = u32::from_le_bytes(
+            self.reserved[LAYOUT_VERSION_RANGE]
+                .try_into()
+                .expect("layout version range must be four bytes"),
+        );
+        if layout_version != LAYOUT_VERSION {
+            return None;
+        }
+
+        let offset = u64::from_le_bytes(
+            self.reserved[GRAPH_OFFSET_RANGE]
+                .try_into()
+                .expect("graph offset range must be eight bytes"),
+        );
+
+        (offset != 0).then_some(offset)
+    }
+
+    /// Persists the graph zone offset in the reserved header metadata.
+    pub fn set_graph_offset(&mut self, offset: u64) {
+        self.reserved[LAYOUT_MAGIC_RANGE].copy_from_slice(LAYOUT_MAGIC);
+        self.reserved[LAYOUT_VERSION_RANGE].copy_from_slice(&LAYOUT_VERSION.to_le_bytes());
+        self.reserved[GRAPH_OFFSET_RANGE].copy_from_slice(&offset.to_le_bytes());
     }
 }
 
@@ -102,5 +145,18 @@ mod tests {
         let mut header = Header::new(768);
         header.magic = *b"INVALID\0";
         assert!(!header.is_valid());
+    }
+
+    #[test]
+    fn test_graph_offset_roundtrip() {
+        let mut header = Header::new(768);
+        assert_eq!(header.graph_offset(), None);
+
+        header.set_graph_offset(8192);
+        assert_eq!(header.graph_offset(), Some(8192));
+
+        let bytes = header.as_bytes();
+        let restored = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Header>()) };
+        assert_eq!(restored.graph_offset(), Some(8192));
     }
 }

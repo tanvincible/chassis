@@ -12,10 +12,16 @@ use crate::hnsw::HnswParams;
 use crate::hnsw::node::{
     INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Size of the graph header in bytes
 const GRAPH_HEADER_SIZE: usize = 64;
+
+/// Legacy graph offset used by the original sparse layout.
+const LEGACY_GRAPH_ZONE_START: u64 = 1024 * 1024 * 1024;
+
+/// Extra room left after the current vector zone when placing or relocating the graph.
+const VECTOR_ZONE_SLACK: usize = 8 * 1024 * 1024;
 
 /// Persistent graph header stored at the beginning of the graph zone.
 ///
@@ -186,8 +192,8 @@ pub struct HnswGraph {
 impl HnswGraph {
     /// Opens existing graph or creates new one
     pub fn open(mut storage: Storage, params: HnswParams) -> Result<Self> {
-        let graph_start = Self::find_or_create_graph_start(&storage)?;
         let record_params = params.to_record_params();
+        let graph_start = Self::find_or_create_graph_start(&mut storage, record_params)?;
 
         // Ensure graph zone has space for header
         let header_end = graph_start as usize + GRAPH_HEADER_SIZE;
@@ -409,26 +415,86 @@ impl HnswGraph {
     }
 
     /// Finds where graph data starts in file
-    fn find_or_create_graph_start(storage: &Storage) -> Result<Offset> {
-        // FIXED: Use a Sparse Layout.
-        // Reserve the first 1GB for vectors.
-        // The OS will not allocate physical disk space for the empty gap (sparse file).
-        const GRAPH_ZONE_START: u64 = 1024 * 1024 * 1024; // 1 GiB
-
-        // Safety check: Ensure we haven't already overflowed the vector zone
-        let vector_count = storage.count();
-        let vector_size = storage.dimensions() as usize * std::mem::size_of::<f32>();
-        let vector_zone_current_end =
-            crate::header::HEADER_SIZE + (vector_count as usize * vector_size);
-
-        if vector_zone_current_end as u64 > GRAPH_ZONE_START {
-            anyhow::bail!(
-                "Vector storage exceeded 1GB limit. Migration required. (Current: {} bytes)",
-                vector_zone_current_end
-            );
+    fn find_or_create_graph_start(
+        storage: &mut Storage,
+        record_params: NodeRecordParams,
+    ) -> Result<Offset> {
+        if let Some(graph_offset) = storage.graph_offset() {
+            let vector_end = storage.vector_end()? as u64;
+            if graph_offset < vector_end {
+                anyhow::bail!(
+                    "Corrupted layout: graph offset {} overlaps vector zone ending at {}",
+                    graph_offset,
+                    vector_end
+                );
+            }
+            return Ok(graph_offset);
         }
 
-        Ok(GRAPH_ZONE_START)
+        if let Some(compacted_offset) = Self::compact_legacy_graph_zone(storage, record_params)? {
+            return Ok(compacted_offset);
+        }
+
+        let graph_start = Self::choose_graph_start(storage.vector_end()?)?;
+        storage.set_graph_offset(graph_start);
+        Ok(graph_start)
+    }
+
+    fn compact_legacy_graph_zone(
+        storage: &mut Storage,
+        record_params: NodeRecordParams,
+    ) -> Result<Option<Offset>> {
+        let legacy_start = LEGACY_GRAPH_ZONE_START as usize;
+        let Ok(header) =
+            Self::try_read_graph_header(storage, LEGACY_GRAPH_ZONE_START, record_params)
+        else {
+            return Ok(None);
+        };
+
+        let graph_size = GRAPH_HEADER_SIZE
+            .checked_add(
+                usize::try_from(header.node_count)
+                    .context("Legacy node count too large for this platform")?
+                    .checked_mul(record_params.record_size())
+                    .context("Legacy graph size calculation overflow")?,
+            )
+            .context("Legacy graph size calculation overflow")?;
+
+        let graph_start = Self::choose_graph_start(storage.vector_end()?)?;
+        storage.move_graph_zone(legacy_start, graph_start as usize, graph_size)?;
+        Ok(Some(graph_start))
+    }
+
+    fn choose_graph_start(vector_end: usize) -> Result<Offset> {
+        let graph_start = vector_end
+            .checked_add(VECTOR_ZONE_SLACK)
+            .context("Graph offset calculation overflow")?;
+        Ok(Storage::page_align(graph_start) as Offset)
+    }
+
+    /// Ensure the graph zone will not overlap the next vector append.
+    pub(crate) fn prepare_for_vector_insert(&mut self) -> Result<()> {
+        let next_count = self
+            .storage
+            .count()
+            .checked_add(1)
+            .context("Vector count overflow while preparing insert")?;
+        let next_vector_end = self.storage.vector_end_for_count(next_count)?;
+
+        if next_vector_end <= self.graph_start as usize {
+            return Ok(());
+        }
+
+        let graph_size = self.total_graph_size() as usize;
+        let new_graph_start = Self::choose_graph_start(next_vector_end)?;
+        self.storage.move_graph_zone(
+            self.graph_start as usize,
+            new_graph_start as usize,
+            graph_size,
+        )?;
+        self.graph_start = new_graph_start;
+
+        Ok(())
     }
 
     /// Inserts a new node into the graph.
@@ -806,5 +872,28 @@ mod tests {
         // Verify update
         let read_back = graph.read_node_record(0).unwrap();
         assert_eq!(read_back.get_neighbors(0), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_growth_relocates_graph_without_losing_records() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+        let mut graph =
+            HnswGraph::open(Storage::open(path, 4096).unwrap(), HnswParams::default()).unwrap();
+
+        graph.insert(0, 0).unwrap();
+        let original_graph_start = graph.graph_start;
+        let first_record = graph.read_node_record(0).unwrap();
+        assert_eq!(first_record.header.node_id, 0);
+
+        for _ in 0..600 {
+            graph.prepare_for_vector_insert().unwrap();
+            graph.storage.insert(&vec![1.0; 4096]).unwrap();
+        }
+
+        assert!(graph.graph_start > original_graph_start);
+        let relocated_record = graph.read_node_record(0).unwrap();
+        assert_eq!(relocated_record.header.node_id, 0);
+        assert_eq!(relocated_record.header.layer_count, 1);
     }
 }

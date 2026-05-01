@@ -76,11 +76,14 @@ pub struct IndexOptions {
 
     /// Search quality parameter (efSearch)
     pub ef_search: usize,
+
+    /// Maximum graph layers reserved in each fixed-width node record.
+    pub max_layers: u8,
 }
 
 impl Default for IndexOptions {
     fn default() -> Self {
-        Self { max_connections: 16, ef_construction: 200, ef_search: 50 }
+        Self { max_connections: 16, ef_construction: 200, ef_search: 50, max_layers: 16 }
     }
 }
 
@@ -124,6 +127,10 @@ impl VectorIndex {
     /// - Dimension mismatch with existing index
     /// - Graph references non-existent vectors
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
+        if options.max_layers == 0 {
+            anyhow::bail!("max_layers must be greater than 0");
+        }
+
         // Open storage
         let storage = Storage::open(path, dims)?;
 
@@ -136,7 +143,7 @@ impl VectorIndex {
             ef_construction: options.ef_construction,
             ef_search: options.ef_search,
             ml,
-            max_layers: 16, // Fixed for now
+            max_layers: options.max_layers,
         };
 
         // Open graph
@@ -202,6 +209,7 @@ impl VectorIndex {
         }
 
         // STEP 1: Persist vector (reclaims ghost node space if any)
+        self.graph.prepare_for_vector_insert()?;
         let new_id = self.graph.storage.insert(vector)?;
 
         // STEP 2: Determine layer for new node
@@ -302,7 +310,7 @@ impl VectorIndex {
         let layer = (-uniform.ln() * self.ml).floor() as usize;
 
         // Cap at max_layers - 1
-        layer.min(15) // max_layers is 16, so max layer index is 15
+        layer.min(self.options.max_layers.saturating_sub(1) as usize)
     }
 
     /// Select neighbors for a new node at each layer
