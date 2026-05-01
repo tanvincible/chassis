@@ -38,8 +38,9 @@ fn create_prepared_graph(num_vectors: usize, dims: u32, build_to: usize) -> (Hns
         vec[1] = cluster * 0.5 + offset * 0.05;
 
         // Variation in high dimensions
-        for j in 2..dims.min(16) as usize {
-            vec[j] = ((i * 7 + j * 3) as f32).sin() * 0.5 + 0.5;
+        let cap = dims.min(16) as usize;
+        for (j, slot) in vec.iter_mut().enumerate().take(cap).skip(2) {
+            *slot = ((i * 7 + j * 3) as f32).sin() * 0.5 + 0.5;
         }
 
         storage.insert(&vec).expect("Failed to insert vector");
@@ -93,7 +94,9 @@ fn bench_single_link(c: &mut Criterion) {
                         let neighbors: Vec<NodeId> =
                             (node_id.saturating_sub(count as u64)..node_id).collect();
 
-                        black_box(graph.link_node_bidirectional(node_id, 1, &[neighbors]).unwrap());
+                        let _: () =
+                            graph.link_node_bidirectional(node_id, 1, &[neighbors]).unwrap();
+                        black_box(());
                     },
                     criterion::BatchSize::PerIteration,
                 );
@@ -128,7 +131,8 @@ fn bench_pruning_pressure(c: &mut Criterion) {
             },
             |(mut graph, _temp_dir)| {
                 let next_id = graph.node_count();
-                black_box(graph.link_node_bidirectional(next_id, 1, &[vec![0]]).unwrap());
+                let _: () = graph.link_node_bidirectional(next_id, 1, &[vec![0]]).unwrap();
+                black_box(());
             },
             criterion::BatchSize::PerIteration,
         );
@@ -155,18 +159,14 @@ fn bench_multilayer_linking(c: &mut Criterion) {
                         let node_id = graph.node_count();
                         let neighbors: Vec<Vec<NodeId>> = (0..layers)
                             .map(|l| {
-                                vec![
-                                    node_id.saturating_sub(1 + l as u64),
-                                    node_id.saturating_sub(2 + l as u64),
-                                ]
+                                vec![node_id.saturating_sub(1 + l), node_id.saturating_sub(2 + l)]
                             })
                             .collect();
 
-                        black_box(
-                            graph
-                                .link_node_bidirectional(node_id, layers as usize, &neighbors)
-                                .unwrap(),
-                        );
+                        let _: () = graph
+                            .link_node_bidirectional(node_id, layers as usize, &neighbors)
+                            .unwrap();
+                        black_box(());
                     },
                     criterion::BatchSize::PerIteration,
                 );
@@ -189,10 +189,11 @@ fn bench_batch_linking(c: &mut Criterion) {
             b.iter_batched(
                 || create_prepared_graph(size as usize + 10, 128, 0),
                 |(mut graph, _temp_dir)| {
-                    for i in 0..size as u64 {
+                    for i in 0..size {
                         let neighbors = if i > 0 { vec![vec![i - 1]] } else { vec![vec![]] };
 
-                        black_box(graph.link_node_bidirectional(i, 1, &neighbors).unwrap());
+                        let _: () = graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+                        black_box(());
                     }
                 },
                 criterion::BatchSize::PerIteration,
@@ -222,14 +223,15 @@ fn bench_cache_effectiveness(c: &mut Criterion) {
                         // Build hub
                         graph.link_node_bidirectional(0, 1, &[vec![]]).unwrap();
                         for i in 1..=count {
-                            graph.link_node_bidirectional(i as u64, 1, &[vec![0]]).unwrap();
+                            graph.link_node_bidirectional(i, 1, &[vec![0]]).unwrap();
                         }
 
                         (graph, temp_dir)
                     },
                     |(mut graph, _temp_dir)| {
                         let next_id = graph.node_count();
-                        black_box(graph.link_node_bidirectional(next_id, 1, &[vec![0]]).unwrap());
+                        let _: () = graph.link_node_bidirectional(next_id, 1, &[vec![0]]).unwrap();
+                        black_box(());
                     },
                     criterion::BatchSize::PerIteration,
                 );
@@ -271,7 +273,8 @@ fn bench_worst_case_clustering(c: &mut Criterion) {
                         vec![vec![]]
                     };
 
-                    black_box(graph.link_node_bidirectional(i, 1, &neighbors).unwrap());
+                    let _: () = graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+                    black_box(());
                 }
             },
             criterion::BatchSize::PerIteration,
@@ -297,7 +300,8 @@ fn bench_high_dimensional(c: &mut Criterion) {
                     let neighbors =
                         vec![vec![node_id.saturating_sub(1), node_id.saturating_sub(2)]];
 
-                    black_box(graph.link_node_bidirectional(node_id, 1, &neighbors).unwrap());
+                    let _: () = graph.link_node_bidirectional(node_id, 1, &neighbors).unwrap();
+                    black_box(());
                 },
                 criterion::BatchSize::PerIteration,
             );
@@ -317,7 +321,8 @@ fn bench_idempotency_check(c: &mut Criterion) {
             || create_prepared_graph(100, 128, 10),
             |(mut graph, _temp_dir)| {
                 // Attempt to re-add existing link (should be fast - duplicate check)
-                black_box(graph.add_backward_link_with_pruning(1, 0, 0).unwrap());
+                let _: () = graph.add_backward_link_with_pruning(1, 0, 0).unwrap();
+                black_box(());
             },
             criterion::BatchSize::PerIteration,
         );
@@ -341,7 +346,7 @@ fn bench_sequential_construction(c: &mut Criterion) {
                     // Realistic HNSW construction pattern
                     let m0 = graph.record_params().m0 as usize;
 
-                    for i in 0..size as u64 {
+                    for i in 0..size {
                         let neighbors = if i > 0 {
                             // Link to some recent nodes
                             let num_to_link = i.min(m0 as u64 / 2);
@@ -352,7 +357,8 @@ fn bench_sequential_construction(c: &mut Criterion) {
                             vec![vec![]]
                         };
 
-                        black_box(graph.link_node_bidirectional(i, 1, &neighbors).unwrap());
+                        let _: () = graph.link_node_bidirectional(i, 1, &neighbors).unwrap();
+                        black_box(());
                     }
                 },
                 criterion::BatchSize::PerIteration,

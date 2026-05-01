@@ -94,7 +94,8 @@ fn bench_graph_header_write(c: &mut Criterion) {
     group.bench_function("write", |b| {
         b.iter(|| {
             // Benchmark:  write header (overwrites same location each time)
-            black_box(graph.write_graph_header().unwrap())
+            let _: () = graph.write_graph_header().unwrap();
+            black_box(())
         })
     });
 
@@ -156,7 +157,8 @@ fn bench_node_record_write(c: &mut Criterion) {
             record.set_neighbors(1, &[100, 200, 300]);
             record.set_neighbors(2, &[1000]);
             node_id += 1;
-            black_box(graph.write_node_record(&record).unwrap())
+            let _: () = graph.write_node_record(&record).unwrap();
+            black_box(())
         })
     });
 

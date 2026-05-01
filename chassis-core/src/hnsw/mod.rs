@@ -55,6 +55,18 @@ impl Default for HnswParams {
     }
 }
 
+impl HnswParams {
+    /// Convert to NodeRecordParams for fixed-size record allocation
+    #[must_use]
+    pub const fn to_record_params(&self) -> NodeRecordParams {
+        NodeRecordParams::new(
+            self.max_connections,
+            self.max_connections * 2, // m0 = 2 * M
+            self.max_layers,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,17 +87,5 @@ mod tests {
     fn layer_from_uniform_maps_one_to_layer_zero() {
         let layer = layer_from_uniform(1.0, 1.0, 16);
         assert_eq!(layer, 0);
-    }
-}
-
-impl HnswParams {
-    /// Convert to NodeRecordParams for fixed-size record allocation
-    #[must_use]
-    pub const fn to_record_params(&self) -> NodeRecordParams {
-        NodeRecordParams::new(
-            self.max_connections,
-            self.max_connections * 2, // m0 = 2 * M
-            self.max_layers,
-        )
     }
 }

@@ -334,14 +334,12 @@ mod tests {
     #[test]
     fn test_simd_random_vectors() {
         use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hash, Hasher};
+        use std::hash::BuildHasher;
 
         // Deterministic "random" using hash
         fn hash_to_f32(seed: u64) -> f32 {
             let state = RandomState::new();
-            let mut hasher = state.build_hasher();
-            seed.hash(&mut hasher);
-            let hash = hasher.finish();
+            let hash = state.hash_one(seed);
             ((hash % 10000) as f32) / 10000.0
         }
 

@@ -18,8 +18,9 @@ fn create_test_graph(num_vectors: usize, dims: u32) -> (HnswGraph, NamedTempFile
         let mut vec = vec![0.0; dims as usize];
         vec[0] = (i as f32) / (num_vectors as f32);
         vec[1] = ((i % 10) as f32) / 10.0;
-        for j in 2..dims.min(10) as usize {
-            vec[j] = ((i + j) as f32) / (num_vectors as f32);
+        let cap = dims.min(10) as usize;
+        for (j, slot) in vec.iter_mut().enumerate().take(cap).skip(2) {
+            *slot = ((i + j) as f32) / (num_vectors as f32);
         }
         storage.insert(&vec).unwrap();
     }
@@ -195,8 +196,8 @@ fn test_layer_independence_preserved() {
 
     // Verify layer-specific backward links
     let node0 = graph.read_node_record(0).unwrap();
-    assert!(node0.get_neighbors(0).len() > 0); // Has backward links from layer 0
-    assert!(node0.get_neighbors(1).len() > 0); // Has backward links from layer 1
+    assert!(!node0.get_neighbors(0).is_empty()); // Has backward links from layer 0
+    assert!(!node0.get_neighbors(1).is_empty()); // Has backward links from layer 1
 }
 
 #[test]
@@ -419,7 +420,7 @@ fn test_new_node_gets_backward_links() {
     // And nodes 0, 1, 2 got links back
     for i in [0, 1, 2] {
         let node = graph.read_node_record(i).unwrap();
-        assert!(node.get_neighbors(0).len() > 0);
+        assert!(!node.get_neighbors(0).is_empty());
     }
 }
 
