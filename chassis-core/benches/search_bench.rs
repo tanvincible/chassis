@@ -41,8 +41,9 @@ fn build_benchmark_graph(
         vec[1] = cluster * 0.7 + offset * 0.01;
 
         // Add variation
-        for j in 2..dims.min(16) as usize {
-            vec[j] = ((i * 13 + j * 7) as f32).sin() * 0.3 + 0.5;
+        let cap = dims.min(16) as usize;
+        for (j, slot) in vec.iter_mut().enumerate().take(cap).skip(2) {
+            *slot = ((i * 13 + j * 7) as f32).sin() * 0.3 + 0.5;
         }
 
         storage.insert(&vec).expect("Failed to insert vector");

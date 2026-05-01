@@ -15,11 +15,21 @@ pub struct Storage {
     #[allow(dead_code)]
     file: File,
 
-    /// Memory-mapped view of the file
-    mmap: MmapMut,
+    /// Memory-mapped view of the file (`None` only transiently during resize on Windows).
+    mmap: Option<MmapMut>,
 }
 
 impl Storage {
+    #[inline]
+    fn mapped(&self) -> &MmapMut {
+        self.mmap.as_ref().expect("storage must hold an active mmap")
+    }
+
+    #[inline]
+    fn mapped_mut(&mut self) -> &mut MmapMut {
+        self.mmap.as_mut().expect("storage must hold an active mmap")
+    }
+
     /// Opens or creates a Chassis index file
     ///
     /// # Arguments
@@ -84,7 +94,7 @@ impl Storage {
             );
         }
 
-        Ok(Self { file, mmap })
+        Ok(Self { file, mmap: Some(mmap) })
     }
 
     /// Inserts a vector into the storage
@@ -124,7 +134,7 @@ impl Storage {
 
         // Write vector data first (data-before-header invariant)
         unsafe {
-            let dst = self.mmap.as_mut_ptr().add(offset) as *mut f32;
+            let dst = self.mapped_mut().as_mut_ptr().add(offset) as *mut f32;
             std::ptr::copy_nonoverlapping(vector.as_ptr(), dst, dims);
         }
 
@@ -146,7 +156,7 @@ impl Storage {
     /// For batch inserts, insert many vectors and call commit() once.
     pub fn commit(&mut self) -> Result<()> {
         // Flush mmap to kernel page cache
-        self.mmap.flush()?;
+        self.mapped_mut().flush()?;
 
         // Force kernel to flush to physical device
         // On Linux: fdatasync() - flushes data but not metadata
@@ -226,13 +236,13 @@ impl Storage {
         let end_offset =
             offset.checked_add(vector_bytes).context("End offset calculation overflow")?;
 
-        if end_offset > self.mmap.len() {
+        if end_offset > self.mapped().len() {
             anyhow::bail!(
                 "Vector at index {} extends beyond mmap bounds (offset: {}, size: {}, mmap len: {})",
                 index,
                 offset,
                 vector_bytes,
-                self.mmap.len()
+                self.mapped().len()
             );
         }
 
@@ -244,7 +254,7 @@ impl Storage {
         // - dims is the correct length for the slice
         // - Lifetime is tied to &self, preventing use after remap
         unsafe {
-            let ptr = self.mmap.as_ptr().add(offset) as *const f32;
+            let ptr = self.mapped().as_ptr().add(offset) as *const f32;
             Ok(std::slice::from_raw_parts(ptr, dims))
         }
     }
@@ -326,27 +336,30 @@ impl Storage {
     /// This method invalidates all existing pointers into the mmap.
     /// Do not hold references across calls to this method.
     fn ensure_capacity(&mut self, required_size: usize) -> Result<()> {
-        if self.mmap.len() >= required_size {
+        if self.mapped().len() >= required_size {
             return Ok(());
         }
 
         // Round up to next page boundary (4KB)
         let new_size = Self::page_align(required_size);
 
+        // Windows: cannot change file size while a mapping of this file exists (ERROR_USER_MAPPED_FILE).
+        self.mapped_mut().flush()?;
+        self.mmap.take();
         self.file.set_len(new_size as u64)?;
-        self.mmap = unsafe { MmapMut::map_mut(&self.file)? };
+        self.mmap = Some(unsafe { MmapMut::map_mut(&self.file)? });
 
         Ok(())
     }
 
     /// Returns a reference to the header
     fn header(&self) -> &Header {
-        unsafe { &*(self.mmap.as_ptr() as *const Header) }
+        unsafe { &*(self.mapped().as_ptr() as *const Header) }
     }
 
     /// Returns a mutable reference to the header
     fn header_mut(&mut self) -> &mut Header {
-        unsafe { &mut *(self.mmap.as_mut_ptr() as *mut Header) }
+        unsafe { &mut *(self.mapped_mut().as_mut_ptr() as *mut Header) }
     }
 
     /// Get immutable mmap slice for graph zone
@@ -366,16 +379,16 @@ impl Storage {
     pub fn graph_zone(&self, offset: usize, len: usize) -> Result<&[u8]> {
         let end = offset.checked_add(len).context("Graph zone end offset overflow")?;
 
-        if end > self.mmap.len() {
+        if end > self.mapped().len() {
             anyhow::bail!(
                 "Graph zone access out of bounds: offset={}, len={}, mmap_len={}",
                 offset,
                 len,
-                self.mmap.len()
+                self.mapped().len()
             );
         }
 
-        Ok(&self.mmap[offset..end])
+        Ok(&self.mapped()[offset..end])
     }
 
     /// Get mutable mmap slice for graph zone
@@ -395,16 +408,16 @@ impl Storage {
     pub fn graph_zone_mut(&mut self, offset: usize, len: usize) -> Result<&mut [u8]> {
         let end = offset.checked_add(len).context("Graph zone end offset overflow")?;
 
-        if end > self.mmap.len() {
+        if end > self.mapped().len() {
             anyhow::bail!(
                 "Graph zone access out of bounds: offset={}, len={}, mmap_len={}",
                 offset,
                 len,
-                self.mmap.len()
+                self.mapped().len()
             );
         }
 
-        Ok(&mut self.mmap[offset..end])
+        Ok(&mut self.mapped_mut()[offset..end])
     }
 
     /// Ensure graph zone has enough capacity
@@ -443,12 +456,14 @@ impl Storage {
         let new_end = new_offset.checked_add(len).context("New graph zone end overflow")?;
 
         self.ensure_capacity(old_end.max(new_end))?;
-        self.mmap.copy_within(old_offset..old_end, new_offset);
+        self.mapped_mut().copy_within(old_offset..old_end, new_offset);
         self.set_graph_offset(new_offset as u64);
 
         let new_file_len = Self::page_align(new_end);
+        self.mapped_mut().flush()?;
+        self.mmap.take();
         self.file.set_len(new_file_len as u64)?;
-        self.mmap = unsafe { MmapMut::map_mut(&self.file)? };
+        self.mmap = Some(unsafe { MmapMut::map_mut(&self.file)? });
 
         Ok(())
     }

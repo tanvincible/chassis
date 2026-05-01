@@ -338,7 +338,7 @@ mod tests {
         let r3 = SearchResult { id: 3, distance: 1.0 };
 
         // Should not panic
-        let mut results = vec![r1.clone(), r2.clone(), r3.clone()];
+        let mut results = [r1.clone(), r2.clone(), r3.clone()];
         results.sort();
 
         // NaN should be ordered deterministically (typically at the end)

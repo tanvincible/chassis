@@ -53,7 +53,7 @@ thread_local! {
     ///
     /// Each thread maintains its own error message to ensure thread safety
     /// without requiring locks. The `RefCell` allows interior mutability.
-    static LAST_ERROR: RefCell<Option<CString>> = RefCell::new(None);
+    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
 
 /// Set the last error message for the current thread
@@ -1005,7 +1005,7 @@ mod tests {
         let mut batch = Vec::with_capacity(COUNT * DIM);
         for row in 0..COUNT {
             let v = 0.1f32 + 0.1f32 * row as f32;
-            batch.extend(std::iter::repeat(v).take(DIM));
+            batch.extend(std::iter::repeat_n(v, DIM));
         }
 
         let mut out_ids = vec![0u64; COUNT];
