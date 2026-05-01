@@ -153,9 +153,7 @@ impl HnswGraph {
         self.write_node_record(&node_record)?;
 
         // STEP B: Update backward links (B→A) for each neighbor
-        for layer in 0..layer_count {
-            let neighbors = &filtered_neighbors[layer];
-
+        for (layer, neighbors) in filtered_neighbors.iter().enumerate().take(layer_count) {
             for &neighbor_id in neighbors {
                 // Additional safety check (already filtered, but defensive)
                 if neighbor_id >= self.node_count {
@@ -417,20 +415,16 @@ impl HnswGraph {
         }
 
         // CONNECTIVITY GUARANTEE: Ensure priority_node if close enough
-        if let Some(priority_node) = priority_node {
-            if !selected.contains(&priority_node) {
-                // Find priority_node position in sorted distances
-                if let Some(pos) = distances.iter().position(|(id, _, _)| *id == priority_node) {
-                    // Include if it's in the top max_count closest nodes
-                    if pos < max_count {
-                        // Make room by removing the last selected node
-                        if selected.len() >= max_count {
-                            selected.pop();
-                        }
-                        selected.push(priority_node);
-                    }
-                }
+        if let Some(priority_node) = priority_node
+            && !selected.contains(&priority_node)
+            && let Some(pos) = distances.iter().position(|(id, _, _)| *id == priority_node)
+            && pos < max_count
+        {
+            // Make room by removing the last selected node
+            if selected.len() >= max_count {
+                selected.pop();
             }
+            selected.push(priority_node);
         }
 
         Ok(selected)

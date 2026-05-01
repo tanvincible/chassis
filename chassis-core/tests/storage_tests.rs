@@ -214,7 +214,6 @@ fn test_persistence_across_reopens() {
 fn test_raw_fsync_cost() {
     use std::fs::OpenOptions;
     use std::io::Write;
-    use std::os::unix::io::AsRawFd;
     use std::time::Instant;
 
     let temp = tempfile::NamedTempFile::new().unwrap();
@@ -223,12 +222,10 @@ fn test_raw_fsync_cost() {
     file.write_all(b"test").unwrap();
 
     let start = Instant::now();
-    unsafe {
-        libc::fsync(file.as_raw_fd());
-    }
+    file.sync_all().unwrap();
     let elapsed = start.elapsed();
 
-    println!("Raw fsync took: {:?}", elapsed);
+    println!("File::sync_all took: {:?}", elapsed);
 }
 
 // Zero-copy vector slice

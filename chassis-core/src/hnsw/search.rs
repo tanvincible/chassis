@@ -77,8 +77,7 @@ impl VisitedFilter {
     #[inline]
     pub fn new(node_count: usize) -> Self {
         // Calculate number of u64s needed: ceil(N / 64)
-        // Formula: (N + 63) / 64
-        let num_u64s = (node_count + 63) / 64;
+        let num_u64s = node_count.div_ceil(64);
         Self { data: vec![0; num_u64s], capacity: node_count }
     }
 
@@ -176,7 +175,7 @@ impl HnswGraph {
 
     /// Greedy search for a single best node (used for layer descent).
     ///
-    /// This avoids allocating a Vec just to take [0] during upper-layer descent.
+    /// This avoids allocating a Vec just to read the single best candidate during upper-layer descent.
     ///
     /// # Returns
     ///
@@ -222,11 +221,11 @@ impl HnswGraph {
     ///    - No cache misses from pointer chasing
     ///
     /// 2. **Zero-allocation neighbor iteration**: `neighbors_iter_from_mmap()`
-    ///    - No Vec<NodeId> allocation per node
+    ///    - No `Vec<NodeId>` allocation per node
     ///    - ~100ns vs ~400ns per node
     ///
     /// 3. **Zero-copy distance computation**: `compute_distance_zero_copy()`
-    ///    - No Vec<f32> allocation per distance calculation
+    ///    - No `Vec<f32>` allocation per distance calculation
     ///    - Direct mmap reads
     ///
     /// 4. **NaN-safe ordering**: `f32::total_cmp`
@@ -261,12 +260,11 @@ impl HnswGraph {
 
         while let Some(Reverse(current)) = candidates.pop() {
             // Early termination: current is further than worst result
-            if results.len() >= ef {
-                if let Some(worst) = results.peek() {
-                    if current.distance.total_cmp(&worst.distance) == std::cmp::Ordering::Greater {
-                        break;
-                    }
-                }
+            if results.len() >= ef
+                && let Some(worst) = results.peek()
+                && current.distance.total_cmp(&worst.distance) == std::cmp::Ordering::Greater
+            {
+                break;
             }
 
             // Zero-allocation neighbor iteration

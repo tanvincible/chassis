@@ -258,8 +258,7 @@ pub struct NodeRecord {
     /// Node header
     pub header: NodeHeader,
 
-    /// Neighbor IDs for all layers (flattened).
-    /// Layout: [layer0_neighbors... ][layer1_neighbors...][layer2_neighbors...]...
+    /// Neighbor IDs for all layers (flattened): layer 0 slots, then layer 1, then layer 2, and so on.
     /// Unused slots contain `INVALID_NODE_ID`.
     pub neighbors: Vec<NodeId>,
 

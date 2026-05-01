@@ -199,6 +199,9 @@ impl VectorIndex {
             anyhow::bail!("Vector dimension mismatch: expected {}, got {}", dims, vector.len());
         }
 
+        // Relocate graph zone if the next vector append would overlap it
+        self.graph.prepare_for_vector_insert()?;
+
         // STEP 1: Persist vector (reclaims ghost node space if any)
         let new_id = self.graph.storage.insert(vector)?;
 
