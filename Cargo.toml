@@ -4,10 +4,10 @@ resolver = "3"
 members = ["chassis-core", "chassis-ffi"]
 
 [workspace.package]
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 authors = ["Tanvi Pooranmal Meena (tanvipm19@gmail.com)"]
-license = "MIT & Apache-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/tanvincible/chassis"
 description = "An embeddable, on-disk vector storage engine."
 
@@ -20,7 +20,7 @@ criterion = "0.8.1"
 fs2 = "0.4.3"
 libc = "0.2.180"
 memmap2 = "0.9.9"
-rand = "0.9.2"
+rand = "0.9.3"
 tempfile = "3.24.0"
 trybuild = "1.0.114"
 

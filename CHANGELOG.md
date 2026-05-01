@@ -3,7 +3,17 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.6.2...HEAD) - 1 May 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.6.3...HEAD) - 1 May 2026
+
+## [v0.6.3](https://github.com/tanvincible/chassis/compare/v0.6.2...v0.6.3) - 1 May 2026
+
+### Fixed
+
+- fix: (CI) Win storage, clippy cleanups, FFI lints ([a6d09c3](https://github.com/tanvincible/chassis/commit/a6d09c3ef20e317d5f41e7afa1045b7374424d58))
+
+### Infrastructure
+
+- chore: release v0.6.3 ([84a373d](https://github.com/tanvincible/chassis/commit/84a373d4554f23bccaafb905920457136f4f117b))
 
 ## [v0.6.2](https://github.com/tanvincible/chassis/compare/v0.6.1...v0.6.2) - 1 May 2026
 
