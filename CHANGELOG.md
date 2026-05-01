@@ -3,7 +3,10 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.5.0...HEAD) - 26 April 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.5.0...HEAD) - 1 May 2026
+
+### Merged
+- bug: fix high space usage of .chassis files (≈1GB for ~10k vectors) [`#10`](https://github.com/tanvincible/chassis/pull/10)
 
 ### Added
 
@@ -17,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - docs: setup MkDocs site and docs dependency extras ([40f5001](https://github.com/tanvincible/chassis/commit/40f5001e402b8d6610cba1b0d665db4a8110e3d0))
 - docs: update changelog for search benchmark fix ([3e8a381](https://github.com/tanvincible/chassis/commit/3e8a38107b2b3c4f1ff1d95d93c268cc9b6c30aa))
+- docs: update changelog (add batch insertion API) ([2baf44b](https://github.com/tanvincible/chassis/commit/2baf44bf800ad33386814f2894b5d6b887f64d48))
 
 ### Infrastructure
 

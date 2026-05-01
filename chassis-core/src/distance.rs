@@ -233,7 +233,10 @@ unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
     total.sqrt()
 }
 
-/// Compute cosine distance (1 - cosine_similarity)
+/// Compute cosine distance (1 - cosine similarity).
+///
+/// Returns `1.0` when either vector has zero norm because cosine similarity is
+/// undefined for zero vectors.
 #[inline]
 pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
@@ -241,8 +244,13 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_product = norm_a * norm_b;
 
-    1.0 - (dot / (norm_a * norm_b))
+    if norm_product == 0.0 {
+        return 1.0;
+    }
+
+    1.0 - (dot / norm_product)
 }
 
 #[cfg(test)]
@@ -267,6 +275,18 @@ mod tests {
 
         let dist = cosine_distance(&a, &b);
         assert!((dist - 1.0).abs() < 1e-6); // Orthogonal vectors
+    }
+
+    #[test]
+    fn test_cosine_distance_zero_norm() {
+        let zero = vec![0.0, 0.0, 0.0];
+        let non_zero = vec![1.0, 0.0, 0.0];
+
+        let zero_to_zero = cosine_distance(&zero, &zero);
+        let zero_to_non_zero = cosine_distance(&zero, &non_zero);
+
+        assert_eq!(zero_to_zero, 1.0);
+        assert_eq!(zero_to_non_zero, 1.0);
     }
 
     #[test]

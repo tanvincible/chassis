@@ -111,8 +111,7 @@ struct ChassisIndex *chassis_open_with_options(const char *path, uint32_t dimens
  * - `ptr` must be NULL or a valid pointer from `chassis_open()`
  * - After this call, `ptr` is invalid and must not be used
  * - Safe to call with NULL (no-op)
- * - Safe to call multiple times with the same pointer (undefined behavior
- *   on second call, but won't crash)
+ * - Must not be called more than once with the same non-NULL pointer
  *
  * # Example (C)
  *

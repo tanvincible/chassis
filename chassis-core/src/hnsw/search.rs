@@ -85,11 +85,6 @@ impl VisitedFilter {
     /// Mark a node as visited.
     ///
     /// Returns:
-    /// - `true` if the node was ALREADY visited.
-    /// - `false` if it was NOT visited (and marks it now).
-    /// Mark a node as visited.
-    ///
-    /// Returns:
     /// - `true` if the node was NOT visited before (we just marked it).
     /// - `false` if it was ALREADY visited.
     #[inline]

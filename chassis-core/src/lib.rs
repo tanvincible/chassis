@@ -60,6 +60,7 @@ pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, SearchResult};
 pub use storage::Storage;
 
 use anyhow::Result;
+use hnsw::layer_from_uniform;
 use std::path::Path;
 
 /// Maximum candidates to pass to diversity heuristic (cache limit)
@@ -76,14 +77,11 @@ pub struct IndexOptions {
 
     /// Search quality parameter (efSearch)
     pub ef_search: usize,
-
-    /// Maximum graph layers reserved in each fixed-width node record.
-    pub max_layers: u8,
 }
 
 impl Default for IndexOptions {
     fn default() -> Self {
-        Self { max_connections: 16, ef_construction: 200, ef_search: 50, max_layers: 16 }
+        Self { max_connections: 16, ef_construction: 200, ef_search: 50 }
     }
 }
 
@@ -117,7 +115,8 @@ impl VectorIndex {
     ///
     /// This method handles ghost nodes (vectors written but not indexed due to crash):
     /// - If `storage.count() < graph.node_count()`: Returns error (corruption)
-    /// - If `storage.count() >= graph.node_count()`: Success (ghost nodes ignored)
+    /// - If `storage.count() > graph.node_count()`: Ghost vectors are ignored
+    /// - If `storage.count() == graph.node_count()`: Success
     ///
     /// # Errors
     ///
@@ -127,10 +126,6 @@ impl VectorIndex {
     /// - Dimension mismatch with existing index
     /// - Graph references non-existent vectors
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
-        if options.max_layers == 0 {
-            anyhow::bail!("max_layers must be greater than 0");
-        }
-
         // Open storage
         let storage = Storage::open(path, dims)?;
 
@@ -143,7 +138,7 @@ impl VectorIndex {
             ef_construction: options.ef_construction,
             ef_search: options.ef_search,
             ml,
-            max_layers: options.max_layers,
+            max_layers: 16, // Fixed for now
         };
 
         // Open graph
@@ -160,17 +155,13 @@ impl VectorIndex {
                 graph_node_count,
                 storage_count
             );
-        } else if storage_count >= graph_node_count {
+        } else if storage_count > graph_node_count {
             // GHOST NODE RECOVERY
             // Storage is ahead of Graph (crash during write).
             // We must rollback Storage to match Graph so the next insert
             // reclaims the 'ghost' ID instead of appending after it.
             graph.storage.truncate_logical(graph_node_count);
         }
-
-        // If storage_count >= graph_node_count, we're good
-        // Extra vectors are "ghost nodes" from a previous crash
-        // The next add() will reclaim that space
 
         Ok(Self { graph, options, ml })
     }
@@ -209,7 +200,6 @@ impl VectorIndex {
         }
 
         // STEP 1: Persist vector (reclaims ghost node space if any)
-        self.graph.prepare_for_vector_insert()?;
         let new_id = self.graph.storage.insert(vector)?;
 
         // STEP 2: Determine layer for new node
@@ -307,10 +297,7 @@ impl VectorIndex {
     /// Select layer for a new node using exponential decay
     fn select_layer(&self) -> usize {
         let uniform: f32 = rand::random();
-        let layer = (-uniform.ln() * self.ml).floor() as usize;
-
-        // Cap at max_layers - 1
-        layer.min(self.options.max_layers.saturating_sub(1) as usize)
+        layer_from_uniform(uniform, self.ml, self.options.max_layers)
     }
 
     /// Select neighbors for a new node at each layer

@@ -87,7 +87,6 @@ impl NodeHeader {
     /// Returns an error if:
     /// - Slice is too small
     /// - `layer_count` is 0 (invalid)
-    /// - `layer_count` exceeds reasonable maximum (255)
     /// - `node_id` is `INVALID_NODE_ID` (reserved sentinel)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
         if bytes.len() < Self::SIZE {
@@ -424,6 +423,7 @@ impl NodeRecord {
     /// Returns an error if:
     /// - Byte slice is too small
     /// - Header validation fails
+    /// - Header `layer_count` exceeds the configured `max_layers`
     pub fn from_bytes(bytes: &[u8], params: NodeRecordParams) -> Result<Self, &'static str> {
         let expected_size = params.record_size();
         if bytes.len() < expected_size {
@@ -431,6 +431,9 @@ impl NodeRecord {
         }
 
         let header = NodeHeader::from_bytes(bytes)?;
+        if header.layer_count > params.max_layers {
+            return Err("Invalid NodeRecord: layer_count exceeds max_layers");
+        }
 
         // Read neighbors
         let total_slots = params.total_max_neighbors();
@@ -691,6 +694,18 @@ mod tests {
         assert_eq!(restored.get_neighbors(0), vec![1, 2, 3, 4, 5]);
         assert_eq!(restored.get_neighbors(1), vec![10, 20]);
         assert_eq!(restored.get_neighbors(2), vec![100]);
+    }
+
+    #[test]
+    fn test_node_record_rejects_layer_count_above_params() {
+        let params = NodeRecordParams::new(16, 32, 4);
+        let record = NodeRecord::new(123, 4, params);
+        let mut bytes = record.to_bytes();
+
+        bytes[8] = 5;
+
+        let result = NodeRecord::from_bytes(&bytes, params);
+        assert_eq!(result.unwrap_err(), "Invalid NodeRecord: layer_count exceeds max_layers");
     }
 
     #[test]

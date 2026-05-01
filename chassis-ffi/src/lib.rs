@@ -121,7 +121,7 @@ where
 }
 
 //
-//  LIFECYCLE MANAGEMENT 
+//  LIFECYCLE MANAGEMENT
 //
 
 /// Open or create a Chassis vector index
@@ -291,8 +291,7 @@ pub unsafe extern "C" fn chassis_open_with_options(
 /// - `ptr` must be NULL or a valid pointer from `chassis_open()`
 /// - After this call, `ptr` is invalid and must not be used
 /// - Safe to call with NULL (no-op)
-/// - Safe to call multiple times with the same pointer (undefined behavior
-///   on second call, but won't crash)
+/// - Must not be called more than once with the same non-NULL pointer
 ///
 /// # Example (C)
 ///
@@ -311,7 +310,7 @@ pub unsafe extern "C" fn chassis_free(ptr: *mut ChassisIndex) {
 }
 
 //
-//  VECTOR OPERATIONS 
+//  VECTOR OPERATIONS
 //
 
 /// Add a vector to the index
@@ -694,7 +693,7 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
 }
 
 //
-//  INTROSPECTION 
+//  INTROSPECTION
 //
 
 /// Get the number of vectors in the index
@@ -783,7 +782,7 @@ pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
 }
 
 //
-//  ERROR HANDLING 
+//  ERROR HANDLING
 //
 
 /// Get the last error message for the current thread
@@ -822,7 +821,7 @@ pub extern "C" fn chassis_last_error_message() -> *const c_char {
 }
 
 //
-//  VERSIONING 
+//  VERSIONING
 //
 
 /// Get the Chassis library version
@@ -851,17 +850,25 @@ pub extern "C" fn chassis_version() -> *const c_char {
     VERSION.as_ptr() as *const c_char
 }
 //
-//  TESTS 
+//  TESTS
 //
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::CString;
+    use tempfile::TempDir;
+
+    fn temp_index_path() -> (TempDir, CString) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("index.chassis");
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+        (dir, path)
+    }
 
     #[test]
     fn test_ffi_lifecycle() {
-        let path = CString::new("ffi_test_lifecycle.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
         assert!(!ptr.is_null(), "Failed to open index");
 
@@ -890,8 +897,6 @@ mod tests {
 
         // Clean up
         unsafe { chassis_free(ptr) };
-
-        let _ = std::fs::remove_file("ffi_test_lifecycle.chassis");
     }
 
     #[test]
@@ -913,13 +918,13 @@ mod tests {
         };
         assert_eq!(count, 0);
 
-        // Double free should be safe (no-op second time)
+        // Freeing NULL is safe.
         unsafe { chassis_free(ptr::null_mut()) };
     }
 
     #[test]
     fn test_ffi_dimension_mismatch() {
-        let path = CString::new("ffi_test_dims.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
         assert!(!ptr.is_null());
 
@@ -934,12 +939,11 @@ mod tests {
         assert!(error_str.contains("dimension"), "Error should mention dimensions");
 
         unsafe { chassis_free(ptr) };
-        let _ = std::fs::remove_file("ffi_test_dims.chassis");
     }
 
     #[test]
     fn test_ffi_introspection() {
-        let path = CString::new("ffi_test_introspection.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), 256) };
         assert!(!ptr.is_null());
 
@@ -958,7 +962,6 @@ mod tests {
         assert_eq!(unsafe { chassis_is_empty(ptr) }, 0);
 
         unsafe { chassis_free(ptr) };
-        let _ = std::fs::remove_file("ffi_test_introspection.chassis");
     }
 
     #[test]
@@ -973,7 +976,7 @@ mod tests {
 
     #[test]
     fn test_ffi_with_custom_options() {
-        let path = CString::new("ffi_test_options.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open_with_options(path.as_ptr(), 128, 32, 100, 75) };
         assert!(!ptr.is_null(), "Should open with custom options");
 
@@ -990,14 +993,13 @@ mod tests {
         assert_eq!(count, 1);
 
         unsafe { chassis_free(ptr) };
-        let _ = std::fs::remove_file("ffi_test_options.chassis");
     }
 
     #[test]
     fn test_ffi_add_batch_success() {
         const DIM: usize = 128;
         const COUNT: usize = 3;
-        let path = CString::new("ffi_test_batch.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), DIM as u32) };
         assert!(!ptr.is_null());
 
@@ -1008,15 +1010,7 @@ mod tests {
         }
 
         let mut out_ids = vec![0u64; COUNT];
-        let n = unsafe {
-            chassis_add_batch(
-                ptr,
-                batch.as_ptr(),
-                COUNT,
-                DIM,
-                out_ids.as_mut_ptr(),
-            )
-        };
+        let n = unsafe { chassis_add_batch(ptr, batch.as_ptr(), COUNT, DIM, out_ids.as_mut_ptr()) };
         assert_eq!(n, COUNT);
         assert_eq!(out_ids, vec![0u64, 1, 2]);
         assert_eq!(unsafe { chassis_len(ptr) }, COUNT as u64);
@@ -1025,26 +1019,18 @@ mod tests {
         let mut ids = vec![0u64; 5];
         let mut dists = vec![0.0f32; 5];
         let n_search = unsafe {
-            chassis_search(
-                ptr,
-                query.as_ptr(),
-                DIM,
-                5,
-                ids.as_mut_ptr(),
-                dists.as_mut_ptr(),
-            )
+            chassis_search(ptr, query.as_ptr(), DIM, 5, ids.as_mut_ptr(), dists.as_mut_ptr())
         };
         assert!(n_search > 0);
 
         let flush = unsafe { chassis_flush(ptr) };
         assert_eq!(flush, 0);
         unsafe { chassis_free(ptr) };
-        let _ = std::fs::remove_file("ffi_test_batch.chassis");
     }
 
     #[test]
     fn test_ffi_add_batch_dimension_mismatch() {
-        let path = CString::new("ffi_test_batch_dims.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
         assert!(!ptr.is_null());
 
@@ -1057,12 +1043,11 @@ mod tests {
         assert!(error.to_string_lossy().to_lowercase().contains("dimension"));
 
         unsafe { chassis_free(ptr) };
-        let _ = std::fs::remove_file("ffi_test_batch_dims.chassis");
     }
 
     #[test]
     fn test_ffi_add_batch_null_out_ids() {
-        let path = CString::new("ffi_test_batch_null_out.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
         assert!(!ptr.is_null());
         let batch = vec![0.1f32; 128];
@@ -1074,19 +1059,17 @@ mod tests {
         assert!(s.to_lowercase().contains("null"));
 
         unsafe { chassis_free(ptr) };
-        let _ = std::fs::remove_file("ffi_test_batch_null_out.chassis");
     }
 
     #[test]
     fn test_ffi_add_batch_count_zero() {
-        let path = CString::new("ffi_test_batch_zero.chassis").unwrap();
+        let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), 64) };
         assert!(!ptr.is_null());
         let n = unsafe { chassis_add_batch(ptr, ptr::null(), 0, 64, ptr::null_mut()) };
         assert_eq!(n, 0);
         assert_eq!(unsafe { chassis_len(ptr) }, 0);
         unsafe { chassis_free(ptr) };
-        let _ = std::fs::remove_file("ffi_test_batch_zero.chassis");
     }
 
     #[test]

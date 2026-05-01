@@ -1,6 +1,6 @@
 use crate::Storage;
-use crate::hnsw::HnswParams;
 use crate::hnsw::graph::HnswGraph;
+use crate::hnsw::{HnswParams, layer_from_uniform};
 use anyhow::Result;
 
 /// Builder for constructing HNSW index
@@ -30,7 +30,6 @@ impl HnswBuilder {
     /// Select layer for new node using exponential decay
     fn select_layer(&self) -> usize {
         let uniform: f32 = rand::random();
-
-        (-uniform.ln() * self.params.ml).floor() as usize
+        layer_from_uniform(uniform, self.params.ml, self.params.max_layers)
     }
 }

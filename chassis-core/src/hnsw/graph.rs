@@ -485,7 +485,8 @@ impl HnswGraph {
             return Ok(());
         }
 
-        let graph_size = self.total_graph_size() as usize;
+        let graph_size = usize::try_from(self.total_graph_size()?)
+            .context("Graph size too large for this platform")?;
         let new_graph_start = Self::choose_graph_start(next_vector_end)?;
         self.storage.move_graph_zone(
             self.graph_start as usize,
@@ -636,8 +637,18 @@ impl HnswGraph {
 
     /// Returns total size of graph data written so far
     #[allow(dead_code)]
-    fn total_graph_size(&self) -> u64 {
-        GRAPH_HEADER_SIZE as u64 + (self.node_count * self.record_params.record_size() as u64)
+    fn total_graph_size(&self) -> Result<u64> {
+        Self::checked_total_graph_size(self.node_count, self.record_params)
+    }
+
+    fn checked_total_graph_size(node_count: u64, record_params: NodeRecordParams) -> Result<u64> {
+        let records_size = node_count
+            .checked_mul(record_params.record_size() as u64)
+            .context("Graph size calculation overflow")?;
+
+        (GRAPH_HEADER_SIZE as u64)
+            .checked_add(records_size)
+            .context("Graph size calculation overflow")
     }
 
     /// Returns the record params for this graph
@@ -715,6 +726,14 @@ mod tests {
     #[test]
     fn test_graph_header_alignment() {
         assert_eq!(std::mem::align_of::<GraphHeader>(), 8, "GraphHeader must be 8-byte aligned");
+    }
+
+    #[test]
+    fn test_total_graph_size_detects_overflow() {
+        let params = NodeRecordParams::default();
+        let result = HnswGraph::checked_total_graph_size(u64::MAX, params);
+
+        assert!(result.is_err());
     }
 
     #[test]

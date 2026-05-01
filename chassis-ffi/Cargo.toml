@@ -18,6 +18,9 @@ libc = { workspace = true }
 [build-dependencies]
 cbindgen = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [profile.release]
 # Optimize for size and safety in release builds
 opt-level = 3
