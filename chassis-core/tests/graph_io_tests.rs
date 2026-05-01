@@ -2,6 +2,8 @@ use chassis_core::Storage;
 use chassis_core::{GraphHeader, HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
 use tempfile::NamedTempFile;
 
+const ONE_GIB: u64 = 1024 * 1024 * 1024;
+
 // Header persistence
 
 #[test]
@@ -365,4 +367,67 @@ fn test_node_record_with_partial_neighbors() {
     assert_eq!(read_record.get_neighbors(0), vec![1, 2, 3, 4, 5]);
     assert_eq!(read_record.get_neighbors(1), vec![10, 11, 12, 13]);
     assert!(read_record.get_neighbors(2).is_empty());
+}
+
+#[test]
+fn test_legacy_graph_zone_compacts_on_open() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    let params = HnswParams::default();
+    let record_params = params.to_record_params();
+
+    {
+        let mut storage = Storage::open(path, 128).unwrap();
+        let legacy_header = GraphHeader::new(record_params).to_bytes();
+        storage.ensure_graph_capacity(ONE_GIB as usize + legacy_header.len()).unwrap();
+        storage
+            .graph_zone_mut(ONE_GIB as usize, legacy_header.len())
+            .unwrap()
+            .copy_from_slice(&legacy_header);
+
+        assert!(std::fs::metadata(path).unwrap().len() >= ONE_GIB);
+    }
+
+    {
+        let storage = Storage::open(path, 128).unwrap();
+        let graph = HnswGraph::open(storage, params).unwrap();
+
+        assert_eq!(graph.node_count(), 0);
+        assert!(std::fs::metadata(path).unwrap().len() < ONE_GIB / 10);
+    }
+}
+
+#[test]
+fn test_10k_768d_layout_stays_under_100mb() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path();
+    let params = HnswParams::default();
+
+    {
+        let mut storage = Storage::open(path, 768).unwrap();
+        let vector = vec![0.5; 768];
+        for _ in 0..10_000 {
+            storage.insert(&vector).unwrap();
+        }
+
+        let mut graph = HnswGraph::open(storage, params).unwrap();
+        for node_id in 0..10_000 {
+            graph.insert(node_id, (node_id % 3) as usize).unwrap();
+        }
+        graph.commit().unwrap();
+    }
+
+    let file_len = std::fs::metadata(path).unwrap().len();
+    assert!(
+        file_len < 100 * 1024 * 1024,
+        "10k x 768D index should stay under 100MiB, got {} bytes",
+        file_len
+    );
+
+    {
+        let storage = Storage::open(path, 768).unwrap();
+        let graph = HnswGraph::open(storage, params).unwrap();
+        assert_eq!(graph.node_count(), 10_000);
+        assert_eq!(graph.read_node_record(9_999).unwrap().header.node_id, 9_999);
+    }
 }

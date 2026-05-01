@@ -280,6 +280,40 @@ impl Storage {
         self.header().dimensions
     }
 
+    /// Returns the byte offset immediately after the current logical vector data.
+    pub(crate) fn vector_end(&self) -> Result<usize> {
+        self.vector_end_for_count(self.header().count)
+    }
+
+    /// Returns the byte offset immediately after `count` vectors.
+    pub(crate) fn vector_end_for_count(&self, count: u64) -> Result<usize> {
+        let dims = self.header().dimensions as usize;
+        let vector_bytes = dims
+            .checked_mul(std::mem::size_of::<f32>())
+            .context("Vector byte size calculation overflow")?;
+        let count = usize::try_from(count).context("Vector count too large for this platform")?;
+        let vector_data_bytes =
+            count.checked_mul(vector_bytes).context("Vector zone size calculation overflow")?;
+
+        HEADER_SIZE.checked_add(vector_data_bytes).context("Vector end calculation overflow")
+    }
+
+    /// Returns the persisted graph zone offset, if present.
+    pub(crate) fn graph_offset(&self) -> Option<u64> {
+        self.header().graph_offset()
+    }
+
+    /// Persists the graph zone offset in the file header.
+    pub(crate) fn set_graph_offset(&mut self, offset: u64) {
+        self.header_mut().set_graph_offset(offset);
+    }
+
+    /// Align a byte count to the next page boundary.
+    #[inline]
+    pub(crate) const fn page_align(size: usize) -> usize {
+        (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+    }
+
     /// Ensures file has enough capacity, growing if necessary
     ///
     /// File growth is page-aligned (4KB boundaries) to optimize for:
@@ -297,7 +331,7 @@ impl Storage {
         }
 
         // Round up to next page boundary (4KB)
-        let new_size = (required_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let new_size = Self::page_align(required_size);
 
         self.file.set_len(new_size as u64)?;
         self.mmap = unsafe { MmapMut::map_mut(&self.file)? };
@@ -388,6 +422,35 @@ impl Storage {
     /// Do not hold references across calls to this method.
     pub fn ensure_graph_capacity(&mut self, required_size: usize) -> Result<()> {
         self.ensure_capacity(required_size)
+    }
+
+    /// Move the graph zone to a new offset and update the persisted offset.
+    ///
+    /// The copy uses memmove semantics so overlapping source and destination ranges are safe.
+    /// The file is then resized to the end of the moved graph zone, rounded to a page boundary.
+    pub(crate) fn move_graph_zone(
+        &mut self,
+        old_offset: usize,
+        new_offset: usize,
+        len: usize,
+    ) -> Result<()> {
+        if len == 0 {
+            self.set_graph_offset(new_offset as u64);
+            return Ok(());
+        }
+
+        let old_end = old_offset.checked_add(len).context("Old graph zone end overflow")?;
+        let new_end = new_offset.checked_add(len).context("New graph zone end overflow")?;
+
+        self.ensure_capacity(old_end.max(new_end))?;
+        self.mmap.copy_within(old_offset..old_end, new_offset);
+        self.set_graph_offset(new_offset as u64);
+
+        let new_file_len = Self::page_align(new_end);
+        self.file.set_len(new_file_len as u64)?;
+        self.mmap = unsafe { MmapMut::map_mut(&self.file)? };
+
+        Ok(())
     }
 
     /// Truncate the logical count of vectors to handle ghost node recovery.
@@ -492,5 +555,42 @@ mod tests {
 
         // Try to truncate to higher count (should panic in debug)
         storage.truncate_logical(5);
+    }
+
+    #[test]
+    fn test_vector_end_and_graph_offset_helpers() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut storage = Storage::open(temp_file.path(), 128).unwrap();
+
+        assert_eq!(storage.vector_end().unwrap(), HEADER_SIZE);
+        assert_eq!(storage.graph_offset(), None);
+
+        storage.insert(&vec![1.0; 128]).unwrap();
+        assert_eq!(storage.vector_end().unwrap(), HEADER_SIZE + 128 * 4);
+
+        storage.set_graph_offset(8192);
+        assert_eq!(storage.graph_offset(), Some(8192));
+    }
+
+    #[test]
+    fn test_move_graph_zone_compacts_file() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut storage = Storage::open(temp_file.path(), 128).unwrap();
+
+        let old_offset = 64 * 1024;
+        let new_offset = 8 * 1024;
+        let graph_bytes = b"HNSW-test-graph";
+
+        storage.ensure_graph_capacity(old_offset + graph_bytes.len()).unwrap();
+        storage.graph_zone_mut(old_offset, graph_bytes.len()).unwrap().copy_from_slice(graph_bytes);
+
+        storage.move_graph_zone(old_offset, new_offset, graph_bytes.len()).unwrap();
+
+        assert_eq!(storage.graph_offset(), Some(new_offset as u64));
+        assert_eq!(storage.graph_zone(new_offset, graph_bytes.len()).unwrap(), graph_bytes);
+        assert_eq!(
+            storage.file.metadata().unwrap().len(),
+            Storage::page_align(new_offset + graph_bytes.len()) as u64
+        );
     }
 }
