@@ -3,17 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.6.3...HEAD) - 1 May 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.6.3...HEAD) - 6 May 2026
 
 ## [v0.6.3](https://github.com/tanvincible/chassis/compare/v0.6.2...v0.6.3) - 1 May 2026
 
 ### Fixed
 
 - fix: (CI) Win storage, clippy cleanups, FFI lints ([a6d09c3](https://github.com/tanvincible/chassis/commit/a6d09c3ef20e317d5f41e7afa1045b7374424d58))
-
-### Infrastructure
-
-- chore: release v0.6.3 ([84a373d](https://github.com/tanvincible/chassis/commit/84a373d4554f23bccaafb905920457136f4f117b))
 
 ## [v0.6.2](https://github.com/tanvincible/chassis/compare/v0.6.1...v0.6.2) - 1 May 2026
 
@@ -28,10 +24,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - fix: Windows tests, clippy, rustdoc, and graph relocation on add ([a90c413](https://github.com/tanvincible/chassis/commit/a90c4130d10c3ef872f55ff54c35f975f9365217))
 
-### Infrastructure
-
-- chore: v0.6.0 version bump, changelog and README ([fd0466c](https://github.com/tanvincible/chassis/commit/fd0466c41b6db11fd29aef214926cad979fdb83f))
-
 ## [v0.6.0](https://github.com/tanvincible/chassis/compare/v0.5.0...v0.6.0) - 1 May 2026
 
 ### Merged
@@ -45,29 +37,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - fix: use real search API in pychassis/examples/batch_insert.py ([2595122](https://github.com/tanvincible/chassis/commit/25951229c5e1396926f1108a1c68ab1074e533d6))
 
-### Documentation
-
-- docs: setup MkDocs site and docs dependency extras ([40f5001](https://github.com/tanvincible/chassis/commit/40f5001e402b8d6610cba1b0d665db4a8110e3d0))
-- docs: update changelog for search benchmark fix ([3e8a381](https://github.com/tanvincible/chassis/commit/3e8a38107b2b3c4f1ff1d95d93c268cc9b6c30aa))
-- docs: update changelog (add batch insertion API) ([2baf44b](https://github.com/tanvincible/chassis/commit/2baf44bf800ad33386814f2894b5d6b887f64d48))
-
-### Infrastructure
-
-- chore: Update CONTRIBUTING.md ([5224fdf](https://github.com/tanvincible/chassis/commit/5224fdf8c8ea1694fee56b7455838b7d1c5e6c4a))
-- chore: v0.6.0 version bump, changelog and README ([2eb2efb](https://github.com/tanvincible/chassis/commit/2eb2efbd319c3069816b180fb28ad92d15061eaa))
-- chore: Fix typo in PyChassis lib name and VectorIndex import statements ([ab94435](https://github.com/tanvincible/chassis/commit/ab944358a07bd32b9b18e65aba504bf52f5a9db1))
-- chore: Release v0.5.0 ([3361a02](https://github.com/tanvincible/chassis/commit/3361a02b74bb8765991475a2d6537908fdceaae1))
-- chore: update changelog (add mkdocs for pychassis) ([7594d4f](https://github.com/tanvincible/chassis/commit/7594d4f9a8ecf3b33741cdda9b44e0e6c5912394))
-
 ## [v0.5.0](https://github.com/tanvincible/chassis/compare/v0.5.0-alpha...v0.5.0) - 27 January 2026
 
 ### Added
 
 - feat: implement full python bindings and release v0.5.0 ([2796ad0](https://github.com/tanvincible/chassis/commit/2796ad0028d5e0ad4a48cf8ce114a5bc18239e4b))
-
-### Infrastructure
-
-- chore: Release v0.5.0-alpha ([ef74d03](https://github.com/tanvincible/chassis/commit/ef74d036bac02b5c80a5a60a452b9344571d441b))
 
 ## [v0.5.0-alpha](https://github.com/tanvincible/chassis/compare/v0.4.1-alpha...v0.5.0-alpha) - 27 January 2026
 
@@ -75,23 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - feat: implement C-compatible FFI layer (v0.5.0-alpha) ([7e084e4](https://github.com/tanvincible/chassis/commit/7e084e4b18d9d18cbbb93e0a72d63bba20042ff8))
 
-### Documentation
-
-- docs: add GitHub Actions workflow for docs auto-deployment ([3c18b49](https://github.com/tanvincible/chassis/commit/3c18b49c0b819980047be022419df8d9a8dc2469))
-
-### Infrastructure
-
-- chore: release v0.4.1-alpha ([88a8629](https://github.com/tanvincible/chassis/commit/88a8629ebba49e1d88798fd924443f66baf4dd43))
-
 ## [v0.4.1-alpha](https://github.com/tanvincible/chassis/compare/v0.4.0-alpha...v0.4.1-alpha) - 26 January 2026
-
-### Documentation
-
-- docs: update documentation for VectorIndex facade API (v0.4.1) ([4adb078](https://github.com/tanvincible/chassis/commit/4adb078714a2e9c4674010471cb8a561f0c29892))
-
-### Infrastructure
-
-- chore: release v0.4.0-alpha ([89a1cb5](https://github.com/tanvincible/chassis/commit/89a1cb5671b141b341d1e4ad010ac3347b9e70f6))
 
 ## [v0.4.0-alpha](https://github.com/tanvincible/chassis/compare/v0.3.1-alpha...v0.4.0-alpha) - 26 January 2026
 
@@ -99,30 +57,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - feat: implement VectorIndex facade and crash-safe orchestration ([e1ad599](https://github.com/tanvincible/chassis/commit/e1ad599951212256f9ce1f713f31404ea229df8d))
 
-### Infrastructure
-
-- chore: release v0.3.1-alpha ([fab6d9a](https://github.com/tanvincible/chassis/commit/fab6d9a90298aea8d52f529044edd35df6b1e62b))
-
 ## [v0.3.1-alpha](https://github.com/tanvincible/chassis/compare/v0.3.0-alpha...v0.3.1-alpha) - 24 January 2026
-
-### Documentation
-
-- docs: restructure ADRs and backfill v0.3.0 performance docs ([5bf6bd8](https://github.com/tanvincible/chassis/commit/5bf6bd82c21ae36e4bf16873ccab527619f2aa53))
-
-### Infrastructure
-
-- chore: release v0.3.1-alpha ([4544aa8](https://github.com/tanvincible/chassis/commit/4544aa8746a1d0107614d59658d0f37fc78e11c2))
-- chore: release v0.3.0-alpha ([8b65035](https://github.com/tanvincible/chassis/commit/8b65035c877ce027ffc962b7bc29dbd94c04e5e1))
 
 ## [v0.3.0-alpha](https://github.com/tanvincible/chassis/compare/v0.2.0-alpha...v0.3.0-alpha) - 24 January 2026
 
 ### Added
 
 - feat: implement SIMD acceleration & harden search ([e65348b](https://github.com/tanvincible/chassis/commit/e65348b39c0645b85aab366258dc7a0fe17e3f2b))
-
-### Infrastructure
-
-- chore: release v0.2.0-alpha ([04d68b3](https://github.com/tanvincible/chassis/commit/04d68b3b1bbc3ad206a3e1791b10a95cfed9db28))
 
 ## [v0.2.0-alpha](https://github.com/tanvincible/chassis/compare/v0.1.0-alpha.1...v0.2.0-alpha) - 24 January 2026
 
@@ -137,19 +78,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 - feat: add bidirectional hnsw linking with diversity pruning ([d9962e3](https://github.com/tanvincible/chassis/commit/d9962e3c4c9119d549f2d384bff11e22fb4cca12))
 - feat: add GraphHeader and graph I/O methods to HnswGraph and Storage ([fc5b465](https://github.com/tanvincible/chassis/commit/fc5b4655972b39981b696141cfce685d5cf308ee))
 
-### Documentation
-
-- docs: add architectural decision records (ADRs) ([3ce1c06](https://github.com/tanvincible/chassis/commit/3ce1c0636a67511345b491fe96c215abae24def1))
-- docs: add Contributor Covenant Code of Conduct ([486f7ae](https://github.com/tanvincible/chassis/commit/486f7ae4ca9991eae33b012958054ddc38b0d129))
-- docs: add project contributing guidelines ([39f89b1](https://github.com/tanvincible/chassis/commit/39f89b1f70c19f3eb608f4802873dad1abb62473))
-
 ### Infrastructure
 
-- chore: release v0.1.0-alpha.1 ([8c90ddf](https://github.com/tanvincible/chassis/commit/8c90ddf7338a24aaf65f82256d7165b7b6a7c643))
-- chore: release v0.1.0-alpha.1 ([b75d694](https://github.com/tanvincible/chassis/commit/b75d69454056ce76aef695e33064a85061e3a8b4))
 - build: implement precise changelog template and workflow ([194945a](https://github.com/tanvincible/chassis/commit/194945a38ba90646aa4e6015684cdb065aa8684c))
 - build: harden quality standards with Rust 2024 and strict lints ([1f68b58](https://github.com/tanvincible/chassis/commit/1f68b58110a83fb8d3eb9357862e4a594bb01ff4))
-- chore: release v0.2.0-alpha ([74339bf](https://github.com/tanvincible/chassis/commit/74339bfab9c717b86669fc497f56ffcec86527e6))
 - build: initialize chassis-ffi crate and cbindgen configuration ([dc24cdb](https://github.com/tanvincible/chassis/commit/dc24cdb4a87b08d3bd34c25abeef9132afe7f325))
 
 ### Performance
@@ -158,15 +90,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## v0.1.0-alpha.1 - 18 January 2026
 
-### Documentation
-
-- docs: add project contributing guidelines ([e43dc9b](https://github.com/tanvincible/chassis/commit/e43dc9b86f01f4fa47a8f34fbb6cd0e5b379e3ea))
-- docs: establish project identity and licensing ([f3cfed7](https://github.com/tanvincible/chassis/commit/f3cfed732d21aaf39123a85fec083bf7073ad2de))
-- docs: revise manifesto and mdbook structure ([5b7f2e1](https://github.com/tanvincible/chassis/commit/5b7f2e1042a719e9ca92f2e0359850c1793edde3))
-
 ### Infrastructure
 
-- chore: release v0.1.0-alpha.1 ([4b616fd](https://github.com/tanvincible/chassis/commit/4b616fdc0873e982ab03e4f04092460b69241d0f))
 - build: implement precise changelog template and workflow ([a071044](https://github.com/tanvincible/chassis/commit/a0710441effdcf28cad5648e1a4ed64c3e7d197a))
 - build: initialize project workspace and foundational structure ([cc08f6d](https://github.com/tanvincible/chassis/commit/cc08f6d86c75ea5fa882ebd07cb8b7610cb3cf41))
 - build: configure git environment and initialize documentation ([d7bc0e5](https://github.com/tanvincible/chassis/commit/d7bc0e55c1f218c65ef0b4267acfcc269f8a1c94))
