@@ -129,9 +129,32 @@ uint64_t chassis_add(
     size_t len
 );
 ```
-Add a vector. Returns ID or `UINT64_MAX` on error.
+Add a vector. Returns the id assigned (one past the largest id used so far) or `UINT64_MAX` on error.
 
-**Thread Safety**: Single-writer (exclusive access required)
+**Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
+
+#### `chassis_add_with_id`
+```c
+int chassis_add_with_id(
+    ChassisIndex* index,
+    uint64_t id,
+    const float* vector,
+    size_t len
+);
+```
+Add a vector under your own id; search reports it. Returns `0`, or `-1` if a live vector already
+has `id`, `id` is `UINT64_MAX`, or the add fails.
+
+**Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
+
+#### `chassis_delete`
+```c
+int chassis_delete(ChassisIndex* index, uint64_t id);
+```
+Delete the vector with `id`. Returns `1` if deleted, `0` if no live vector has `id`, `-1` on error.
+Durable after the next `chassis_flush()`; a crash before then rolls it back.
+
+**Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
 
 #### `chassis_search`
 ```c
@@ -146,7 +169,7 @@ size_t chassis_search(
 ```
 Search for k nearest neighbors. Returns number of results found.
 
-**Thread Safety**: Multi-reader (shared access allowed)
+**Thread Safety**: Safe from any thread; runs concurrently with other searches
 
 #### `chassis_flush`
 ```c
@@ -154,7 +177,7 @@ int chassis_flush(ChassisIndex* index);
 ```
 Flush changes to disk. Returns `0` on success, `-1` on error.
 
-**Thread Safety**: Single-writer (exclusive access required)
+**Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
 
 ### Introspection
 
@@ -196,16 +219,11 @@ Get library version string.
 
 ## Thread Safety
 
-| Function | Access Pattern | Concurrent Safety |
-|----------|----------------|-------------------|
-| `chassis_open` | N/A | Safe (different paths) |
-| `chassis_free` | N/A | Safe (different indices) |
-| `chassis_add` | Exclusive (`*mut`) | Single-writer only |
-| `chassis_flush` | Exclusive (`*mut`) | Single-writer only |
-| `chassis_search` | Shared (`*const`) | Multi-reader safe |
-| `chassis_len` | Shared (`*const`) | Multi-reader safe |
-| `chassis_is_empty` | Shared (`*const`) | Multi-reader safe |
-| `chassis_dimensions` | Shared (`*const`) | Multi-reader safe |
+Every function except `chassis_free` is safe to call from any thread on the same handle. Searches,
+`chassis_len`, `chassis_is_empty` and `chassis_dimensions` run concurrently. `chassis_add`,
+`chassis_add_with_id`, `chassis_add_batch`, `chassis_delete` and `chassis_flush` take the handle's
+write lock, so they run one at a time and searches wait for them. `chassis_free` must not race with
+any other call on the same handle.
 
 ### Concurrency Example
 
@@ -214,7 +232,7 @@ Get library version string.
 void* writer_thread(void* arg) {
     ChassisIndex* index = (ChassisIndex*)arg;
     
-    // Exclusive access required
+    // Each add takes the write lock; searches in other threads wait for it
     float vec[768];
     for (int i = 0; i < 1000; i++) {
         generate_vector(vec, i);
@@ -229,7 +247,7 @@ void* writer_thread(void* arg) {
 void* reader_thread(void* arg) {
     const ChassisIndex* index = (const ChassisIndex*)arg;
     
-    // Shared access - can run concurrently with other readers
+    // Runs concurrently with other searches, and waits while a write runs
     float query[768];
     uint64_t ids[10];
     float dists[10];
@@ -282,7 +300,7 @@ All functions document their safety requirements. Key rules:
 1. **Null Checks**: Never pass `NULL` unless explicitly allowed
 2. **Lifetime**: Pointers from `chassis_last_error_message()` are only valid until next FFI call
 3. **Dimensions**: Vector length must match index dimensions
-4. **Thread Safety**: Respect single-writer / multi-reader rules
+4. **Thread Safety**: Don't call `chassis_free` while other threads still use the handle
 5. **Double Free**: Don't use pointers after `chassis_free()`
 
 ## Performance Tips

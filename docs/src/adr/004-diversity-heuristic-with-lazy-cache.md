@@ -1,7 +1,7 @@
 # ADR-0004: Diversity Heuristics & Lazy Distance Caching
 
 **Date:** 2026-01-24  
-**Status:** Accepted
+**Status:** Accepted, cache withdrawn 2026-10-04 (see [Amendment](#amendment-2026-10-04))
 
 ## Context
 
@@ -52,6 +52,9 @@ The ability to apply Heuristic 2 without prohibitive cost results in graphs with
 
 The pruning logic performs no heap allocation. This reduces allocator pressure, memory fragmentation, and latency variance during large batch insertions.
 
+> Amended 2026-10-03: only the distance cache is on the stack. The candidate and selection lists are
+> `Vec`s, so pruning does allocate.
+
 ### Negative
 
 #### Compile-Time Limits on M
@@ -67,3 +70,20 @@ The lazy cache introduces substantially more code and complexity compared to a s
 * **Fixed Size Enforcement:** The distance cache enforces a compile-time capacity limit.
 * **Lazy Access:** The pruning logic mediates all distance access through a cache-aware helper, ensuring each pairwise distance is computed at most once.
 * **Symmetry Guarantee:** All cache writes update both symmetric entries to maintain consistency.
+
+## Amendment (2026-10-04)
+
+The cache never helped. Heuristic 2 takes each candidate once and compares it with each neighbor
+already kept, so no pair is ever looked up twice: an instrumented build counted 0 hits in 157
+million lookups (20,000 × 128 and 3,000 × 1,536 dimensions). The pruning speedup quoted under
+Consequences can't have come from it.
+
+Its 33-entry capacity also cost graph quality. New nodes chose neighbors from only the 33 nearest
+of their `ef_construction` candidates. With every candidate considered, as hnswlib does, search was
+7–18% faster at equal recall on a 200k SIFT prefix, and SIFT-1M's recall at `ef_search` 512 rose
+from 0.998 to 0.999.
+
+The cache and both 33-candidate caps (`MAX_M` in `link.rs`, `MAX_CANDIDATES_FOR_HEURISTIC` in
+`lib.rs`) were removed on 2026-10-04, and the heuristic now computes each distance directly. Build
+time on 20,000 × 128 random vectors didn't change (7.7–8.2 s before, 8.1–8.2 s after), and recall@10
+at `ef_search` 200 rose from 0.880–0.885 to 0.902–0.908.

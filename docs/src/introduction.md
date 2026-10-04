@@ -10,7 +10,7 @@ Chassis provides a complete engine for storing and searching high-dimensional ve
 
 * **Vector Similarity Search**: Performs approximate nearest neighbor (ANN) search using a fully persistent HNSW graph.
 * **High-Level Orchestration**: The `VectorIndex` facade manages the complexity of coordinate storage, graph topology, and search logic.
-* **Crash Consistency**: Implements a "Register Last" write protocol ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)). Readers are guaranteed to never see uninitialized data, even if the process crashes mid-write.
+* **Crash Consistency**: After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
 * **Zero-Copy Access**: Vectors are accessed directly from the OS page cache via memory mapping, providing nanosecond-level read latency.
 
 ## What Chassis Does Not Do
@@ -23,14 +23,9 @@ Chassis is intentionally limited in scope to ensure correctness and performance.
 
 ## Current Status
 
-**Alpha (v0.4.0)**
-
-The core storage engine and graph algorithms are feature-complete. The API is exposed through the stable `VectorIndex` abstraction.
-
-* **Storage**: Stable.
-* **Graph**: Stable (HNSW Heuristic 2).
-* **Search**: High performance (~15µs latency).
-* **Bindings**: FFI layer is currently in development (Step 9).
+**v0.6.3.** Storage, HNSW search, the C ABI and the Python bindings work end to end through
+`VectorIndex`. Deleting or updating vectors is not supported yet. Measured numbers are on the
+[Performance](./architecture/performance.md) page.
 
 ## Requirements
 

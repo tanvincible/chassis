@@ -1,7 +1,7 @@
 # ADR-0005: Crash-Consistent Linking Protocol
 
 **Date:** 2026-01-24  
-**Status:** Accepted
+**Status:** Accepted, amended 2026-10-03 (see [Amendment](#amendment-2026-10-03))
 
 ## Context
 
@@ -89,3 +89,35 @@ A crash after Step 1 may leave unused space corresponding to a ghost node. In th
 * **Code Structure:** `link_node_bidirectional` is explicitly structured to follow the Step 1 → Step 2 → Step 3 sequence.
 * **Invariant Enforcement:** Any reordering of these steps is treated as a correctness bug.
 * **Header Authority:** The storage layer treats the header’s `node_count` as the sole source of truth, ignoring any data beyond it during initialization and traversal.
+
+## Amendment (2026-10-03)
+
+The Context assumed memory-mapped writes reach disk in program order. They don't: the OS writes
+dirty pages back in any order, so the step ordering only holds against a process crash. Only
+`flush()` (msync + fsync) orders anything on disk.
+
+Two gaps in the protocol, both fixed on 2026-10-03:
+
+* **Backlinks outlive their node.** Step 2 writes backlinks into existing records, but `node_count`
+  is only persisted by `flush()`. After a crash, open rolls the node back while the backlinks
+  survive, pointing at an ID the next insert reuses. Pruning such a list read the missing vector and
+  failed every later insert. `add_backward_link_with_pruning` now drops IDs at or past `node_count`,
+  and search already skipped them. Once the next insert reuses the ID, the surviving backlinks are
+  ordinary edges to the new node.
+* **Moving the graph zone was not crash-safe.** It copied the zone in place over an overlapping
+  range, so a crash mid-copy destroyed the only valid graph. A copy now never overwrites the one the
+  header points at (an overlapping move goes past both ranges first), and is fsynced before the
+  header switches to it.
+
+What holds now: after a process kill, reopening keeps every vector up to the last `flush()` and the
+index takes new inserts, tested by `chassis-core/tests/crash_tests.rs`. Graph edges are not rolled
+back: edges pruned after the last flush to make room for backlinks stay lost, which can lower recall.
+The same is expected after power loss, because `flush()` is the fsync barrier.
+
+Since 2026-10-05, `chassis-core/src/power_loss.rs` simulates power loss. At every fsync and between
+operations, each 512-byte sector of a crash image keeps either its durable or its current contents,
+and every image must reopen to exactly the last completed flush or the one in progress, then keep
+accepting writes. Today's code passes 248 such images. The simulator catches each of five protocol
+mutants: a missing fsync before the graph header, a missing fsync before a graph move switches, no
+dirty flag before delete marks, in-place overlapping graph moves, and recovery disabled. It does not
+model a sector persisted at an intermediate version, and real hardware is not tested.

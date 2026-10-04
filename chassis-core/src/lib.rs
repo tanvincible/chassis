@@ -8,7 +8,7 @@
 //!
 //! - On-disk storage using memory-mapped I/O
 //! - Page-aligned file format (4KB boundaries)
-//! - Single-writer, multi-reader concurrency (SWMR)
+//! - One writer, concurrent readers within a process; other processes are locked out
 //! - Explicit durability control via flush()
 //! - Zero external dependencies (no daemons or services)
 //!
@@ -51,6 +51,9 @@ mod header;
 mod hnsw;
 mod storage;
 
+#[cfg(test)]
+mod power_loss;
+
 #[cfg(feature = "internals")]
 pub use hnsw::*;
 
@@ -61,10 +64,8 @@ pub use storage::Storage;
 
 use anyhow::Result;
 use hnsw::layer_from_uniform;
+use std::collections::HashMap;
 use std::path::Path;
-
-/// Maximum candidates to pass to diversity heuristic (cache limit)
-const MAX_CANDIDATES_FOR_HEURISTIC: usize = 33;
 
 /// Configuration options for VectorIndex
 #[derive(Debug, Clone)]
@@ -100,6 +101,12 @@ pub struct VectorIndex {
 
     /// Layer multiplier cache: 1.0 / ln(M)
     ml: f32,
+
+    /// id → slot, built on first use once some id differs from its slot (ADR-0007)
+    ids: Option<HashMap<u64, u64>>,
+
+    /// One past the largest id ever stored, valid once `ids` is built
+    next_id: u64,
 }
 
 impl VectorIndex {
@@ -142,7 +149,7 @@ impl VectorIndex {
         };
 
         // Open graph
-        let mut graph = HnswGraph::open(storage, params)?;
+        let mut graph = HnswGraph::open_no_reset(storage, params)?;
 
         // Consistency check: Ghost node handling
         let storage_count = graph.storage.count();
@@ -163,18 +170,12 @@ impl VectorIndex {
             graph.storage.truncate_logical(graph_node_count);
         }
 
-        Ok(Self { graph, options, ml })
+        Ok(Self { graph, options, ml, ids: None, next_id: 0 })
     }
 
-    /// Add a vector to the index
+    /// Add a vector and return the id assigned to it: one past the largest id used so far.
     ///
-    /// # Arguments
-    ///
-    /// * `vector` - Vector to add (must match index dimensions)
-    ///
-    /// # Returns
-    ///
-    /// Returns the ID of the inserted vector
+    /// Ids are never reused by `add`, even after a delete. Use `add_with_id` to choose the id.
     ///
     /// # Crash Consistency Protocol (ADR-005)
     ///
@@ -193,6 +194,85 @@ impl VectorIndex {
     /// - Storage write fails
     /// - Graph write fails
     pub fn add(&mut self, vector: &[f32]) -> Result<u64> {
+        let id = if self.graph.custom_ids {
+            self.ids()?;
+            self.next_id
+        } else {
+            self.graph.node_count()
+        };
+        self.insert(id, vector)?;
+        Ok(id)
+    }
+
+    /// Add a vector under the caller's `id`. Search results report this id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a live vector already has `id` (delete it first to replace it), if
+    /// `id` is `u64::MAX` (reserved), or for the same reasons as `add`.
+    pub fn add_with_id(&mut self, id: u64, vector: &[f32]) -> Result<()> {
+        if id == u64::MAX {
+            anyhow::bail!("Id u64::MAX is reserved");
+        }
+        if self.slot_of(id)?.is_some() {
+            anyhow::bail!("Id {id} already exists; delete it first to replace it");
+        }
+        if !self.graph.custom_ids && id != self.graph.node_count() {
+            self.ids()?;
+            self.graph.custom_ids = true;
+        }
+        self.insert(id, vector)
+    }
+
+    /// Delete the vector with `id`. Returns false if no live vector has that id.
+    ///
+    /// Search stops returning it immediately. Like an add, the delete is durable after the next
+    /// `flush()`; a crash before then rolls it back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index file cannot be read.
+    pub fn delete(&mut self, id: u64) -> Result<bool> {
+        let Some(slot) = self.slot_of(id)? else {
+            return Ok(false);
+        };
+        self.graph.mark_deleted(slot)?;
+        if let Some(ids) = &mut self.ids {
+            ids.remove(&id);
+        }
+        Ok(true)
+    }
+
+    /// Slot of the live vector with `id`.
+    fn slot_of(&mut self, id: u64) -> Result<Option<u64>> {
+        if !self.graph.custom_ids {
+            let live = id < self.graph.node_count() && !self.graph.is_deleted(id)?;
+            return Ok(live.then_some(id));
+        }
+        Ok(self.ids()?.get(&id).copied())
+    }
+
+    /// The id → slot table of live vectors, built by one scan of the graph on first use.
+    // ponytail: O(n) scan once per process when custom ids are in use; persist the table if
+    // open-to-first-write latency on large indexes matters.
+    fn ids(&mut self) -> Result<&mut HashMap<u64, u64>> {
+        if self.ids.is_none() {
+            let mut ids = HashMap::new();
+            let mut next_id = 0;
+            for slot in 0..self.graph.node_count() {
+                let id = self.graph.id_of(slot)?;
+                next_id = next_id.max(id + 1);
+                if !self.graph.is_deleted(slot)? {
+                    ids.insert(id, slot);
+                }
+            }
+            self.next_id = next_id;
+            self.ids = Some(ids);
+        }
+        Ok(self.ids.as_mut().expect("ids built above"))
+    }
+
+    fn insert(&mut self, id: u64, vector: &[f32]) -> Result<()> {
         // Validate dimensions
         let dims = self.graph.storage.dimensions() as usize;
         if vector.len() != dims {
@@ -209,26 +289,26 @@ impl VectorIndex {
         let layer = self.select_layer();
         let layer_count = layer + 1;
 
-        // STEP 3: Handle empty graph case
-        if self.graph.node_count() == 0 {
-            // Empty graph - just publish the node
-            self.graph.write_node_and_backlinks(new_id, layer_count, &vec![vec![]; layer_count])?;
-            self.graph.publish_node(new_id, layer_count)?;
-            return Ok(new_id);
-        }
+        // STEP 3: Neighbor selection (in-memory phase); an empty graph has none
+        let neighbors = if self.graph.node_count() == 0 {
+            vec![vec![]; layer_count]
+        } else {
+            self.select_neighbors(vector, new_id, layer)?
+        };
 
-        // STEP 4: Neighbor selection (in-memory phase)
-        let neighbors = self.select_neighbors(vector, new_id, layer)?;
-
-        // STEP 5: Atomic write (disk phase)
+        // STEP 4: Atomic write (disk phase)
         // Node is written but invisible (node_count not incremented)
-        self.graph.write_node_and_backlinks(new_id, layer_count, &neighbors)?;
+        self.graph.write_node_with_id_and_backlinks(new_id, id, layer_count, &neighbors)?;
 
-        // STEP 6: Publish (commit phase)
+        // STEP 5: Publish (commit phase)
         // Node becomes visible to readers
         self.graph.publish_node(new_id, layer_count)?;
 
-        Ok(new_id)
+        if let Some(ids) = &mut self.ids {
+            ids.insert(id, new_id);
+        }
+        self.next_id = self.next_id.max(id + 1);
+        Ok(())
     }
 
     /// Search for k nearest neighbors
@@ -240,7 +320,8 @@ impl VectorIndex {
     ///
     /// # Returns
     ///
-    /// Returns a vector of search results, sorted by distance (ascending)
+    /// Returns a vector of search results, sorted by distance (ascending), identified by the
+    /// ids given to `add`/`add_with_id`. Deleted vectors are never returned.
     ///
     /// # Errors
     ///
@@ -252,8 +333,13 @@ impl VectorIndex {
             anyhow::bail!("Query dimension mismatch: expected {}, got {}", dims, query.len());
         }
 
-        // Delegate to graph search with configured ef_search
-        self.graph.search(query, k, self.options.ef_search)
+        let mut results = self.graph.search(query, k, self.options.ef_search)?;
+        if self.graph.custom_ids {
+            for result in &mut results {
+                result.id = self.graph.id_of(result.id)?;
+            }
+        }
+        Ok(results)
     }
 
     /// Flush all changes to disk
@@ -271,23 +357,17 @@ impl VectorIndex {
     ///
     /// Returns an error if the flush fails
     pub fn flush(&mut self) -> Result<()> {
-        // Flush vector storage first
-        self.graph.storage.commit()?;
-
-        // Then flush graph metadata
-        self.graph.commit()?;
-
-        Ok(())
+        self.graph.commit()
     }
 
-    /// Get the number of vectors in the index
+    /// Get the number of live (not deleted) vectors in the index
     pub fn len(&self) -> u64 {
-        self.graph.node_count()
+        self.graph.node_count() - self.graph.deleted_count
     }
 
     /// Check if the index is empty
     pub fn is_empty(&self) -> bool {
-        self.graph.node_count() == 0
+        self.len() == 0
     }
 
     /// Get the dimensionality of vectors in this index
@@ -346,8 +426,13 @@ impl VectorIndex {
             };
 
             // Select diverse neighbors using unified heuristic
-            let selected =
-                self.select_diverse_subset(new_id, &candidate_ids, layer, max_neighbors)?;
+            let selected = self.graph.select_neighbors_heuristic(
+                new_id,
+                &candidate_ids,
+                layer,
+                max_neighbors,
+                None,
+            )?;
 
             neighbors[layer] = selected;
 
@@ -358,45 +443,6 @@ impl VectorIndex {
         }
 
         Ok(neighbors)
-    }
-
-    /// Select a diverse subset of neighbors using the diversity heuristic
-    ///
-    /// This method delegates to the unified `select_neighbors_heuristic` in link.rs,
-    /// which implements HNSW Heuristic 2 with a stack-allocated distance cache.
-    ///
-    /// # Truncation for Cache Safety
-    ///
-    /// The diversity heuristic uses a stack-allocated cache sized for MAX_M+1 (33) nodes.
-    /// Since search results from `ef_construction` can be much larger (e.g., 200 nodes),
-    /// we truncate to the top 33 closest candidates. This is safe because:
-    /// 1. Search results are already sorted by distance (ascending)
-    /// 2. The best diverse neighbors are likely among the closest candidates
-    /// 3. We maintain O(1) stack allocation for the distance cache
-    fn select_diverse_subset(
-        &self,
-        base_node: u64,
-        candidates: &[u64],
-        layer: usize,
-        max_count: usize,
-    ) -> Result<Vec<u64>> {
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Truncate candidates to fit in cache (33 = MAX_M + 1)
-        // Search results are already sorted by distance, so we keep the closest
-        let truncated_candidates: Vec<u64> =
-            candidates.iter().take(MAX_CANDIDATES_FOR_HEURISTIC).copied().collect();
-
-        // Delegate to unified heuristic (no priority for forward linking)
-        self.graph.select_neighbors_heuristic(
-            base_node,
-            &truncated_candidates,
-            layer,
-            max_count,
-            None, // No priority node for forward linking
-        )
     }
 }
 

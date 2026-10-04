@@ -14,7 +14,7 @@ Chassis assumes that data should live on disk first and that memory should be tr
 
 Search performance is shaped by physical constraints such as disk I O behavior, cache locality, and CPU execution characteristics. Optimizations focus on predictable behavior under constrained memory rather than peak performance on specialized hardware.
 
-Writes are designed to be crash safe and consistent. A write is either fully committed or not visible at all. Partial state is avoided.
+Writes are designed to be crash safe. After a crash, an index reopens with every add and delete up to its last flush and none after it, and it keeps accepting writes.
 
 ## Scope
 

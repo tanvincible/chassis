@@ -75,9 +75,9 @@ class VectorIndex:
     handling memory management, error handling, and type conversions.
 
     Thread Safety:
-        - add() and flush() require exclusive access (single writer)
-        - search(), len(), is_empty(), dimensions() allow concurrent
-            access (multi reader)
+        Every method is safe from any thread. Searches run concurrently;
+        add(), delete() and flush() run one at a time and searches wait for
+        them. Don't call close() while other threads still use the index.
 
     Example:
         >>> index = VectorIndex("vectors.chassis", dimensions=128)
@@ -185,29 +185,34 @@ class VectorIndex:
             raise ChassisError("Index is closed")
 
     def add(
-        self, vector: Union[Sequence[float], npt.NDArray[np.float32]]
+        self,
+        vector: Union[Sequence[float], npt.NDArray[np.float32]],
+        id: Optional[int] = None,
     ) -> int:
         """Add a vector to the index.
 
         Args:
             vector: Vector to add (must match index dimensions)
                 Can be a list, tuple, numpy array, or any sequence of floats
+            id: Id to store the vector under, from 0 to 2**64 - 2. Search
+                results report it. Default: one past the largest id used so far.
 
         Returns:
-            Vector ID (0-based, sequential)
+            The vector's id
 
         Raises:
             ChassisError: If index is closed
             DimensionMismatchError: If vector dimensions don't match
-            ChassisError: For other errors
+            ValueError: If id is out of range
+            ChassisError: If a vector with this id already exists (delete it
+                first to replace it), or for other errors
 
         Note:
             This method does NOT guarantee durability. Call flush() to
             ensure data is written to disk.
 
         Thread Safety:
-            Single-writer only. Do not call concurrently with other add()
-            or flush() calls.
+            Safe from any thread; writes run one at a time.
         """
         self._check_closed()
 
@@ -230,6 +235,11 @@ class VectorIndex:
 
         # Call FFI
         vector_ptr = vector.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        if id is not None:
+            _check_id(id)
+            if _ffi._lib.chassis_add_with_id(self._ptr, id, vector_ptr, len(vector)) != 0:
+                raise ChassisError(_ffi.get_last_error() or "Failed to add vector")
+            return id
         vector_id = _ffi._lib.chassis_add(self._ptr, vector_ptr, len(vector))
 
         # Check for error (UINT64_MAX)
@@ -244,6 +254,29 @@ class VectorIndex:
                 raise ChassisError("Failed to add vector")
 
         return int(vector_id)
+
+    def delete(self, id: int) -> bool:
+        """Delete the vector with this id.
+
+        Search stops returning it immediately. The delete is durable after the
+        next flush(); a crash before then rolls it back.
+
+        Returns:
+            True if it was deleted, False if no vector has this id
+
+        Raises:
+            ChassisError: If index is closed or the delete fails
+            ValueError: If id is out of range
+
+        Thread Safety:
+            Safe from any thread; writes run one at a time.
+        """
+        self._check_closed()
+        _check_id(id)
+        result = _ffi._lib.chassis_delete(self._ptr, id)
+        if result < 0:
+            raise ChassisError(_ffi.get_last_error() or "Failed to delete vector")
+        return result == 1
 
     def search(
         self,
@@ -266,8 +299,8 @@ class VectorIndex:
             ChassisError: For other errors
 
         Thread Safety:
-            Multi-reader safe. Can be called concurrently with other search()
-            calls, but not with add() or flush().
+            Safe from any thread. Runs concurrently with other searches and
+            waits while a write runs.
         """
         self._check_closed()
 
@@ -337,8 +370,7 @@ class VectorIndex:
             ChassisError: If flush fails
 
         Thread Safety:
-            Single-writer only. Do not call concurrently with add() or other
-            flush() calls.
+            Safe from any thread; writes run one at a time.
         """
         self._check_closed()
 
@@ -355,7 +387,7 @@ class VectorIndex:
             Number of vectors
 
         Thread Safety:
-            Multi-reader safe.
+            Safe from any thread.
         """
         self._check_closed()
         return int(_ffi._lib.chassis_len(self._ptr))
@@ -367,7 +399,7 @@ class VectorIndex:
             True if empty, False otherwise
 
         Thread Safety:
-            Multi-reader safe.
+            Safe from any thread.
         """
         self._check_closed()
         return bool(_ffi._lib.chassis_is_empty(self._ptr))
@@ -380,7 +412,7 @@ class VectorIndex:
             Number of dimensions
 
         Thread Safety:
-            Multi-reader safe.
+            Safe from any thread.
         """
         self._check_closed()
         return int(_ffi._lib.chassis_dimensions(self._ptr))
@@ -403,3 +435,9 @@ class VectorIndex:
             f"len={len(self) if not self._closed else '?'}, "
             f"status={status})"
         )
+
+
+def _check_id(id: int) -> None:
+    # ctypes would silently wrap a negative or oversized id into a different one.
+    if not 0 <= id < 2**64 - 1:
+        raise ValueError(f"id must be between 0 and 2**64 - 2, got {id}")

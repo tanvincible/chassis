@@ -13,6 +13,7 @@ use crate::hnsw::node::{
     INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, NodeRecordParams, Offset,
 };
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 
 /// Size of the graph header in bytes
 const GRAPH_HEADER_SIZE: usize = 64;
@@ -20,8 +21,12 @@ const GRAPH_HEADER_SIZE: usize = 64;
 /// Legacy graph offset used by the original sparse layout.
 const LEGACY_GRAPH_ZONE_START: u64 = 1024 * 1024 * 1024;
 
-/// Extra room left after the current vector zone when placing or relocating the graph.
-const VECTOR_ZONE_SLACK: usize = 8 * 1024 * 1024;
+/// Minimum room left after the vector zone when placing or relocating the graph.
+#[cfg(not(test))]
+const MIN_VECTOR_ZONE_SLACK: usize = 8 * 1024 * 1024;
+/// Small in unit tests, so short workloads cross graph moves.
+#[cfg(test)]
+const MIN_VECTOR_ZONE_SLACK: usize = 64 * 1024;
 
 /// Persistent graph header stored at the beginning of the graph zone.
 ///
@@ -38,7 +43,10 @@ const VECTOR_ZONE_SLACK: usize = 8 * 1024 * 1024;
 /// 28      2     m: u16
 /// 30      2     m0: u16
 /// 32      1     max_layers: u8
-/// 33      31    _reserved: [u8; 31]
+/// 33      1     flags: u8 (bit 0: a flush with deletes is in progress, bit 1: custom ids)
+/// 36      4     epoch: u32 (last flush that committed deletes)
+/// 40      8     deleted_count: u64
+/// 48      16    _reserved
 /// Total:  64 bytes
 /// ```
 #[repr(C, align(8))]
@@ -68,9 +76,26 @@ pub struct GraphHeader {
     /// Maximum layers
     pub max_layers: u8, // u8 at offset 32
 
-    /// Padding to 64 bytes
-    _reserved: [u8; 31], // 31 bytes:  offset 33-63
+    /// `FLAG_DIRTY` and `FLAG_CUSTOM_IDS`
+    pub flags: u8,
+
+    /// Last flush that committed deletes (ADR-0007)
+    pub epoch: u32,
+
+    /// Number of deleted nodes
+    pub deleted_count: u64,
+
+    _reserved: [u8; 16],
 }
+
+/// A flush that writes delete marks is in progress; open rolls its marks back (ADR-0007).
+const FLAG_DIRTY: u8 = 1;
+
+/// Some node's id differs from its slot, so ids need a lookup table.
+const FLAG_CUSTOM_IDS: u8 = 2;
+
+/// Byte offset of `GraphHeader::flags`, written alone to mark a flush in progress.
+const FLAGS_OFFSET: usize = 33;
 
 impl GraphHeader {
     /// Magic bytes for graph header validation
@@ -91,7 +116,10 @@ impl GraphHeader {
             m: params.m,
             m0: params.m0,
             max_layers: params.max_layers,
-            _reserved: [0; 31],
+            flags: 0,
+            epoch: 0,
+            deleted_count: 0,
+            _reserved: [0; 16],
         }
     }
 
@@ -113,7 +141,10 @@ impl GraphHeader {
         bytes[28..30].copy_from_slice(&self.m.to_le_bytes());
         bytes[30..32].copy_from_slice(&self.m0.to_le_bytes());
         bytes[32] = self.max_layers;
-        bytes[33..64].copy_from_slice(&self._reserved);
+        bytes[FLAGS_OFFSET] = self.flags;
+        bytes[36..40].copy_from_slice(&self.epoch.to_le_bytes());
+        bytes[40..48].copy_from_slice(&self.deleted_count.to_le_bytes());
+        bytes[48..64].copy_from_slice(&self._reserved);
 
         bytes
     }
@@ -135,8 +166,11 @@ impl GraphHeader {
         let m0 = u16::from_le_bytes(bytes[30..32].try_into()?);
         let max_layers = bytes[32];
 
-        let mut reserved = [0u8; 31];
-        reserved.copy_from_slice(&bytes[33..64]);
+        let flags = bytes[FLAGS_OFFSET];
+        let epoch = u32::from_le_bytes(bytes[36..40].try_into()?);
+        let deleted_count = u64::from_le_bytes(bytes[40..48].try_into()?);
+        let mut reserved = [0u8; 16];
+        reserved.copy_from_slice(&bytes[48..64]);
 
         Ok(Self {
             magic,
@@ -147,6 +181,9 @@ impl GraphHeader {
             m,
             m0,
             max_layers,
+            flags,
+            epoch,
+            deleted_count,
             _reserved: reserved,
         })
     }
@@ -187,11 +224,32 @@ pub struct HnswGraph {
 
     /// Number of nodes in the graph (tracked for header persistence)
     pub node_count: u64,
+
+    /// Last flush that committed deletes
+    epoch: u32,
+
+    /// Deleted nodes, committed and pending
+    pub(crate) deleted_count: u64,
+
+    /// Deletes since the last flush; they reach the file only in `commit` (ADR-0007)
+    pending_deletes: HashSet<NodeId>,
+
+    /// Some node's id differs from its slot
+    pub(crate) custom_ids: bool,
 }
 
 impl HnswGraph {
     /// Opens existing graph or creates new one
-    pub fn open(mut storage: Storage, params: HnswParams) -> Result<Self> {
+    pub fn open(storage: Storage, params: HnswParams) -> Result<Self> {
+        Self::open_inner(storage, params, false)
+    }
+
+    /// Like `open`, but stored vectors without a graph are corruption, not a new index.
+    pub(crate) fn open_no_reset(storage: Storage, params: HnswParams) -> Result<Self> {
+        Self::open_inner(storage, params, true)
+    }
+
+    fn open_inner(mut storage: Storage, params: HnswParams, no_reset: bool) -> Result<Self> {
         let record_params = params.to_record_params();
         let graph_start = Self::find_or_create_graph_start(&mut storage, record_params)?;
 
@@ -199,55 +257,127 @@ impl HnswGraph {
         let header_end = graph_start as usize + GRAPH_HEADER_SIZE;
         storage.ensure_graph_capacity(header_end)?;
 
-        // Try to read existing header
-        let (entry_point, max_layer, node_count) =
-            match Self::try_read_graph_header(&storage, graph_start, record_params) {
-                Ok(header) => {
-                    // Existing graph found
-                    let entry_point = if header.entry_point == INVALID_NODE_ID {
-                        None
-                    } else {
-                        Some(header.entry_point)
-                    };
-                    (entry_point, header.max_layer as usize, header.node_count)
+        let header = match Self::try_read_graph_header(&storage, graph_start, record_params)? {
+            Some(header) => header,
+            None => {
+                let stored = storage.count();
+                if no_reset && stored > 0 {
+                    anyhow::bail!(
+                        "File has {stored} vectors but no graph: it was truncated, corrupted, \
+                             or written without VectorIndex"
+                    );
                 }
-                Err(_) => {
-                    // New graph - initialize header
-                    let header = GraphHeader::new(record_params);
-                    let bytes = header.to_bytes();
-                    let zone = storage.graph_zone_mut(graph_start as usize, GRAPH_HEADER_SIZE)?;
-                    zone.copy_from_slice(&bytes);
-                    (None, 0, 0)
-                }
-            };
+                let header = GraphHeader::new(record_params);
+                let zone = storage.graph_zone_mut(graph_start as usize, GRAPH_HEADER_SIZE)?;
+                zone.copy_from_slice(&header.to_bytes());
+                // Durable before any vector, so a zero header over vectors means corruption.
+                storage.commit()?;
+                header
+            }
+        };
 
-        Ok(Self { storage, params, record_params, graph_start, entry_point, max_layer, node_count })
+        let graph_size =
+            usize::try_from(Self::checked_total_graph_size(header.node_count, record_params)?)
+                .context("Graph size too large for this platform")?;
+        storage
+            .graph_zone(graph_start as usize, graph_size)
+            .context("File truncated: it ends inside the graph")?;
+
+        let mut graph = Self {
+            storage,
+            params,
+            record_params,
+            graph_start,
+            entry_point: (header.entry_point != INVALID_NODE_ID).then_some(header.entry_point),
+            max_layer: header.max_layer as usize,
+            node_count: header.node_count,
+            epoch: header.epoch,
+            deleted_count: header.deleted_count,
+            pending_deletes: HashSet::new(),
+            custom_ids: header.flags & FLAG_CUSTOM_IDS != 0,
+        };
+        if header.flags & FLAG_DIRTY != 0 {
+            graph.roll_back_uncommitted_deletes()?;
+        }
+        Ok(graph)
     }
 
-    /// Try to read graph header if it exists
+    /// Clears delete marks that a crashed flush wrote but never committed (ADR-0007).
+    fn roll_back_uncommitted_deletes(&mut self) -> Result<()> {
+        for slot in 0..self.node_count {
+            if self.deleted_epoch(slot)? > self.epoch {
+                self.write_deleted_epoch(slot, 0)?;
+            }
+        }
+        self.storage.commit()?;
+        self.write_graph_header()?;
+        self.storage.commit()
+    }
+
+    fn deleted_epoch_offset(&self, slot: NodeId) -> usize {
+        self.node_offset(slot) as usize + std::mem::offset_of!(NodeHeader, deleted_epoch)
+    }
+
+    fn deleted_epoch(&self, slot: NodeId) -> Result<u32> {
+        let bytes = self.storage.graph_zone(self.deleted_epoch_offset(slot), 4)?;
+        Ok(u32::from_le_bytes(bytes.try_into()?))
+    }
+
+    fn write_deleted_epoch(&mut self, slot: NodeId, epoch: u32) -> Result<()> {
+        let offset = self.deleted_epoch_offset(slot);
+        self.storage.graph_zone_mut(offset, 4)?.copy_from_slice(&epoch.to_le_bytes());
+        Ok(())
+    }
+
+    /// Whether the node at `slot` is deleted, including deletes not yet flushed.
+    pub(crate) fn is_deleted(&self, slot: NodeId) -> Result<bool> {
+        Ok(self.pending_deletes.contains(&slot) || self.deleted_epoch(slot)? != 0)
+    }
+
+    /// Marks the node at `slot` deleted from the next flush on; false if it already was.
+    pub(crate) fn mark_deleted(&mut self, slot: NodeId) -> Result<bool> {
+        if self.is_deleted(slot)? {
+            return Ok(false);
+        }
+        self.pending_deletes.insert(slot);
+        self.deleted_count += 1;
+        Ok(true)
+    }
+
+    /// The caller's id stored for the node at `slot`.
+    pub(crate) fn id_of(&self, slot: NodeId) -> Result<u64> {
+        let bytes = self.storage.graph_zone(self.node_offset(slot) as usize, 8)?;
+        Ok(u64::from_le_bytes(bytes.try_into()?))
+    }
+
+    /// Reads the graph header, or `None` if none was ever written (all zero bytes).
+    ///
+    /// Anything else that fails validation is an error: treating it as a new graph would make
+    /// `VectorIndex::open` roll back every stored vector.
     fn try_read_graph_header(
         storage: &Storage,
         graph_start: Offset,
         expected_params: NodeRecordParams,
-    ) -> Result<GraphHeader> {
+    ) -> Result<Option<GraphHeader>> {
         let zone = storage.graph_zone(graph_start as usize, GRAPH_HEADER_SIZE)?;
-        let header = GraphHeader::from_bytes(zone)?;
-
-        if !header.is_valid() {
-            anyhow::bail!("Invalid graph header magic or version");
+        if zone.iter().all(|&b| b == 0) {
+            return Ok(None);
         }
 
-        // Verify params match
+        let header = GraphHeader::from_bytes(zone)?;
+        if !header.is_valid() {
+            anyhow::bail!("Corrupted graph header at offset {graph_start}");
+        }
+
         let header_params = header.to_record_params();
         if header_params != expected_params {
             anyhow::bail!(
-                "Graph header params mismatch: expected {:?}, got {:?}",
-                expected_params,
-                header_params
+                "Index was created with {header_params:?} but opened with {expected_params:?}; \
+                 open it with the original max_connections"
             );
         }
 
-        Ok(header)
+        Ok(Some(header))
     }
 
     /// Read graph header from mmap
@@ -268,6 +398,9 @@ impl HnswGraph {
         header.entry_point = self.entry_point.unwrap_or(INVALID_NODE_ID);
         header.max_layer = self.max_layer as u32;
         header.node_count = self.node_count;
+        header.flags = if self.custom_ids { FLAG_CUSTOM_IDS } else { 0 };
+        header.epoch = self.epoch;
+        header.deleted_count = self.deleted_count;
 
         let bytes = header.to_bytes();
         let zone = self.storage.graph_zone_mut(self.graph_start as usize, GRAPH_HEADER_SIZE)?;
@@ -303,14 +436,16 @@ impl HnswGraph {
         let offset = self.node_offset(node_id);
 
         let zone = self.storage.graph_zone(offset as usize, record_size)?;
-        NodeRecord::from_bytes(zone, self.record_params)
-            .map_err(|e| anyhow::anyhow!("Failed to read node record: {}", e))
+        let mut record = NodeRecord::from_bytes(zone, self.record_params)
+            .map_err(|e| anyhow::anyhow!("Failed to read node record: {}", e))?;
+        record.slot = node_id;
+        Ok(record)
     }
 
     /// Write a node record directly to mmap.
     pub fn write_node_record(&mut self, record: &NodeRecord) -> Result<()> {
         let record_size = self.record_params.record_size();
-        let offset = self.node_offset(record.header.node_id);
+        let offset = self.node_offset(record.slot);
 
         let required_size = offset as usize + record_size;
         self.storage.ensure_graph_capacity(required_size)?;
@@ -410,7 +545,27 @@ impl HnswGraph {
     /// graph.commit()?;  // Once at the end
     /// ```
     pub fn commit(&mut self) -> Result<()> {
+        // ADR-0007: records and a dirty flag durable, then the delete marks, then the header that
+        // commits them, so a crash at any point leaves the previous flush intact.
+        let deletes: Vec<NodeId> = self.pending_deletes.iter().copied().collect();
+        if !deletes.is_empty() {
+            let flags = self.graph_start as usize + FLAGS_OFFSET;
+            self.storage.graph_zone_mut(flags, 1)?[0] |= FLAG_DIRTY;
+        }
+        self.storage.commit()?;
+
+        if !deletes.is_empty() {
+            let epoch = self.epoch.checked_add(1).context("Delete epoch overflow")?;
+            for slot in deletes {
+                self.write_deleted_epoch(slot, epoch)?;
+            }
+            self.storage.commit()?;
+            self.epoch = epoch;
+            self.pending_deletes.clear();
+        }
+
         self.write_graph_header()?;
+        self.storage.mark_current_version();
         self.storage.commit()
     }
 
@@ -445,8 +600,14 @@ impl HnswGraph {
         record_params: NodeRecordParams,
     ) -> Result<Option<Offset>> {
         let legacy_start = LEGACY_GRAPH_ZONE_START as usize;
-        let Ok(header) =
-            Self::try_read_graph_header(storage, LEGACY_GRAPH_ZONE_START, record_params)
+        // Without the magic this is not a legacy graph: the bytes may be vector data.
+        if storage.graph_zone(legacy_start, GraphHeader::MAGIC.len()).ok()
+            != Some(GraphHeader::MAGIC.as_slice())
+        {
+            return Ok(None);
+        }
+        let Some(header) =
+            Self::try_read_graph_header(storage, LEGACY_GRAPH_ZONE_START, record_params)?
         else {
             return Ok(None);
         };
@@ -465,9 +626,10 @@ impl HnswGraph {
         Ok(Some(graph_start))
     }
 
+    /// Slack is 25% of the vector zone, so the graph moves O(log n) times, not every 8 MiB.
     fn choose_graph_start(vector_end: usize) -> Result<Offset> {
         let graph_start = vector_end
-            .checked_add(VECTOR_ZONE_SLACK)
+            .checked_add((vector_end / 4).max(MIN_VECTOR_ZONE_SLACK))
             .context("Graph offset calculation overflow")?;
         Ok(Storage::page_align(graph_start) as Offset)
     }
@@ -488,12 +650,16 @@ impl HnswGraph {
         let graph_size = usize::try_from(self.total_graph_size()?)
             .context("Graph size too large for this platform")?;
         let new_graph_start = Self::choose_graph_start(next_vector_end)?;
-        self.storage.move_graph_zone(
+        let moved = self.storage.move_graph_zone(
             self.graph_start as usize,
             new_graph_start as usize,
             graph_size,
-        )?;
-        self.graph_start = new_graph_start;
+        );
+        // Follow the header even if the move failed part way: it may already point at a new copy.
+        if let Some(offset) = self.storage.graph_offset() {
+            self.graph_start = offset;
+        }
+        moved?;
 
         Ok(())
     }
@@ -607,7 +773,7 @@ impl HnswGraph {
     ///
     /// Panics if `node_id >= self.node_count` (node doesn't exist).
     pub fn update_node_record(&mut self, record: &NodeRecord) -> Result<()> {
-        let node_id = record.header.node_id;
+        let node_id = record.slot;
 
         debug_assert!(
             node_id < self.node_count,
@@ -793,6 +959,44 @@ mod tests {
     }
 
     #[test]
+    fn test_corrupted_graph_header_is_an_error_not_a_new_graph() {
+        let (storage, temp) = create_test_storage(128);
+        let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+        graph.insert(0, 0).unwrap();
+        graph.commit().unwrap();
+        let graph_start = graph.graph_start as usize;
+        graph.storage.graph_zone_mut(graph_start, 4).unwrap().copy_from_slice(b"XXXX");
+        drop(graph);
+
+        let storage = Storage::open(temp.path(), 128).unwrap();
+        assert!(HnswGraph::open(storage, HnswParams::default()).is_err());
+    }
+
+    #[test]
+    fn test_interrupted_delete_flush_is_rolled_back() {
+        let (storage, temp) = create_test_storage(8);
+        let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+        for id in 0..3 {
+            graph.insert(id, 0).unwrap();
+        }
+        graph.mark_deleted(0).unwrap();
+        graph.commit().unwrap();
+
+        // What a crash mid-commit leaves: the dirty flag and a mark from the next epoch.
+        let flags = graph.graph_start as usize + FLAGS_OFFSET;
+        graph.storage.graph_zone_mut(flags, 1).unwrap()[0] |= FLAG_DIRTY;
+        graph.write_deleted_epoch(1, graph.epoch + 1).unwrap();
+        drop(graph);
+
+        let graph =
+            HnswGraph::open(Storage::open(temp.path(), 8).unwrap(), HnswParams::default()).unwrap();
+        assert!(graph.is_deleted(0).unwrap());
+        assert!(!graph.is_deleted(1).unwrap());
+        assert_eq!(graph.deleted_count, 1);
+        assert_eq!(graph.read_graph_header().unwrap().flags & FLAG_DIRTY, 0);
+    }
+
+    #[test]
     fn test_graph_persistence() {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
@@ -895,23 +1099,27 @@ mod tests {
     #[test]
     fn test_vector_growth_relocates_graph_without_losing_records() {
         let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
         let mut graph =
-            HnswGraph::open(Storage::open(path, 4096).unwrap(), HnswParams::default()).unwrap();
-
-        graph.insert(0, 0).unwrap();
+            HnswGraph::open(Storage::open(temp_file.path(), 768).unwrap(), HnswParams::default())
+                .unwrap();
         let original_graph_start = graph.graph_start;
-        let first_record = graph.read_node_record(0).unwrap();
-        assert_eq!(first_record.header.node_id, 0);
 
-        for _ in 0..600 {
+        // 10k x 768d crosses two graph moves whose old and new ranges overlap.
+        for id in 0..10_000 {
             graph.prepare_for_vector_insert().unwrap();
-            graph.storage.insert(&vec![1.0; 4096]).unwrap();
+            graph.storage.insert(&vec![1.0; 768]).unwrap();
+            graph.insert(id, 0).unwrap();
         }
 
         assert!(graph.graph_start > original_graph_start);
-        let relocated_record = graph.read_node_record(0).unwrap();
-        assert_eq!(relocated_record.header.node_id, 0);
-        assert_eq!(relocated_record.header.layer_count, 1);
+        for id in 0..10_000 {
+            assert_eq!(graph.read_node_record(id).unwrap().header.id, id);
+        }
+        // No dead copy of an old graph: vectors, slack and graph, plus 25% growth headroom.
+        let vector_end = graph.storage.vector_end().unwrap();
+        let graph_size = graph.total_graph_size().unwrap() as usize;
+        let bound =
+            (vector_end + (vector_end / 4).max(MIN_VECTOR_ZONE_SLACK) + graph_size) * 5 / 4 + 4096;
+        assert!(std::fs::metadata(temp_file.path()).unwrap().len() as usize <= bound);
     }
 }

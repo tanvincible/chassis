@@ -39,14 +39,35 @@ let id = index.add(&vector)?;
 
 **Behavior**:
 
-* **Atomic**: Follows the "Register Last" protocol. Readers never see uninitialized data.
-* **Sequential**: Returns a monotonically increasing `u64` ID (0, 1, 2...).
+* **Crash behavior**: If the process dies before the next `flush()`, this vector is gone on reopen. The index stays usable.
+* **Ids**: `add` returns one past the largest id used so far (0, 1, 2... unless you chose ids yourself). It never reuses an id, even after a delete.
 * **Durability**: Data is written to memory-mapped pages immediately but requires `flush()` for persistence guarantees.
 
 **Errors**:
 
 * Dimension mismatch.
 * Storage write failure (e.g., disk full).
+
+#### Your Own Ids
+
+```rust
+index.add_with_id(42, &vector)?;
+```
+
+Search results report `42`. Fails if a live vector already has that id; delete it first to replace
+it. `u64::MAX` is reserved. Indexes that use their own ids build an id table in memory on the first
+lookup in a process, which scans the index once ([ADR-0007](../adr/007-ids-and-deletes.md)).
+
+#### Deleting
+
+```rust
+let deleted = index.delete(42)?; // false if no live vector has id 42
+```
+
+Search stops returning the vector immediately, and `len()` drops by one. The delete is durable
+after the next `flush()`; a crash before then rolls it back. A delete and an add in the same flush
+are all-or-nothing, so `delete(id)` followed by `add_with_id(id, new_vector)` replaces a vector
+safely. Deleted vectors keep their disk space until the index is rebuilt.
 
 #### Searching
 
@@ -61,7 +82,7 @@ for match in results {
 }
 ```
 
-**Returns**: `Vec<SearchResult>`, sorted by distance (nearest first).
+**Returns**: `Vec<SearchResult>`, sorted by distance (nearest first), identified by the ids from `add`/`add_with_id`. Deleted vectors are never returned.
 
 #### Persistence
 
@@ -75,7 +96,7 @@ index.flush()?;
 #### Metadata
 
 ```rust
-let len = index.len();           // Total vectors
+let len = index.len();           // Live vectors (deleted ones excluded)
 let dim = index.dimensions();    // Vector size
 let empty = index.is_empty();    // True if count == 0
 ```

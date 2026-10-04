@@ -30,3 +30,6 @@ Thumbs.db
 
 # --- Additional helper tools ---
 node_modules
+# --- Benchmarks ---
+bench/ann/data/
+__pycache__/

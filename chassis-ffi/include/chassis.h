@@ -51,7 +51,7 @@ extern "C" {
  * # Thread Safety
  *
  * - Safe to call from multiple threads with different paths
- * - The returned index requires exclusive access for writes
+ * - The returned handle may be shared across threads (see the crate's Thread Safety notes)
  *
  * # Example (C)
  *
@@ -127,19 +127,18 @@ void chassis_free(struct ChassisIndex *ptr);
  *
  * # Arguments
  *
- * - `ptr`: Non-NULL pointer to index (requires exclusive access)
+ * - `ptr`: Non-NULL pointer to index
  * - `vector`: Pointer to f32 array (must not be NULL)
  * - `len`: Number of elements in vector (must match index dimensions)
  *
  * # Returns
  *
- * - Vector ID (0-based) on success
+ * - The id assigned (one past the largest id used so far) on success
  * - `UINT64_MAX` on failure (check `chassis_last_error_message()`)
  *
  * # Thread Safety
  *
- * **SINGLE-WRITER**: Only one thread may call this function at a time for a
- * given index. Concurrent writes will cause data corruption.
+ * Safe from any thread. Writes run one at a time; searches wait for them.
  *
  * # Performance Note
  *
@@ -161,7 +160,6 @@ void chassis_free(struct ChassisIndex *ptr);
  * - `ptr` must be non-NULL and valid
  * - `vector` must point to `len` valid f32 values
  * - `len` must match the dimensions specified in `chassis_open()`
- * - No other thread may access `ptr` during this call
  */
 uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
 
@@ -170,7 +168,7 @@ uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
  *
  * # Arguments
  *
- * - `ptr`: Non-NULL pointer to index (requires exclusive access)
+ * - `ptr`: Non-NULL pointer to index
  * - `vectors`: Contiguous `count * dim` floats: row `i` is
  *   `vectors[i*dim .. (i+1)*dim]`
  * - `count`: Number of vectors to insert
@@ -186,7 +184,7 @@ uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
  *
  * # Thread Safety
  *
- * **SINGLE-WRITER**: Same as `chassis_add()`.
+ * Same as `chassis_add()`. The whole batch holds the write lock.
  *
  * # Performance Note
  *
@@ -210,9 +208,41 @@ uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
  * - If `count > 0`, `vectors` and `out_ids` must be non-NULL; `vectors` must point
  *   to `count * dim` valid floats
  * - `dim` must match dimensions passed to `chassis_open()`
- * - No other thread may access `ptr` during this call
  */
 size_t chassis_add_batch(struct ChassisIndex *ptr, const float *vectors, size_t count, size_t dim, uint64_t *out_ids);
+
+/**
+ * Add a vector under the caller's id
+ *
+ * # Returns
+ *
+ * - `0` on success
+ * - `-1` on failure, including when a live vector already has `id` or `id` is `UINT64_MAX`
+ *   (check `chassis_last_error_message()`)
+ *
+ * # Safety
+ *
+ * Same as `chassis_add()`.
+ */
+int chassis_add_with_id(struct ChassisIndex *ptr, uint64_t id, const float *vector, size_t len);
+
+/**
+ * Delete the vector with `id`
+ *
+ * Search stops returning it immediately; the delete is durable after the next
+ * `chassis_flush()`.
+ *
+ * # Returns
+ *
+ * - `1` if it was deleted
+ * - `0` if no live vector has `id`
+ * - `-1` on failure (check `chassis_last_error_message()`)
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_delete(struct ChassisIndex *ptr, uint64_t id);
 
 /**
  * Search for k nearest neighbors
@@ -233,8 +263,7 @@ size_t chassis_add_batch(struct ChassisIndex *ptr, const float *vectors, size_t 
  *
  * # Thread Safety
  *
- * **MULTI-READER**: Multiple threads may call this function concurrently
- * on the same index. Reads do not block other reads.
+ * Safe from any thread. Searches run concurrently with each other and wait for writes.
  *
  * # Output Format
  *
@@ -270,7 +299,7 @@ size_t chassis_search(const struct ChassisIndex *ptr, const float *query, size_t
  *
  * # Arguments
  *
- * - `ptr`: Non-NULL pointer to index (requires exclusive access)
+ * - `ptr`: Non-NULL pointer to index
  *
  * # Returns
  *
@@ -279,8 +308,7 @@ size_t chassis_search(const struct ChassisIndex *ptr, const float *query, size_t
  *
  * # Thread Safety
  *
- * **SINGLE-WRITER**: Only one thread may call this function at a time for a
- * given index. No other operations (read or write) may occur during flush.
+ * Safe from any thread. Writes run one at a time; searches wait for them.
  *
  * # Performance Warning
  *
@@ -304,7 +332,6 @@ size_t chassis_search(const struct ChassisIndex *ptr, const float *query, size_t
  * # Safety
  *
  * - `ptr` must be non-NULL and valid
- * - No other thread may access `ptr` during this call
  */
 int chassis_flush(struct ChassisIndex *ptr);
 

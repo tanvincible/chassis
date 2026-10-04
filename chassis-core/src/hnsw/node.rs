@@ -42,25 +42,28 @@ pub const DEFAULT_M0: u16 = DEFAULT_M * 2;
 /// ```text
 /// Offset  Size  Field
 /// ------  ----  -----
-/// 0       8     node_id:  NodeId
+/// 0       8     id: u64 (the caller's id; equals the node's slot in files without custom ids)
 /// 8       1     layer_count: u8 (highest layer this node belongs to + 1)
-/// 9       1     flags: u8 (reserved for future use)
-/// 10      6     _padding: [u8; 6]
+/// 9       1     flags: u8 (reserved)
+/// 10      2     _padding
+/// 12      4     deleted_epoch: u32 (flush epoch that deleted the node, 0 while live)
 /// ```
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy)]
 pub struct NodeHeader {
-    /// Vector ID in storage (also serves as the node's index)
-    pub node_id: NodeId,
+    /// The caller's id for this node
+    pub id: u64,
 
     /// Number of layers this node participates in (1 = layer 0 only)
     pub layer_count: u8,
 
-    /// Flags for future extensions (deleted flag, etc.)
+    /// Reserved for future use
     pub flags: u8,
 
-    /// Reserved for alignment
-    _padding: [u8; 6],
+    _padding: [u8; 2],
+
+    /// Flush epoch that deleted this node, or 0 while it is live (ADR-0007)
+    pub deleted_epoch: u32,
 }
 
 impl NodeHeader {
@@ -69,8 +72,8 @@ impl NodeHeader {
 
     /// Create a new node header
     #[must_use]
-    pub const fn new(node_id: NodeId, layer_count: u8) -> Self {
-        Self { node_id, layer_count, flags: 0, _padding: [0; 6] }
+    pub const fn new(id: u64, layer_count: u8) -> Self {
+        Self { id, layer_count, flags: 0, _padding: [0; 2], deleted_epoch: 0 }
     }
 
     /// Read header from bytes with validation.
@@ -87,7 +90,7 @@ impl NodeHeader {
     /// Returns an error if:
     /// - Slice is too small
     /// - `layer_count` is 0 (invalid)
-    /// - `node_id` is `INVALID_NODE_ID` (reserved sentinel)
+    /// - `id` is `INVALID_NODE_ID` (reserved sentinel)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
         if bytes.len() < Self::SIZE {
             return Err("Buffer too small for NodeHeader");
@@ -101,10 +104,8 @@ impl NodeHeader {
             return Err("Invalid NodeHeader:  layer_count cannot be 0");
         }
 
-        // node_id == INVALID_NODE_ID is reserved for empty slots
-        // A valid header should never have this value
-        if header.node_id == INVALID_NODE_ID {
-            return Err("Invalid NodeHeader: node_id is INVALID_NODE_ID sentinel");
+        if header.id == INVALID_NODE_ID {
+            return Err("Invalid NodeHeader: id is the INVALID_NODE_ID sentinel");
         }
 
         Ok(header)
@@ -129,12 +130,7 @@ impl NodeHeader {
     /// Check if the node is marked as deleted
     #[must_use]
     pub const fn is_deleted(&self) -> bool {
-        self.flags & 0x01 != 0
-    }
-
-    /// Mark the node as deleted
-    pub fn set_deleted(&mut self) {
-        self.flags |= 0x01;
+        self.deleted_epoch != 0
     }
 }
 
@@ -255,6 +251,9 @@ impl NodeRecordParams {
 /// No hash maps or indirection required.
 #[derive(Debug)]
 pub struct NodeRecord {
+    /// Position in the graph zone. Not stored on disk; reads and writes are addressed by it.
+    pub slot: NodeId,
+
     /// Node header
     pub header: NodeHeader,
 
@@ -267,13 +266,13 @@ pub struct NodeRecord {
 }
 
 impl NodeRecord {
-    /// Create a new empty node record.
+    /// Create a new empty node record at `slot`, with the slot as its id.
     #[must_use]
-    pub fn new(node_id: NodeId, layer_count: u8, params: NodeRecordParams) -> Self {
+    pub fn new(slot: NodeId, layer_count: u8, params: NodeRecordParams) -> Self {
         let total_slots = params.total_max_neighbors();
         let neighbors = vec![INVALID_NODE_ID; total_slots];
 
-        Self { header: NodeHeader::new(node_id, layer_count), neighbors, params }
+        Self { slot, header: NodeHeader::new(slot, layer_count), neighbors, params }
     }
 
     /// Get the fixed record size.
@@ -450,7 +449,7 @@ impl NodeRecord {
             offset += 8;
         }
 
-        Ok(Self { header, neighbors, params })
+        Ok(Self { slot: header.id, header, neighbors, params })
     }
 }
 
@@ -505,7 +504,7 @@ impl Node {
             layers.push(record.get_neighbors(layer));
         }
 
-        Self { id: record.header.node_id, offset: 0, layers }
+        Self { id: record.slot, offset: 0, layers }
     }
 }
 
@@ -620,7 +619,7 @@ mod tests {
         let params = NodeRecordParams::new(16, 32, 4);
         let record = NodeRecord::new(42, 3, params);
 
-        assert_eq!(record.header.node_id, 42);
+        assert_eq!(record.header.id, 42);
         assert_eq!(record.header.layer_count, 3);
         assert_eq!(record.neighbors.len(), params.total_max_neighbors());
 
@@ -688,7 +687,7 @@ mod tests {
 
         let restored = NodeRecord::from_bytes(&bytes, params).unwrap();
 
-        assert_eq!(restored.header.node_id, 123);
+        assert_eq!(restored.header.id, 123);
         assert_eq!(restored.header.layer_count, 3);
         assert_eq!(restored.get_neighbors(0), vec![1, 2, 3, 4, 5]);
         assert_eq!(restored.get_neighbors(1), vec![10, 20]);
@@ -718,7 +717,7 @@ mod tests {
 
         let record = node.to_record(params);
 
-        assert_eq!(record.header.node_id, 42);
+        assert_eq!(record.header.id, 42);
         assert_eq!(record.get_neighbors(0), vec![1, 2, 3]);
         assert_eq!(record.get_neighbors(1), vec![10, 20]);
         assert_eq!(record.get_neighbors(2), vec![100]);
@@ -744,11 +743,11 @@ mod tests {
     #[test]
     fn test_node_header_deleted_flag() {
         let mut header = NodeHeader::new(0, 1);
-
         assert!(!header.is_deleted());
 
-        header.set_deleted();
+        header.deleted_epoch = 3;
         assert!(header.is_deleted());
+        assert_eq!(std::mem::offset_of!(NodeHeader, deleted_epoch), 12);
     }
 
     #[test]

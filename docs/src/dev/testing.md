@@ -115,7 +115,6 @@ Tests bidirectional graph linking and diversity heuristics:
 **Diversity Heuristic**:
 - `test_diversity_selection()`: Heuristic 2 application
 - `test_starvation_fallback()`: Minimum degree guarantee
-- `test_distance_cache_effectiveness()`: Cache hit rate
 
 **Invariant Enforcement**:
 - `test_self_links_filtered()`: No self-loops

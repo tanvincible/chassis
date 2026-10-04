@@ -94,7 +94,7 @@ fn test_write_and_read_node_record() {
     // Read it back
     let read_record = graph.read_node_record(42).unwrap();
 
-    assert_eq!(read_record.header.node_id, 42);
+    assert_eq!(read_record.header.id, 42);
     assert_eq!(read_record.header.layer_count, 3);
     assert_eq!(read_record.get_neighbors(0), vec![1, 2, 3, 4, 5]);
     assert_eq!(read_record.get_neighbors(1), vec![10, 20, 30]);
@@ -118,11 +118,7 @@ fn test_node_record_addressing_formula() {
     let bytes_5 = graph.get_node_bytes(5);
     assert!(bytes_5.is_ok());
 
-    // But node 100 (not written yet) should work too due to O(1) addressing
-    // It just won't have valid data
-    let bytes_100 = graph.get_node_bytes(100);
-    // This might fail due to bounds checking, which is expected
-    assert!(bytes_100.is_err());
+    assert!(graph.get_node_bytes(1_000_000).is_err());
 }
 
 #[test]
@@ -147,7 +143,7 @@ fn test_multiple_node_records() {
     // Read them all back
     for node_id in 0..10 {
         let record = graph.read_node_record(node_id).unwrap();
-        assert_eq!(record.header.node_id, node_id);
+        assert_eq!(record.header.id, node_id);
         assert_eq!(record.get_neighbors(0), vec![node_id + 100, node_id + 200]);
         assert_eq!(record.get_neighbors(1), vec![node_id + 1000]);
     }
@@ -428,6 +424,6 @@ fn test_10k_768d_layout_stays_under_100mb() {
         let storage = Storage::open(path, 768).unwrap();
         let graph = HnswGraph::open(storage, params).unwrap();
         assert_eq!(graph.node_count(), 10_000);
-        assert_eq!(graph.read_node_record(9_999).unwrap().header.node_id, 9_999);
+        assert_eq!(graph.read_node_record(9_999).unwrap().header.id, 9_999);
     }
 }

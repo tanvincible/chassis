@@ -34,6 +34,8 @@ The design has the following properties:
 
 3. **Zero-Copy Read Path**
    All reads are performed by casting raw pointers (`*const u8`) into typed views (`&[f32]`, `&NodeRecord`) directly within the mapped address space. No intermediate buffers or heap allocations are permitted on the read path.
+   *(Amended 2026-10-03: search allocates a visited set and heaps per query, and `read_node_record`
+   returns an owned record. Vector and neighbor reads themselves do not allocate.)*
 
 4. **Cross-Platform Abstraction**
    The implementation relies on the `memmap2` crate, providing a safe and portable abstraction over `mmap` (POSIX) and `CreateFileMapping` (Windows).

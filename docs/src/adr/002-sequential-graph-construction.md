@@ -79,11 +79,15 @@ The hot traversal path (`search_layer`, `neighbors_iter_from_mmap`) performs **n
 
 If a neighbor ID appears in an adjacency list, it is *guaranteed* to correspond to valid, initialized data on disk. This removes a conditional branch from every edge traversal and improves branch predictor stability.
 
+> Not after a crash: backlinks to rolled-back nodes can survive. See the [ADR-0005 amendment](005-crash-consistent-linking.md#amendment-2026-10-03).
+
 #### Crash Safety by Design
 
 The system never persists pointers to future file offsets.
 
 In the event of a crash, the graph remains consistent up to the last successfully written node. There are no orphaned edges or forward references requiring repair or validation during recovery.
+
+> Backlinks are the exception. See the [ADR-0005 amendment](005-crash-consistent-linking.md#amendment-2026-10-03).
 
 #### Deterministic Persistence
 

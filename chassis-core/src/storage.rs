@@ -58,9 +58,8 @@ impl Storage {
         // CRITICAL: Exclusive file locking prevents concurrent access corruption
         file.try_lock_exclusive().context("Chassis file is already open by another process")?;
 
-        let needs_init = file.metadata().map(|m| m.len() < HEADER_SIZE as u64).unwrap_or(true);
-
-        if needs_init {
+        // Only an empty file is new. Anything else is either a Chassis file or someone else's data.
+        if file.metadata()?.len() == 0 {
             // Initialize new file with header
             let header = Header::new(dimensions);
             file.set_len(HEADER_SIZE as u64)?;
@@ -76,7 +75,7 @@ impl Storage {
         let mmap = unsafe { MmapMut::map_mut(&file)? };
 
         // Validate file header
-        if mmap.len() < MAGIC.len() || &mmap[..MAGIC.len()] != MAGIC {
+        if mmap.len() < HEADER_SIZE || &mmap[..MAGIC.len()] != MAGIC {
             anyhow::bail!("File is not a valid Chassis index");
         }
 
@@ -155,17 +154,13 @@ impl Storage {
     /// This operation is expensive (1-50ms depending on storage device).
     /// For batch inserts, insert many vectors and call commit() once.
     pub fn commit(&mut self) -> Result<()> {
-        // Flush mmap to kernel page cache
+        #[cfg(test)]
+        crate::power_loss::before_fsync(self.mapped());
         self.mapped_mut().flush()?;
-
-        // Force kernel to flush to physical device
-        // On Linux: fdatasync() - flushes data but not metadata
-        self.file.sync_data()?;
-
-        // Additional barrier: sync_all() flushes metadata too
-        // This is slower but guarantees file size is durable
+        // sync_all, not sync_data: the file length must be durable too.
         self.file.sync_all()?;
-
+        #[cfg(test)]
+        crate::power_loss::after_fsync(self.mapped());
         Ok(())
     }
 
@@ -308,6 +303,12 @@ impl Storage {
         HEADER_SIZE.checked_add(vector_data_bytes).context("Vector end calculation overflow")
     }
 
+    /// Stamps the header with the current format version, so older releases refuse the file
+    /// instead of misreading it.
+    pub(crate) fn mark_current_version(&mut self) {
+        self.header_mut().version = crate::header::VERSION;
+    }
+
     /// Returns the persisted graph zone offset, if present.
     pub(crate) fn graph_offset(&self) -> Option<u64> {
         self.header().graph_offset()
@@ -324,32 +325,31 @@ impl Storage {
         (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
     }
 
-    /// Ensures file has enough capacity, growing if necessary
-    ///
-    /// File growth is page-aligned (4KB boundaries) to optimize for:
-    /// - SSD write amplification
-    /// - Kernel page cache efficiency
-    /// - Hardware block alignment
-    ///
-    /// # Warning
-    ///
-    /// This method invalidates all existing pointers into the mmap.
-    /// Do not hold references across calls to this method.
+    /// Grows the file to at least `required_size`. Invalidates raw pointers into the mmap.
     fn ensure_capacity(&mut self, required_size: usize) -> Result<()> {
-        if self.mapped().len() >= required_size {
+        let len = self.mapped().len();
+        if len >= required_size {
             return Ok(());
         }
 
-        // Round up to next page boundary (4KB)
-        let new_size = Self::page_align(required_size);
+        // Grow by 25%, not page by page: one page at a time remapped on every other insert.
+        self.resize(Self::page_align(required_size.max(len + len / 4)))
+    }
 
-        // Windows: cannot change file size while a mapping of this file exists (ERROR_USER_MAPPED_FILE).
-        self.mapped_mut().flush()?;
+    /// Sets the file length and remaps it.
+    fn resize(&mut self, new_len: usize) -> Result<()> {
+        // Windows can't resize a mapped file; unmapping keeps dirty pages on every OS, so no flush.
         self.mmap.take();
-        self.file.set_len(new_size as u64)?;
+        let resized = self.file.set_len(new_len as u64);
+        // Remap even if set_len failed (disk full), or every later call panics on a missing map.
         self.mmap = Some(unsafe { MmapMut::map_mut(&self.file)? });
+        Ok(resized?)
+    }
 
-        Ok(())
+    /// The whole file as currently mapped, for the power-loss simulation.
+    #[cfg(test)]
+    pub(crate) fn file_bytes(&self) -> &[u8] {
+        self.mapped()
     }
 
     /// Returns a reference to the header
@@ -439,7 +439,6 @@ impl Storage {
 
     /// Move the graph zone to a new offset and update the persisted offset.
     ///
-    /// The copy uses memmove semantics so overlapping source and destination ranges are safe.
     /// The file is then resized to the end of the moved graph zone, rounded to a page boundary.
     pub(crate) fn move_graph_zone(
         &mut self,
@@ -447,32 +446,32 @@ impl Storage {
         new_offset: usize,
         len: usize,
     ) -> Result<()> {
-        if len == 0 {
-            self.set_graph_offset(new_offset as u64);
-            return Ok(());
-        }
-
         let old_end = old_offset.checked_add(len).context("Old graph zone end overflow")?;
         let new_end = new_offset.checked_add(len).context("New graph zone end overflow")?;
 
+        // The old copy is the only valid graph until the header moves, so never copy over it:
+        // an overlapping move goes past both ranges first.
+        if old_offset < new_end && new_offset < old_end {
+            let staging = Self::page_align(old_end.max(new_end));
+            self.move_graph_zone(old_offset, staging, len)?;
+            return self.move_graph_zone(staging, new_offset, len);
+        }
+
         self.ensure_capacity(old_end.max(new_end))?;
         self.mapped_mut().copy_within(old_offset..old_end, new_offset);
+        // Copy durable before the header points at it; header durable before the old copy is cut.
+        self.commit()?;
         self.set_graph_offset(new_offset as u64);
+        self.commit()?;
 
-        let new_file_len = Self::page_align(new_end);
-        self.mapped_mut().flush()?;
-        self.mmap.take();
-        self.file.set_len(new_file_len as u64)?;
-        self.mmap = Some(unsafe { MmapMut::map_mut(&self.file)? });
-
-        Ok(())
+        self.resize(Self::page_align(new_end))
     }
 
     /// Truncate the logical count of vectors to handle ghost node recovery.
     ///
     /// This method is used during index opening to recover from crashes where
-    /// vectors were written to storage but not indexed in the graph. It updates
-    /// the in-memory header count without physically truncating the file.
+    /// vectors were written to storage but not indexed in the graph. It lowers the
+    /// header count through the mmap, so the change persists, but does not shrink the file.
     ///
     /// # Ghost Node Recovery
     ///
@@ -515,11 +514,7 @@ impl Storage {
             new_count
         );
 
-        // Update in-memory header count
         self.header_mut().count = new_count;
-
-        // Note: We don't commit here - this is an in-memory adjustment only.
-        // The next insert() will overwrite ghost nodes and then commit atomically.
     }
 }
 
@@ -607,5 +602,20 @@ mod tests {
             storage.file.metadata().unwrap().len(),
             Storage::page_align(new_offset + graph_bytes.len()) as u64
         );
+    }
+
+    #[test]
+    fn test_move_graph_zone_overlapping_ranges() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut storage = Storage::open(temp_file.path(), 128).unwrap();
+        let graph_bytes: Vec<u8> = (0..8192u32).map(|i| i as u8).collect();
+
+        storage.ensure_graph_capacity(16 * 1024).unwrap();
+        storage.graph_zone_mut(8 * 1024, graph_bytes.len()).unwrap().copy_from_slice(&graph_bytes);
+        storage.move_graph_zone(8 * 1024, 12 * 1024, graph_bytes.len()).unwrap();
+
+        assert_eq!(storage.graph_offset(), Some(12 * 1024));
+        assert_eq!(storage.graph_zone(12 * 1024, graph_bytes.len()).unwrap(), graph_bytes);
+        assert_eq!(storage.file.metadata().unwrap().len(), 20 * 1024);
     }
 }

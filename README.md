@@ -8,38 +8,17 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 ## Current Capabilities
 
-Chassis provides a high-performance vector storage, graph construction, and search core:
+* **One file, in-process**: Vectors and an HNSW graph live in a single memory-mapped file. There is no server.
+* **Search**: Approximate nearest neighbor search with HNSW, Euclidean (L2) distance only. For cosine similarity, normalize vectors first.
+* **Your ids and deletes**: `add_with_id(id, vector)` stores your own `u64` id, which search returns; `delete(id)` removes a vector. A delete and an add in the same `flush()` are all-or-nothing, so replacing a vector is safe ([ADR-0007](docs/src/adr/007-ids-and-deletes.md)).
+* **SIMD distance kernels**: AVX2 on x86_64 and NEON on aarch64, with a scalar fallback.
+* **Durability**: `flush()` calls msync and fsync. After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. Process kills are tested by [`crash_tests.rs`](chassis-core/tests/crash_tests.rs), and power loss is simulated by [`power_loss.rs`](chassis-core/src/power_loss.rs), where each disk sector keeps either its last synced or its latest contents; real hardware is not tested ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
+* **Concurrency**: One writer and any number of concurrent searches within a process. An exclusive file lock keeps other processes out.
+* **Bindings**: A C ABI (`chassis-ffi`) that catches Rust panics at the boundary, and Python bindings (`pychassis/`, version tracks the Rust release, currently **v0.6.3**) with NumPy support. Build `chassis-ffi` (`cargo build --release -p chassis-ffi`), then run `pip install -e .` from `pychassis/`.
 
-### Python bindings
-* **Native bindings**: Full Python support via the `chassis` package (sources in `pychassis/`; version tracks the Rust release, currently **v0.6.3**).
-* **Zero-copy**: NumPy integration for high-throughput vector transfer.
-* **Install**: `pip install .` from `pychassis/`, or install a matching wheel when published for your platform.
+Not supported yet: metadata, filtering, and reclaiming the space of deleted vectors.
 
-### Universal Interface
-* **Stable C ABI**: A fully compliant C-compatible FFI layer enables Chassis to be embedded in C, C++, Node.js, and Go.
-* **Safety Fortress**: The `ffi_guard` architecture guarantees that Rust panics never crash the host process.
-* **Opaque Handle Design**: Uses the "Pimpl" pattern to ensure ABI stability while hiding internal Rust implementation details.
-
-### High-Level API
-* **`VectorIndex` Facade**: A clean, unified entry point that orchestrates storage, compute, and graph operations.
-* **Consistency Orchestration**: Automates the "Register Last" insertion protocol to guarantee readers never see uninitialized data.
-* **Ghost Node Recovery**: Automatically detects and recovers from partial writes during power loss ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
-
-### Storage Layer
-* **Zero-Copy I/O**: Memory-mapped vectors allow accessing 1536d embeddings in nanoseconds.
-* **ACID Persistence**: Explicit `fsync`-backed commit strategy.
-* **Fixed-Width Geometry**: O(1) deterministic addressing for all on-disk lookups.
-
-### Graph Layer
-* **HNSW Construction**: Fully persistent, crash-safe graph topology builder.
-* **Bidirectional Linking**: Maintains graph navigability with "Small World" guarantees.
-* **Diversity Heuristics**: Implements robust neighbor pruning (Heuristic 2) to prevent clustering.
-* **Crash Consistency**: Atomic write ordering ensures the graph structure is never corrupted, even on power loss.
-
-### Search Layer
-* **SIMD Acceleration**: Hardware-accelerated distance kernels (AVX2 for x86, NEON for ARM) provide ~23 Gelem/s throughput.
-* **Zero-Allocation Traversal**: The hot search path allocates no heap memory, ensuring consistent P99 latency.
-* **High Performance**: Achieves sub-50µs latency for 1536d vectors (OpenAI embeddings) on commodity hardware.
+Performance numbers, the machine they were measured on and how to reproduce them are in [Performance](docs/src/architecture/performance.md).
 
 ## Design Principles
 
@@ -69,7 +48,7 @@ These concerns are intentionally left to the embedding application.
 
 Patch release: SPDX workspace license, `deny.toml` for `cargo deny`, and `rand` bump (RUSTSEC-2026-0097). See [CHANGELOG.md](CHANGELOG.md).
 
-The core storage engine, C FFI layer, and Python bindings are feature-complete and ready for use. Release history and per-version notes live in [CHANGELOG.md](CHANGELOG.md).
+The storage engine, C FFI layer and Python bindings work end to end. Release history and per-version notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
