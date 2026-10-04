@@ -3,8 +3,9 @@ use std::mem;
 /// Magic bytes identifying a Chassis index file
 pub const MAGIC: &[u8; 8] = b"CHASSIS\0";
 
-/// Current file format version
-pub const VERSION: u32 = 1;
+/// Current file format version. Version 2 added caller ids and deletes (ADR-0007); version 1
+/// files open unchanged and are rewritten as version 2 on their first flush.
+pub const VERSION: u32 = 2;
 
 /// Magic bytes for the extended layout metadata stored in `Header::reserved`.
 const LAYOUT_MAGIC: &[u8; 8] = b"CHLAYOUT";

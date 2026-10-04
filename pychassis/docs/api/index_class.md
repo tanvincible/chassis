@@ -5,6 +5,7 @@
         members:
             - __init__
             - add
+            - delete
             - search
             - flush
             - close

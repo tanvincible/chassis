@@ -7,9 +7,9 @@
 //! 2. Update backward links on neighbors (may crash mid-process)
 //! 3. Update graph header last
 //!
-//! If a crash occurs during step 2, we may have "dangling" one-way edges
-//! (A→B exists but B→A doesn't), but we NEVER have pointers to uninitialized
-//! memory because Node A was written first.
+//! If a crash occurs during step 2, we may have one-way edges (A→B exists but B→A doesn't).
+//! Backlinks to A can also outlive a crash that rolls A back: search skips those ids, and
+//! pruning drops them, until a new node reuses the id.
 //!
 //! # Forward Link Policy (Model A)
 //!
@@ -22,62 +22,6 @@ use crate::hnsw::graph::HnswGraph;
 use crate::hnsw::node::{INVALID_NODE_ID, NodeId, NodeRecord};
 use anyhow::Result;
 
-/// Maximum neighbors per layer (enforced at compile time for cache sizing)
-const MAX_M: usize = 32;
-
-/// Stack-allocated distance cache size (33x33 symmetric matrix)
-/// Supports up to M=32 neighbors + 1 new node
-const CACHE_SIZE: usize = (MAX_M + 1) * (MAX_M + 1);
-
-/// Sentinel value indicating "distance not yet computed"
-const NOT_COMPUTED: f32 = f32::NAN;
-
-/// Stack-allocated lazy distance cache for diversity heuristic
-struct DistanceCache {
-    /// Flat array representing symmetric matrix [i*size + j]
-    data: [f32; CACHE_SIZE],
-    /// Number of candidates (dimension of square matrix)
-    size: usize,
-}
-
-impl DistanceCache {
-    /// Create a new uninitialized cache
-    #[inline]
-    fn new(num_candidates: usize) -> Self {
-        debug_assert!(
-            num_candidates <= MAX_M + 1,
-            "Cache overflow: {} candidates exceeds max {}",
-            num_candidates,
-            MAX_M + 1
-        );
-
-        Self { data: [NOT_COMPUTED; CACHE_SIZE], size: num_candidates }
-    }
-
-    /// Get cached distance or return NAN if not computed
-    #[inline]
-    fn get(&self, i: usize, j: usize) -> f32 {
-        debug_assert!(i < self.size && j < self.size, "Cache index out of bounds");
-        self.data[i * self.size + j]
-    }
-
-    /// Store distance symmetrically (cache[i][j] = cache[j][i] = dist)
-    #[inline]
-    fn set(&mut self, i: usize, j: usize, distance: f32) {
-        debug_assert!(i < self.size && j < self.size, "Cache index out of bounds");
-        let idx_ij = i * self.size + j;
-        let idx_ji = j * self.size + i;
-        self.data[idx_ij] = distance;
-        self.data[idx_ji] = distance;
-    }
-
-    /// Check if distance has been computed
-    #[inline]
-    fn is_computed(&self, i: usize, j: usize) -> bool {
-        !self.get(i, j).is_nan()
-    }
-}
-
 impl HnswGraph {
     /// Write node record and update backward links (Step A + Step B).
     ///
@@ -89,7 +33,6 @@ impl HnswGraph {
     ///
     /// - Node A is written BEFORE any neighbor updates
     /// - If crash occurs during neighbor updates, we have one-way edges (safe)
-    /// - NEVER have pointers to uninitialized memory
     ///
     /// # Arguments
     ///
@@ -107,6 +50,17 @@ impl HnswGraph {
     pub fn write_node_and_backlinks(
         &mut self,
         node_id: NodeId,
+        layer_count: usize,
+        neighbors_per_layer: &[Vec<NodeId>],
+    ) -> Result<()> {
+        self.write_node_with_id_and_backlinks(node_id, node_id, layer_count, neighbors_per_layer)
+    }
+
+    /// Like `write_node_and_backlinks`, but stores the caller's `id` instead of the slot.
+    pub(crate) fn write_node_with_id_and_backlinks(
+        &mut self,
+        node_id: NodeId,
+        id: u64,
         layer_count: usize,
         neighbors_per_layer: &[Vec<NodeId>],
     ) -> Result<()> {
@@ -145,6 +99,7 @@ impl HnswGraph {
 
         // STEP A: Write Node A's record FIRST (crash safety)
         let mut node_record = NodeRecord::new(node_id, layer_count as u8, self.record_params);
+        node_record.header.id = id;
 
         for (layer, neighbors) in filtered_neighbors.iter().enumerate() {
             node_record.set_neighbors(layer, neighbors);
@@ -230,74 +185,35 @@ impl HnswGraph {
         layer: usize,
     ) -> Result<()> {
         let mut record = self.read_node_record(neighbor_id)?;
-        let current_neighbors = record.get_neighbors(layer);
+        // Ids at or past node_count point at nodes a crash rolled back; their vectors are gone.
+        let mut candidates: Vec<NodeId> =
+            record.get_neighbors(layer).into_iter().filter(|&id| id < self.node_count).collect();
 
         // Duplicate check (idempotency)
-        if current_neighbors.contains(&new_node) {
+        if candidates.contains(&new_node) {
             return Ok(());
         }
-
-        let max_neighbors = self.record_params.max_neighbors(layer);
-
-        // Direct insert if space available
-        if current_neighbors.len() < max_neighbors {
-            record.add_neighbor(layer, new_node);
-            self.update_node_record(&record)?;
-            return Ok(());
-        }
-
-        // Full - combine current neighbors + new node and apply diversity heuristic
-        let mut candidates = current_neighbors.to_vec();
         candidates.push(new_node);
 
         let selected = self.select_neighbors_heuristic(
             neighbor_id,
             &candidates,
             layer,
-            max_neighbors,
+            self.record_params.max_neighbors(layer),
             Some(new_node), // Prioritize the new node for connectivity
         )?;
 
         record.set_neighbors(layer, &selected);
-        self.update_node_record(&record)?;
-
-        Ok(())
+        self.update_node_record(&record)
     }
 
-    /// Select diverse neighbors using HNSW Heuristic 2 with lazy memoized distance cache.
+    /// Select diverse neighbors using HNSW Heuristic 2.
     ///
-    /// This is the unified neighbor selection function used by both:
-    /// - **Backward Linking** (`add_backward_link_with_pruning`): Prioritizes `priority_node`
-    /// - **Forward Linking** (`VectorIndex::select_diverse_subset`): No priority
-    ///
-    /// # Algorithm
-    ///
-    /// 1. **Input Truncation**: Limit candidates to MAX_M+1 (cache size)
-    /// 2. **Local Index Mapping**: Map NodeIds to local indices [0..k)
-    /// 3. **Lazy Cache**: Compute distances only when needed, store symmetrically
-    /// 4. **Diversity Phase**: Select candidates closer to base than to selected neighbors
-    /// 5. **Starvation Fallback**: Fill to at least M/2 with k-nearest
-    /// 6. **Connectivity Guarantee**: Ensure priority_node is included if close enough
-    ///
-    /// # Cache Optimization
-    ///
-    /// Uses stack-allocated [f32; 1089] cache (33x33 matrix) to eliminate
-    /// redundant distance calculations. Distances are computed lazily and
-    /// stored symmetrically to halve total calculations.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_node` - The node we're selecting neighbors for
-    /// * `candidates` - Pool of candidate neighbors (will be truncated to MAX_M+1)
-    /// * `_layer` - Layer index (currently unused, kept for future extensions)
-    /// * `max_count` - Maximum number of neighbors to select
-    /// * `priority_node` - Optional node to prioritize (for backward linking)
-    ///
-    /// # Performance
-    ///
-    /// - Cache hit: ~0.5ns (L1 cache lookup)
-    /// - Cache miss: ~500ns (distance computation + mmap read)
-    /// - Worst case: O(k²) where k ≤ 33 (M + 1)
+    /// Used for a new node's own neighbors (no priority) and when a backlink overfills a neighbor's
+    /// list (`priority_node` is the new node). Candidates are taken nearest first, and one is kept
+    /// only if it is closer to `base_node` than to every neighbor already kept. If that keeps fewer
+    /// than `max_count / 2`, the nearest remaining candidates fill up to `max_count`. `priority_node`
+    /// is kept if it ranks within the nearest `max_count`.
     pub(crate) fn select_neighbors_heuristic(
         &self,
         base_node: NodeId,
@@ -306,121 +222,60 @@ impl HnswGraph {
         max_count: usize,
         priority_node: Option<NodeId>,
     ) -> Result<Vec<NodeId>> {
-        // Handle empty/small candidate sets
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-
         if candidates.len() <= max_count {
             return Ok(candidates.to_vec());
         }
 
-        // Truncate candidates to fit in cache (MAX_M + 1 = 33)
-        let truncated_candidates: Vec<NodeId> =
-            candidates.iter().take(MAX_M + 1).copied().collect();
-
-        debug_assert!(
-            truncated_candidates.len() <= MAX_M + 1,
-            "Too many candidates for cache: {}",
-            truncated_candidates.len()
-        );
-
-        // Initialize lazy distance cache
-        let mut cache = DistanceCache::new(truncated_candidates.len());
-
-        // Helper: Get distance with lazy computation and memoization
-        let get_distance = |cache: &mut DistanceCache,
-                            storage: &crate::Storage,
-                            id1: NodeId,
-                            id2: NodeId,
-                            idx1: usize,
-                            idx2: usize|
-         -> Result<f32> {
-            if cache.is_computed(idx1, idx2) {
-                Ok(cache.get(idx1, idx2))
-            } else {
-                let vec1 = storage.get_vector_slice(id1)?;
-                let vec2 = storage.get_vector_slice(id2)?;
-                let dist = crate::distance::euclidean_distance(vec1, vec2);
-                cache.set(idx1, idx2, dist);
-                Ok(dist)
-            }
-        };
-
-        // Compute distances to base node for all candidates
         let base_vector = self.storage.get_vector_slice(base_node)?;
-        let mut distances: Vec<(NodeId, f32, usize)> = truncated_candidates
+        let mut by_distance: Vec<(NodeId, f32)> = candidates
             .iter()
-            .enumerate()
-            .map(|(idx, &id)| {
-                let dist = self
+            .map(|&id| {
+                let distance = self
                     .storage
                     .get_vector_slice(id)
                     .map(|v| crate::distance::euclidean_distance(base_vector, v))
                     .unwrap_or(f32::MAX);
-                (id, dist, idx)
+                (id, distance)
             })
             .collect();
+        by_distance.sort_by(|a, b| a.1.total_cmp(&b.1));
 
-        // Sort by distance for efficient processing
-        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // DIVERSITY PHASE: Heuristic 2 with lazy cache
-        let mut selected = Vec::new();
-        let mut selected_indices = Vec::new();
-
-        for (candidate_id, candidate_dist, candidate_idx) in &distances {
+        // Each (candidate, kept) pair is compared at most once, so there is nothing to cache.
+        let mut selected: Vec<NodeId> = Vec::with_capacity(max_count);
+        for &(candidate, distance) in &by_distance {
             if selected.len() >= max_count {
                 break;
             }
-
-            // Check diversity: is candidate closer to base than to any selected neighbor?
+            let vector = self.storage.get_vector_slice(candidate)?;
             let mut is_diverse = true;
-
-            for &selected_idx in &selected_indices {
-                // Lazy fetch: compute distance only if needed
-                let inter_distance = get_distance(
-                    &mut cache,
-                    &self.storage,
-                    *candidate_id,
-                    truncated_candidates[selected_idx],
-                    *candidate_idx,
-                    selected_idx,
-                )?;
-
-                if inter_distance < *candidate_dist {
+            for &kept in &selected {
+                let kept_vector = self.storage.get_vector_slice(kept)?;
+                if crate::distance::euclidean_distance(vector, kept_vector) < distance {
                     is_diverse = false;
                     break;
                 }
             }
-
             if is_diverse {
-                selected.push(*candidate_id);
-                selected_indices.push(*candidate_idx);
+                selected.push(candidate);
             }
         }
 
-        // STARVATION FALLBACK: Reuse cached distances
-        let min_neighbors = max_count / 2;
-
-        if selected.len() < min_neighbors {
-            for (candidate_id, _, _) in &distances {
+        if selected.len() < max_count / 2 {
+            for &(candidate, _) in &by_distance {
                 if selected.len() >= max_count {
                     break;
                 }
-                if !selected.contains(candidate_id) {
-                    selected.push(*candidate_id);
+                if !selected.contains(&candidate) {
+                    selected.push(candidate);
                 }
             }
         }
 
-        // CONNECTIVITY GUARANTEE: Ensure priority_node if close enough
         if let Some(priority_node) = priority_node
             && !selected.contains(&priority_node)
-            && let Some(pos) = distances.iter().position(|(id, _, _)| *id == priority_node)
+            && let Some(pos) = by_distance.iter().position(|&(id, _)| id == priority_node)
             && pos < max_count
         {
-            // Make room by removing the last selected node
             if selected.len() >= max_count {
                 selected.pop();
             }
@@ -488,18 +343,6 @@ mod tests {
         // Verify forward links
         let node2 = graph.read_node_record(2).unwrap();
         assert_eq!(node2.get_neighbors(0), vec![0, 1]);
-    }
-
-    #[test]
-    fn test_distance_cache_symmetry() {
-        let mut cache = DistanceCache::new(5);
-
-        cache.set(0, 1, 1.5);
-        assert_eq!(cache.get(0, 1), 1.5);
-        assert_eq!(cache.get(1, 0), 1.5); // Symmetric
-        cache.set(2, 4, 3.7);
-        assert_eq!(cache.get(2, 4), 3.7);
-        assert_eq!(cache.get(4, 2), 3.7);
     }
 
     #[test]

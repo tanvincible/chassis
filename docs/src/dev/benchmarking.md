@@ -2,6 +2,11 @@
 
 Chassis uses [Criterion.rs](https://github.com/bheisler/criterion.rs) for statistical benchmarking with outlier detection and HTML reporting.
 
+The example outputs below come from an older machine. Their fsync timings are too fast for a real
+disk (the sync probably went to tmpfs or a virtual disk), and their search timings come from
+hand-wired graphs, not ones built by `VectorIndex`. Current numbers are in
+[Performance](../architecture/performance.md).
+
 ## Running Benchmarks
 
 ### All Benchmarks
@@ -311,7 +316,7 @@ Add node to hub with full neighbor list (triggers diversity heuristic).
 
 **Result**: ~20.3 µs
 
-**What it tests**: Lazy distance cache effectiveness.
+**What it tests**: The cost of diversity pruning when a hub's list is full.
 
 #### Multi-Layer Linking
 

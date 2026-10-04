@@ -114,6 +114,19 @@ _lib.chassis_add.argtypes = [
 ]
 _lib.chassis_add.restype = ctypes.c_uint64
 
+# chassis_add_with_id
+_lib.chassis_add_with_id.argtypes = [
+    ChassisIndexPtr,
+    ctypes.c_uint64,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+]
+_lib.chassis_add_with_id.restype = ctypes.c_int
+
+# chassis_delete
+_lib.chassis_delete.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
+_lib.chassis_delete.restype = ctypes.c_int
+
 # chassis_search
 _lib.chassis_search.argtypes = [
     ChassisIndexPtr,

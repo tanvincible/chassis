@@ -305,6 +305,60 @@ fn test_dimension_mismatch_on_reopen() {
 }
 
 #[test]
+fn test_max_connections_mismatch_on_reopen_keeps_data() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path().to_owned();
+
+    {
+        let mut index = VectorIndex::open(&path, 64, IndexOptions::default()).unwrap();
+        for i in 0..50 {
+            index.add(&vec![i as f32; 64]).unwrap();
+        }
+        index.flush().unwrap();
+    }
+
+    let other = IndexOptions { max_connections: 8, ..IndexOptions::default() };
+    assert!(VectorIndex::open(&path, 64, other).is_err());
+
+    let index = VectorIndex::open(&path, 64, IndexOptions::default()).unwrap();
+    assert_eq!(index.len(), 50);
+}
+
+#[test]
+fn test_vectors_without_graph_are_an_error_not_a_reset() {
+    use chassis_core::Storage;
+
+    let temp_file = NamedTempFile::new().unwrap();
+    {
+        let mut storage = Storage::open(temp_file.path(), 64).unwrap();
+        storage.insert(&vec![1.0; 64]).unwrap();
+        storage.commit().unwrap();
+    }
+
+    assert!(VectorIndex::open(temp_file.path(), 64, IndexOptions::default()).is_err());
+    assert_eq!(Storage::open(temp_file.path(), 64).unwrap().count(), 1);
+}
+
+#[test]
+fn test_truncated_graph_is_an_error() {
+    let temp_file = NamedTempFile::new().unwrap();
+    {
+        let mut index = VectorIndex::open(temp_file.path(), 64, IndexOptions::default()).unwrap();
+        for i in 0..50 {
+            index.add(&vec![i as f32; 64]).unwrap();
+        }
+        index.flush().unwrap();
+    }
+
+    // The graph offset is header bytes 40..48 (see file-format.md); cut inside the records.
+    let bytes = std::fs::read(temp_file.path()).unwrap();
+    let graph_start = u64::from_le_bytes(bytes[40..48].try_into().unwrap());
+    let file = std::fs::OpenOptions::new().write(true).open(temp_file.path()).unwrap();
+    file.set_len(graph_start + 64 + 100).unwrap();
+    assert!(VectorIndex::open(temp_file.path(), 64, IndexOptions::default()).is_err());
+}
+
+#[test]
 fn test_search_returns_k_or_fewer() {
     let temp_file = NamedTempFile::new().unwrap();
     let mut index = VectorIndex::open(temp_file.path(), 128, IndexOptions::default()).unwrap();
@@ -398,5 +452,90 @@ fn test_stress_sequential_adds() {
     // Verify results are sorted
     for i in 1..results.len() {
         assert!(results[i - 1].distance <= results[i].distance);
+    }
+}
+
+#[test]
+fn test_custom_ids_are_returned_and_persist() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path().to_owned();
+    {
+        let mut index = VectorIndex::open(&path, 8, IndexOptions::default()).unwrap();
+        index.add_with_id(1_000, &[1.0; 8]).unwrap();
+        index.add_with_id(7, &[2.0; 8]).unwrap();
+        assert!(index.add_with_id(7, &[3.0; 8]).is_err());
+        assert!(index.add_with_id(u64::MAX, &[3.0; 8]).is_err());
+        assert_eq!(index.add(&[4.0; 8]).unwrap(), 1_001);
+        index.flush().unwrap();
+    }
+
+    let mut index = VectorIndex::open(&path, 8, IndexOptions::default()).unwrap();
+    assert_eq!(index.len(), 3);
+    assert_eq!(index.search(&[1.0; 8], 1).unwrap()[0].id, 1_000);
+    assert_eq!(index.search(&[2.0; 8], 1).unwrap()[0].id, 7);
+    assert_eq!(index.add(&[5.0; 8]).unwrap(), 1_002);
+}
+
+#[test]
+fn test_delete_hides_vector_and_persists() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path().to_owned();
+    {
+        let mut index = VectorIndex::open(&path, 8, IndexOptions::default()).unwrap();
+        for i in 0..10 {
+            assert_eq!(index.add(&[i as f32; 8]).unwrap(), i);
+        }
+        assert!(index.delete(3).unwrap());
+        assert!(!index.delete(3).unwrap());
+        assert!(!index.delete(99).unwrap());
+        assert_eq!(index.len(), 9);
+        assert!(index.search(&[3.0; 8], 10).unwrap().iter().all(|r| r.id != 3));
+        index.flush().unwrap();
+    }
+
+    let mut index = VectorIndex::open(&path, 8, IndexOptions::default()).unwrap();
+    assert_eq!(index.len(), 9);
+    assert!(index.search(&[3.0; 8], 10).unwrap().iter().all(|r| r.id != 3));
+    assert!(!index.delete(3).unwrap());
+
+    index.add_with_id(3, &[3.0; 8]).unwrap();
+    assert_eq!(index.search(&[3.0; 8], 1).unwrap()[0].id, 3);
+    assert_eq!(index.add(&[10.0; 8]).unwrap(), 10);
+    assert_eq!(index.len(), 11);
+}
+
+#[test]
+fn test_unflushed_delete_and_add_roll_back_together() {
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path().to_owned();
+    {
+        let mut index = VectorIndex::open(&path, 8, IndexOptions::default()).unwrap();
+        for i in 0..5 {
+            index.add(&[i as f32; 8]).unwrap();
+        }
+        index.flush().unwrap();
+
+        // Replace id 2, then drop without flushing.
+        index.delete(2).unwrap();
+        index.add_with_id(2, &[20.0; 8]).unwrap();
+    }
+
+    let index = VectorIndex::open(&path, 8, IndexOptions::default()).unwrap();
+    assert_eq!(index.len(), 5);
+    let hit = &index.search(&[2.0; 8], 1).unwrap()[0];
+    assert_eq!((hit.id, hit.distance), (2, 0.0));
+}
+
+#[test]
+fn test_open_never_overwrites_a_short_foreign_file() {
+    use chassis_core::Storage;
+
+    for contents in [&b"some notes, not an index"[..], b"CHASSIS\0 but truncated"] {
+        let temp_file = NamedTempFile::new().unwrap();
+        std::fs::write(temp_file.path(), contents).unwrap();
+
+        assert!(Storage::open(temp_file.path(), 8).is_err());
+        assert!(VectorIndex::open(temp_file.path(), 8, IndexOptions::default()).is_err());
+        assert_eq!(std::fs::read(temp_file.path()).unwrap(), contents);
     }
 }

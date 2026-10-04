@@ -34,14 +34,13 @@ Invariant: A node with ID N may only link to neighbors M where M < N
 
 Chassis implements a **SWMR (Single-Writer, Multi-Reader)** model:
 
-- **Writers**: Exclusive file lock + `&mut self` borrow (one writer per process/thread)
-- **Readers**: Lock-free traversal via immutable memory-mapped data (`&self`)
-- **Crash consistency**: Ordered writes (node → neighbors → header)
+- **Writers**: `&mut self` borrow, one writer at a time
+- **Readers**: Concurrent `&self` searches from many threads of the same process
+- **Other processes**: Kept out entirely by an exclusive file lock, readers included
 
 **Benefits**:
 - Lock-free search (no mutex acquisition overhead)
-- Elimination of race conditions and torn writes
-- Predictable P99 latency
+- No data races between threads
 
 **Trade-off**: Serialized mutation path.
 
@@ -76,34 +75,8 @@ Chassis implements a **SWMR (Single-Writer, Multi-Reader)** model:
 
 ## Performance Characteristics
 
-### Throughput (12th Gen Intel i7-12650H, 16 cores)
-
-| Operation | Throughput | Latency |
-|-----------|-----------|---------|
-| **Storage** | | |
-| Raw insert (no commit) | ~134K vectors/sec | 7.4 µs |
-| Durable insert (with fsync) | ~166K vectors/sec | 6.0 µs |
-| Batch insert (1000 vectors) | ~171K vectors/sec | 5.8 ms total |
-| Hot read (L1 cache) | ~13.8M vectors/sec | 72 ns |
-| Sequential read (1000 vectors) | ~8M vectors/sec | 125 µs total |
-| **Distance (SIMD)** | | |
-| 128D Euclidean | 13.9 Gelem/s | 9.2 ns |
-| 768D Euclidean | 19.1 Gelem/s | 40 ns |
-| 1536D Euclidean | 21.8 Gelem/s | 70 ns |
-| **HNSW Search** | | |
-| Small ef=8 | 356K queries/sec | 2.8 µs |
-| Medium ef=32 | 171K queries/sec | 5.9 µs |
-| High ef=128 | 50K queries/sec | 20 µs |
-
-### SIMD Speedup
-
-| Dimensions | SIMD | Scalar | Speedup |
-|-----------|------|--------|---------|
-| 128D | 9.2 ns | 53.8 ns | **5.8x** |
-| 768D | 40 ns | 369 ns | **9.2x** |
-| 1536D | 70 ns | 750 ns | **10.7x** |
-
-**Note**: AVX2 provides 4-6x speedup through 4-way accumulator unrolling that breaks FMA dependency chains.
+Measured numbers, the machine they came from and how to reproduce them are in
+[Performance](./performance.md).
 
 ## Component Responsibilities
 
@@ -112,15 +85,15 @@ Chassis implements a **SWMR (Single-Writer, Multi-Reader)** model:
 
 ### Storage Layer (`storage.rs`)
 - **File lifecycle**: Open, growth, exclusive locking
-- **Vector persistence**: Append-only insertion with page-aligned growth
+- **Vector persistence**: Append-only insertion; the file grows 25% at a time
 - **Zero-copy reads**: `get_vector_slice()` returns `&[f32]` backed by mmap
-- **Durability**: `commit()` performs `fdatasync + fsync` for crash consistency
+- **Durability**: `commit()` performs msync + `fsync` (`F_FULLFSYNC` on macOS)
 
 ### HNSW Graph (`hnsw/graph.rs`)
 - **Topology management**: Node records, adjacency lists, graph header
 - **O(1) addressing**: Direct offset computation without hash maps
 - **Persistence**: Write-ahead ordering (node → neighbors → header)
-- **Traversal**: Zero-allocation neighbor iteration via `neighbors_iter_from_mmap()`
+- **Traversal**: Neighbor iteration reads the mmap directly via `neighbors_iter_from_mmap()`
 
 ### Distance Metrics (`distance.rs`)
 - **SIMD acceleration**: AVX2 (x86_64) and NEON (ARM) intrinsics
@@ -134,12 +107,12 @@ Chassis implements a **SWMR (Single-Writer, Multi-Reader)** model:
 
 ### Linking (`hnsw/link.rs`)
 - **Bidirectional edges**: Forward (A→B) and backward (B→A) link maintenance
-- **Diversity heuristic**: Heuristic 2 with lazy distance caching (ADR-0004)
-- **Crash consistency**: Atomic write sequence (ADR-0005)
+- **Diversity heuristic**: Heuristic 2 over all `ef_construction` candidates (ADR-0004)
+- **Crash consistency**: Ordered write sequence (ADR-0005, see its amendment)
 
 ### Search (`hnsw/search.rs`)
 - **Dense visited filter**: O(1) array access instead of HashSet hashing
-- **Zero-allocation hot path**: No `Vec` allocations during traversal
+- **Allocations**: Every layer search allocates a `node_count`-bit visited set; layer 0 also allocates two heaps and the result `Vec`
 - **NaN-safe ordering**: `f32::total_cmp` for deterministic behavior
 
 ## Key Invariants
@@ -168,9 +141,12 @@ See [File Format](./file-format.md) for detailed layout specifications.
 
 Chassis guarantees structural integrity without Write-Ahead Logging (ADR-0005):
 
-1. **Ghost nodes**: Nodes written but not reachable (ID > header.node_count) are safely ignored
+1. **Ghost nodes**: Nodes written but not reachable (ID >= header.node_count) are safely ignored
 2. **One-way edges**: Incomplete backward links are legal in HNSW and don't break search
 3. **Header authority**: `node_count` is the sole source of truth for valid data range
+4. **Stale backlinks**: Links to rolled-back nodes are skipped by search until their ID is reused
+
+After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. Process kills are tested (`chassis-core/tests/crash_tests.rs`), and power loss is simulated (`chassis-core/src/power_loss.rs`), though not on real hardware.
 
 **Recovery**: Zero-cost. Opening the index after a crash requires no log replay or validation—just read the header and resume operations.
 

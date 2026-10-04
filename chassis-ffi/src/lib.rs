@@ -20,8 +20,10 @@
 //!
 //! # Thread Safety
 //!
-//! - Single-writer: `chassis_add`, `chassis_add_batch`, `chassis_flush` require exclusive access
-//! - Multi-reader: `chassis_search` allows concurrent readers
+//! - Every function except `chassis_free` may be called from any thread on a shared handle.
+//!   Searches run concurrently. Adds, deletes and flushes take an internal write lock, so they run
+//!   one at a time and searches wait for them.
+//! - `chassis_free` must not race with any other call on the same handle.
 //! - Each thread has its own error message storage
 
 use chassis_core::{IndexOptions, VectorIndex};
@@ -30,12 +32,52 @@ use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::slice;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Internal state holder (not exposed to C)
 ///
 /// This holds the actual VectorIndex and is purely Rust-internal.
 struct ChassisIndexState {
-    inner: VectorIndex,
+    inner: RwLock<VectorIndex>,
+}
+
+/// Borrows the handle, or sets the last error if `ptr` is NULL.
+///
+/// Only shared references are made, so concurrent calls never alias a `&mut`; writes get
+/// mutable access through the lock.
+///
+/// # Safety
+///
+/// `ptr` must be NULL or a live handle from `chassis_open`.
+unsafe fn state<'a>(ptr: *const ChassisIndex) -> Option<&'a ChassisIndexState> {
+    // SAFETY: Caller guarantees ptr is NULL or a live handle
+    let state = unsafe { (ptr as *const ChassisIndexState).as_ref() };
+    if state.is_none() {
+        set_last_error("Null index pointer");
+    }
+    state
+}
+
+const POISONED: &str = "Index is unusable after an earlier panic; reopen it";
+
+/// Locks the index for a search or other read, or sets the last error.
+///
+/// # Safety
+///
+/// Same as `state`.
+unsafe fn read_index<'a>(ptr: *const ChassisIndex) -> Option<RwLockReadGuard<'a, VectorIndex>> {
+    let lock = unsafe { state(ptr) }?.inner.read();
+    lock.map_err(|_| set_last_error(POISONED)).ok()
+}
+
+/// Locks the index for an add, delete or flush, or sets the last error.
+///
+/// # Safety
+///
+/// Same as `state`.
+unsafe fn write_index<'a>(ptr: *const ChassisIndex) -> Option<RwLockWriteGuard<'a, VectorIndex>> {
+    let lock = unsafe { state(ptr) }?.inner.write();
+    lock.map_err(|_| set_last_error(POISONED)).ok()
 }
 
 /// Opaque handle to a Chassis index (C-compatible)
@@ -139,7 +181,7 @@ where
 /// # Thread Safety
 ///
 /// - Safe to call from multiple threads with different paths
-/// - The returned index requires exclusive access for writes
+/// - The returned handle may be shared across threads (see the crate's Thread Safety notes)
 ///
 /// # Example (C)
 ///
@@ -186,7 +228,7 @@ pub unsafe extern "C" fn chassis_open(path: *const c_char, dimensions: u32) -> *
         match VectorIndex::open(path_str, dimensions, options) {
             Ok(index) => {
                 clear_last_error(); // Success - clear any previous errors
-                let state = Box::new(ChassisIndexState { inner: index });
+                let state = Box::new(ChassisIndexState { inner: RwLock::new(index) });
                 Box::into_raw(state) as *mut ChassisIndex
             }
             Err(e) => {
@@ -267,7 +309,7 @@ pub unsafe extern "C" fn chassis_open_with_options(
         match VectorIndex::open(path_str, dimensions, options) {
             Ok(index) => {
                 clear_last_error();
-                let state = Box::new(ChassisIndexState { inner: index });
+                let state = Box::new(ChassisIndexState { inner: RwLock::new(index) });
                 Box::into_raw(state) as *mut ChassisIndex
             }
             Err(e) => {
@@ -316,19 +358,18 @@ pub unsafe extern "C" fn chassis_free(ptr: *mut ChassisIndex) {
 ///
 /// # Arguments
 ///
-/// - `ptr`: Non-NULL pointer to index (requires exclusive access)
+/// - `ptr`: Non-NULL pointer to index
 /// - `vector`: Pointer to f32 array (must not be NULL)
 /// - `len`: Number of elements in vector (must match index dimensions)
 ///
 /// # Returns
 ///
-/// - Vector ID (0-based) on success
+/// - The id assigned (one past the largest id used so far) on success
 /// - `UINT64_MAX` on failure (check `chassis_last_error_message()`)
 ///
 /// # Thread Safety
 ///
-/// **SINGLE-WRITER**: Only one thread may call this function at a time for a
-/// given index. Concurrent writes will cause data corruption.
+/// Safe from any thread. Writes run one at a time; searches wait for them.
 ///
 /// # Performance Note
 ///
@@ -350,7 +391,6 @@ pub unsafe extern "C" fn chassis_free(ptr: *mut ChassisIndex) {
 /// - `ptr` must be non-NULL and valid
 /// - `vector` must point to `len` valid f32 values
 /// - `len` must match the dimensions specified in `chassis_open()`
-/// - No other thread may access `ptr` during this call
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_add(
     ptr: *mut ChassisIndex,
@@ -358,14 +398,8 @@ pub unsafe extern "C" fn chassis_add(
     len: size_t,
 ) -> u64 {
     ffi_guard(|| {
-        // SAFETY: Caller guarantees ptr is valid and has exclusive access
-        let state = unsafe { (ptr as *mut ChassisIndexState).as_mut() };
-        let index = match state {
-            Some(s) => &mut s.inner,
-            None => {
-                set_last_error("Null index pointer");
-                return u64::MAX;
-            }
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return u64::MAX;
         };
 
         if vector.is_null() {
@@ -399,7 +433,7 @@ pub unsafe extern "C" fn chassis_add(
 ///
 /// # Arguments
 ///
-/// - `ptr`: Non-NULL pointer to index (requires exclusive access)
+/// - `ptr`: Non-NULL pointer to index
 /// - `vectors`: Contiguous `count * dim` floats: row `i` is
 ///   `vectors[i*dim .. (i+1)*dim]`
 /// - `count`: Number of vectors to insert
@@ -415,7 +449,7 @@ pub unsafe extern "C" fn chassis_add(
 ///
 /// # Thread Safety
 ///
-/// **SINGLE-WRITER**: Same as `chassis_add()`.
+/// Same as `chassis_add()`. The whole batch holds the write lock.
 ///
 /// # Performance Note
 ///
@@ -439,7 +473,6 @@ pub unsafe extern "C" fn chassis_add(
 /// - If `count > 0`, `vectors` and `out_ids` must be non-NULL; `vectors` must point
 ///   to `count * dim` valid floats
 /// - `dim` must match dimensions passed to `chassis_open()`
-/// - No other thread may access `ptr` during this call
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_add_batch(
     ptr: *mut ChassisIndex,
@@ -469,14 +502,8 @@ pub unsafe extern "C" fn chassis_add_batch(
             return 0;
         }
 
-        // SAFETY: Caller guarantees ptr is valid and has exclusive access
-        let state = unsafe { (ptr as *mut ChassisIndexState).as_mut() };
-        let index = match state {
-            Some(s) => &mut s.inner,
-            None => {
-                set_last_error("Null index pointer");
-                return 0;
-            }
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return 0;
         };
 
         let index_dim = index.dimensions() as usize;
@@ -521,6 +548,86 @@ pub unsafe extern "C" fn chassis_add_batch(
     .unwrap_or(0)
 }
 
+/// Add a vector under the caller's id
+///
+/// # Returns
+///
+/// - `0` on success
+/// - `-1` on failure, including when a live vector already has `id` or `id` is `UINT64_MAX`
+///   (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// Same as `chassis_add()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_add_with_id(
+    ptr: *mut ChassisIndex,
+    id: u64,
+    vector: *const c_float,
+    len: size_t,
+) -> c_int {
+    ffi_guard(|| {
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return -1;
+        };
+
+        if vector.is_null() || len == 0 {
+            set_last_error("Vector must be non-NULL with length > 0");
+            return -1;
+        }
+
+        // SAFETY: Caller guarantees vector points to len valid f32 values
+        let slice = unsafe { slice::from_raw_parts(vector, len) };
+
+        match index.add_with_id(id, slice) {
+            Ok(()) => {
+                clear_last_error();
+                0
+            }
+            Err(e) => {
+                set_last_error(e);
+                -1
+            }
+        }
+    })
+    .unwrap_or(-1)
+}
+
+/// Delete the vector with `id`
+///
+/// Search stops returning it immediately; the delete is durable after the next
+/// `chassis_flush()`.
+///
+/// # Returns
+///
+/// - `1` if it was deleted
+/// - `0` if no live vector has `id`
+/// - `-1` on failure (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_delete(ptr: *mut ChassisIndex, id: u64) -> c_int {
+    ffi_guard(|| {
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return -1;
+        };
+
+        match index.delete(id) {
+            Ok(deleted) => {
+                clear_last_error();
+                c_int::from(deleted)
+            }
+            Err(e) => {
+                set_last_error(e);
+                -1
+            }
+        }
+    })
+    .unwrap_or(-1)
+}
+
 /// Search for k nearest neighbors
 ///
 /// # Arguments
@@ -539,8 +646,7 @@ pub unsafe extern "C" fn chassis_add_batch(
 ///
 /// # Thread Safety
 ///
-/// **MULTI-READER**: Multiple threads may call this function concurrently
-/// on the same index. Reads do not block other reads.
+/// Safe from any thread. Searches run concurrently with each other and wait for writes.
 ///
 /// # Output Format
 ///
@@ -578,14 +684,8 @@ pub unsafe extern "C" fn chassis_search(
     out_dists: *mut c_float,
 ) -> size_t {
     ffi_guard(|| {
-        // SAFETY: Caller guarantees ptr is valid (shared access)
-        let state = unsafe { (ptr as *const ChassisIndexState).as_ref() };
-        let index = match state {
-            Some(s) => &s.inner,
-            None => {
-                set_last_error("Null index pointer");
-                return 0;
-            }
+        let Some(index) = (unsafe { read_index(ptr) }) else {
+            return 0;
         };
 
         if query.is_null() || out_ids.is_null() || out_dists.is_null() {
@@ -629,7 +729,7 @@ pub unsafe extern "C" fn chassis_search(
 ///
 /// # Arguments
 ///
-/// - `ptr`: Non-NULL pointer to index (requires exclusive access)
+/// - `ptr`: Non-NULL pointer to index
 ///
 /// # Returns
 ///
@@ -638,8 +738,7 @@ pub unsafe extern "C" fn chassis_search(
 ///
 /// # Thread Safety
 ///
-/// **SINGLE-WRITER**: Only one thread may call this function at a time for a
-/// given index. No other operations (read or write) may occur during flush.
+/// Safe from any thread. Writes run one at a time; searches wait for them.
 ///
 /// # Performance Warning
 ///
@@ -663,18 +762,11 @@ pub unsafe extern "C" fn chassis_search(
 /// # Safety
 ///
 /// - `ptr` must be non-NULL and valid
-/// - No other thread may access `ptr` during this call
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
     ffi_guard(|| {
-        // SAFETY: Caller guarantees ptr is valid and has exclusive access
-        let state = unsafe { (ptr as *mut ChassisIndexState).as_mut() };
-        let index = match state {
-            Some(s) => &mut s.inner,
-            None => {
-                set_last_error("Null index pointer");
-                return -1;
-            }
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return -1;
         };
 
         match index.flush() {
@@ -715,10 +807,8 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
     ffi_guard(|| {
-        let state = unsafe { (ptr as *const ChassisIndexState).as_ref() };
-        let index = match state {
-            Some(s) => &s.inner,
-            None => return 0,
+        let Some(index) = (unsafe { read_index(ptr) }) else {
+            return 0;
         };
 
         index.len()
@@ -742,10 +832,8 @@ pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_is_empty(ptr: *const ChassisIndex) -> c_int {
     ffi_guard(|| {
-        let state = unsafe { (ptr as *const ChassisIndexState).as_ref() };
-        let index = match state {
-            Some(s) => &s.inner,
-            None => return 0,
+        let Some(index) = (unsafe { read_index(ptr) }) else {
+            return 0;
         };
 
         if index.is_empty() { 1 } else { 0 }
@@ -769,10 +857,8 @@ pub unsafe extern "C" fn chassis_is_empty(ptr: *const ChassisIndex) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
     ffi_guard(|| {
-        let state = unsafe { (ptr as *const ChassisIndexState).as_ref() };
-        let index = match state {
-            Some(s) => &s.inner,
-            None => return 0,
+        let Some(index) = (unsafe { read_index(ptr) }) else {
+            return 0;
         };
 
         index.dimensions()
@@ -895,6 +981,71 @@ mod tests {
         assert_eq!(flush_result, 0, "Flush should succeed");
 
         // Clean up
+        unsafe { chassis_free(ptr) };
+    }
+
+    #[test]
+    fn test_ffi_add_with_id_and_delete() {
+        let (_dir, path) = temp_index_path();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 8) };
+        let vec = [0.5f32; 8];
+
+        assert_eq!(unsafe { chassis_add_with_id(ptr, 42, vec.as_ptr(), 8) }, 0);
+        assert_eq!(unsafe { chassis_add_with_id(ptr, 42, vec.as_ptr(), 8) }, -1);
+
+        let mut ids = [0u64; 1];
+        let mut dists = [0.0f32; 1];
+        unsafe { chassis_search(ptr, vec.as_ptr(), 8, 1, ids.as_mut_ptr(), dists.as_mut_ptr()) };
+        assert_eq!(ids[0], 42);
+
+        assert_eq!(unsafe { chassis_delete(ptr, 42) }, 1);
+        assert_eq!(unsafe { chassis_delete(ptr, 42) }, 0);
+        assert_eq!(unsafe { chassis_delete(ptr::null_mut(), 42) }, -1);
+        assert_eq!(unsafe { chassis_len(ptr) }, 0);
+
+        unsafe { chassis_free(ptr) };
+    }
+
+    #[test]
+    fn test_ffi_concurrent_search_while_adding() {
+        let (_dir, path) = temp_index_path();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 64) };
+        let vec = [0.5f32; 64];
+        unsafe { chassis_add(ptr, vec.as_ptr(), 64) };
+
+        // Raw pointers aren't Send, but the handle is meant to be shared.
+        let handle = ptr as usize;
+        let done = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    let (mut ids, mut dists) = ([0u64; 10], [0.0f32; 10]);
+                    while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                        let found = unsafe {
+                            let ptr = handle as *const ChassisIndex;
+                            chassis_search(
+                                ptr,
+                                vec.as_ptr(),
+                                64,
+                                10,
+                                ids.as_mut_ptr(),
+                                dists.as_mut_ptr(),
+                            )
+                        };
+                        assert!(found >= 1);
+                    }
+                });
+            }
+            // Past ~950 records the graph outgrows the file, so it is remapped under the searches.
+            for i in 0..1200 {
+                let v = [i as f32; 64];
+                let id = unsafe { chassis_add(handle as *mut ChassisIndex, v.as_ptr(), 64) };
+                assert_ne!(id, u64::MAX);
+            }
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+
+        assert_eq!(unsafe { chassis_len(ptr) }, 1201);
         unsafe { chassis_free(ptr) };
     }
 

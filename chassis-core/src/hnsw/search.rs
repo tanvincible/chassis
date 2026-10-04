@@ -1,4 +1,4 @@
-//! HNSW search implementation with zero-allocation optimizations.
+//! HNSW search over the memory-mapped graph.
 //!
 //! # Performance Optimizations
 //!
@@ -11,7 +11,7 @@
 //!
 //! - No panics on NaN distances
 //! - No hash table overhead in search loop
-//! - Wait-free multi-reader semantics (immutable &self)
+//! - Concurrent searches from many threads (`&self`)
 //! - Deterministic performance
 
 use crate::hnsw::graph::HnswGraph;
@@ -146,7 +146,7 @@ impl HnswGraph {
     ///
     /// - O(ef × log(ef)) time complexity
     /// - O(node_count) space for visited filter
-    /// - Zero allocations in hot path (after setup)
+    /// - Allocates a visited set per layer, plus two heaps on layer 0
     pub fn search(&self, query: &[f32], k: usize, ef: usize) -> Result<Vec<SearchResult>> {
         if self.entry_point.is_none() {
             return Ok(Vec::new());
@@ -166,7 +166,8 @@ impl HnswGraph {
         }
 
         // Search base layer with ef candidates
-        let mut candidates = self.search_layer_optimized(query, current, ef, 0)?;
+        let skip_deleted = self.deleted_count > 0;
+        let mut candidates = self.search_layer_filtered(query, current, ef, 0, skip_deleted)?;
 
         // Return top k
         candidates.truncate(k);
@@ -212,7 +213,7 @@ impl HnswGraph {
         Ok(best_id)
     }
 
-    /// Search within a single layer using zero-allocation optimizations.
+    /// Search within a single layer.
     ///
     /// # Optimizations Applied
     ///
@@ -246,6 +247,19 @@ impl HnswGraph {
         ef: usize,
         layer: usize,
     ) -> Result<Vec<SearchResult>> {
+        self.search_layer_filtered(query, entry, ef, layer, false)
+    }
+
+    /// Like `search_layer_optimized`; with `skip_deleted`, deleted nodes are still traversed
+    /// (they keep the graph connected) but never returned.
+    pub(crate) fn search_layer_filtered(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+        skip_deleted: bool,
+    ) -> Result<Vec<SearchResult>> {
         // Dense visited filter: O(n) space, O(1) time per check
         let mut visited = VisitedFilter::new(self.node_count as usize);
 
@@ -255,7 +269,9 @@ impl HnswGraph {
         // Zero-copy distance computation
         let entry_dist = self.compute_distance_zero_copy(query, entry)?;
         candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
-        results.push(SearchResult { id: entry, distance: entry_dist });
+        if !(skip_deleted && self.is_deleted(entry)?) {
+            results.push(SearchResult { id: entry, distance: entry_dist });
+        }
         visited.visit(entry);
 
         while let Some(Reverse(current)) = candidates.pop() {
@@ -285,6 +301,9 @@ impl HnswGraph {
 
                     if should_add {
                         candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
+                        if skip_deleted && self.is_deleted(neighbor_id)? {
+                            continue;
+                        }
                         results.push(SearchResult { id: neighbor_id, distance: dist });
 
                         if results.len() > ef {

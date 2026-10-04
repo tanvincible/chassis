@@ -204,9 +204,9 @@ fn bench_batch_linking(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark: Cache effectiveness
-fn bench_cache_effectiveness(c: &mut Criterion) {
-    let mut group = c.benchmark_group("cache_effectiveness");
+/// Benchmark: linking into a hub whose list is filling up, which ends in diversity pruning
+fn bench_hub_pruning(c: &mut Criterion) {
+    let mut group = c.benchmark_group("hub_pruning");
     group.sample_size(50);
 
     for candidate_count in [8, 16, 32] {
@@ -375,7 +375,7 @@ criterion_group!(
     bench_pruning_pressure,
     bench_multilayer_linking,
     bench_batch_linking,
-    bench_cache_effectiveness,
+    bench_hub_pruning,
     bench_worst_case_clustering,
     bench_high_dimensional,
     bench_idempotency_check,

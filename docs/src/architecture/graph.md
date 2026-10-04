@@ -32,7 +32,11 @@ graph.link_node_bidirectional(2, 1, &[vec![0, 1]])?;    // Node 2: links to 0, 1
 
 ## 2. Crash Consistency Model
 
-Chassis uses a **Write-Ahead Persistence** strategy to ensure that a crash (power loss, process kill) never results in a corrupted graph structure.
+After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. Process kills are tested by
+`chassis-core/tests/crash_tests.rs`, and power loss is simulated by `chassis-core/src/power_loss.rs`
+(not on real hardware). The write order below protects against a process crash only, because the OS
+writes mmap pages back in any order; under power loss the fsyncs in `flush()` are what order writes. See the
+[ADR-0005 amendment](../adr/005-crash-consistent-linking.md#amendment-2026-10-03).
 
 ### The Atomic Write Sequence
 
@@ -44,7 +48,9 @@ Chassis uses a **Write-Ahead Persistence** strategy to ensure that a crash (powe
 
 * **After Step A:** Node `A` exists on disk but has no incoming edges. It is technically "invisible" to search from the entry point, but the file is valid.
 * **During Step B:** Some neighbors point to `A`, others don't. This creates "one-way edges," which are valid in HNSW and do not break search.
-* **Crucial Guarantee:** A neighbor never points to `A` before `A`'s record is fully flushed to disk. We never allow undefined behavior.
+* **After a crash before `flush()`:** `node_count` rolls back but backlinks to `A` may survive. Search
+  skips them until the next insert reuses `A`'s ID; after that they are ordinary edges to the new node.
+  Edges pruned to make room for them stay lost.
 
 ## 3. Neighbor Selection (Diversity Heuristic)
 
@@ -59,16 +65,12 @@ When a neighbor list exceeds its capacity (`M` or `M0`), we prune it using **Div
 * *Goal*: Prioritize neighbors in different directions rather than just the closest ones.
 
 
-3. **Starvation Fallback**: If diversity pruning is too aggressive and yields fewer than `M/2` neighbors, we fill the remaining slots with the standard -nearest neighbors. This ensures robust connectivity even in highly clustered data.
+3. **Starvation Fallback**: If diversity pruning is too aggressive and yields fewer than `M/2` neighbors, we fill the remaining slots with the nearest remaining candidates. This ensures robust connectivity even in highly clustered data.
 
-### Optimization: Lazy Distance Cache
-
-The diversity check requires  distance comparisons, which can be a bottleneck. Chassis optimizes this with a **Lazy Symmetric Cache**:
-
-* **Stack Allocation**: A fixed-size `33x33` matrix (`4.3KB`) is allocated on the stack.
-* **Symmetry**: Distances are stored symmetrically (`d[i][j] == d[j][i]`), halving the required computations.
-* **Lazy Evaluation**: Distances are only computed via `mmap` when requested.
-* **Performance**: Reduces pruning time from ~200µs to ~50µs per event.
+A new node chooses from all of its `ef_construction` search candidates. Each candidate is compared
+with each neighbor already kept at most once, so there is nothing to cache. An earlier lazy distance
+cache never got a hit and limited selection to 33 candidates; it was removed (see the
+[ADR-0004 amendment](../adr/004-diversity-heuristic-with-lazy-cache.md#amendment-2026-10-04)).
 
 ## 4. Idempotency & Retry Safety
 

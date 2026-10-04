@@ -25,6 +25,8 @@
 - [ADR-0004: Diversity Heuristics & Caching](./adr/004-diversity-heuristic-with-lazy-cache.md)
 - [ADR-0005: Crash-Consistent Linking](./adr/005-crash-consistent-linking.md)
 - [ADR-0006: SIMD Acceleration](./adr/006-simd-acceleration.md)
+- [ADR-0007: Caller Ids and Deletes](./adr/007-ids-and-deletes.md)
+- [ADR-0008: File Format v3 and Multi-Process Readers (Proposed)](./adr/008-format-v3-and-multi-process-readers.md)
 
 # Development
 

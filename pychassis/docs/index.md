@@ -7,7 +7,7 @@ It combines the safety and raw speed of Rust with the ease of use of Python. Unl
 ## Key Features
 
 * **Zero-Copy Search**: Vectors are memory-mapped, allowing instant access to datasets larger than RAM.
-* **Crash Safety**: ACID-compliant persistence guarantees your data is safe even if the process is killed.
+* **Crash Safety**: If the process is killed, every add and delete up to the last `flush()` is kept and the index stays usable.
 * **Standard Interface**: Fully compatible with NumPy arrays.
 * **No Server Required**: Runs entirely in-process. No Docker containers or external services to manage.
 

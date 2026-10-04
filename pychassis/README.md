@@ -7,7 +7,7 @@ High-performance Python bindings for the Chassis vector storage engine.
 - **Zero-copy operations**: Direct memory access via ctypes
 - **NumPy integration**: Native support for NumPy arrays
 - **Type hints**: Full type annotations for IDE support
-- **Thread-safe**: Multi-reader support for concurrent searches
+- **Thread-safe**: Search from many threads while another adds or deletes; writes run one at a time
 - **Pythonic API**: Context managers, properties, and familiar patterns
 
 ## Installation
@@ -223,33 +223,15 @@ class SearchResult:
 
 ## Thread Safety
 
-| Operation | Thread Safety |
-|-----------|---------------|
-| `add()` | Single-writer (exclusive access required) |
-| `flush()` | Single-writer (exclusive access required) |
-| `search()` | Multi-reader (concurrent reads allowed) |
-| `len()`, `is_empty()`, `dimensions` | Multi-reader |
+Every method is safe to call from any thread. Searches run concurrently (ctypes releases the GIL
+during each call); `add()`, `delete()` and `flush()` take the index's write lock, so they run one
+at a time and searches wait for them. Don't call `close()` while other threads still use the index.
 
-**Safe:**
 ```python
-# Thread 1: Writer
-index.add(vector1)
+from concurrent.futures import ThreadPoolExecutor
 
-# Thread 2: Reader (concurrent with writes is UNSAFE)
-results = index.search(query, k=10)  # UNSAFE during writes
-```
-
-**Recommended:**
-```python
-# Separate read and write phases
-# Phase 1: Write (single thread)
-for vec in vectors:
-    index.add(vec)
-index.flush()
-
-# Phase 2: Read (multiple threads OK)
-with ThreadPoolExecutor() as executor:
-    results = executor.map(lambda q: index.search(q, k=10), queries)
+with ThreadPoolExecutor() as pool:
+    results = list(pool.map(lambda q: index.search(q, k=10), queries))
 ```
 
 ## Performance Tips

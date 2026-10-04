@@ -357,3 +357,42 @@ class TestBatchOperations:
 
         assert len(all_results) == 10
         assert all(len(results) <= 5 for results in all_results)
+
+
+class TestIdsAndDelete:
+    """Caller-chosen ids and deletes."""
+
+    def test_add_with_id(self, simple_index):
+        assert simple_index.add([1.0, 0.0, 0.0], id=500) == 500
+        assert simple_index.search([1.0, 0.0, 0.0], k=1)[0].id == 500
+        assert simple_index.add([0.0, 1.0, 0.0]) == 501
+
+    def test_duplicate_id_raises(self, simple_index):
+        simple_index.add([1.0, 0.0, 0.0], id=7)
+        with pytest.raises(ChassisError):
+            simple_index.add([0.0, 1.0, 0.0], id=7)
+
+    def test_out_of_range_id_raises(self, simple_index):
+        with pytest.raises(ValueError):
+            simple_index.add([1.0, 0.0, 0.0], id=-1)
+        with pytest.raises(ValueError):
+            simple_index.delete(2**64 - 1)
+
+    def test_delete(self, simple_index):
+        for i in range(5):
+            simple_index.add([float(i), 0.0, 0.0])
+        assert simple_index.delete(2) is True
+        assert simple_index.delete(2) is False
+        assert len(simple_index) == 4
+        results = simple_index.search([2.0, 0.0, 0.0], k=5)
+        assert all(r.id != 2 for r in results)
+
+    def test_delete_persists_after_flush(self, temp_index_path):
+        with VectorIndex(temp_index_path, dimensions=3) as index:
+            index.add([1.0, 0.0, 0.0], id=10)
+            index.add([0.0, 1.0, 0.0], id=20)
+            index.delete(10)
+            index.flush()
+        with VectorIndex(temp_index_path, dimensions=3) as index:
+            assert len(index) == 1
+            assert [r.id for r in index.search([1.0, 0.0, 0.0], k=2)] == [20]
