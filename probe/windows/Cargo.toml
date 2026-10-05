@@ -1,0 +1,18 @@
+[package]
+name = "windows-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: not part of the chassis workspace.
+[workspace]
+
+[dependencies]
+memmap2 = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }

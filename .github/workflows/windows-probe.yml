@@ -1,0 +1,20 @@
+name: Windows probe
+
+# ADR-0008 "Before Accepting" #1: Windows file behavior with other processes attached.
+on:
+  push:
+    branches: [probe/windows-mmap]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Run probe
+        run: cargo run --release --manifest-path probe/windows/Cargo.toml
