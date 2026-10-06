@@ -202,6 +202,23 @@ Search for k nearest neighbors. Returns number of results found.
 
 **Thread Safety**: Safe from any thread; runs concurrently with other searches
 
+#### `chassis_search_filtered`
+```c
+size_t chassis_search_filtered(
+    const ChassisIndex* index,
+    const float* query,
+    size_t len,
+    size_t k,
+    const uint64_t* allowed_ids,
+    size_t allowed_len,
+    uint64_t* out_ids,
+    float* out_dists
+);
+```
+Like `chassis_search`, returning only vectors whose id is in `allowed_ids`. Ids not in the index
+are ignored; an empty list matches nothing. When walking the graph would cost more, as when few
+vectors match, every vector is checked instead and the results are exact.
+
 #### `chassis_flush`
 ```c
 int chassis_flush(ChassisIndex* index);

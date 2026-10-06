@@ -20,6 +20,18 @@ use anyhow::Result;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+/// Slots a filtered search samples to estimate how many match.
+const FILTER_SAMPLE: u64 = 1024;
+
+/// Graph visits a filtered search may spend before checking every slot instead, with `matches` of
+/// `slots` passing the filter. Half the matches: a graph visit costs more than a scanned distance.
+/// Twice the 16 × ef / s visits a random filter needs: matches far from the query cost far more
+/// (ADR-0009).
+fn filter_budget(matches: u64, slots: u64, ef: usize) -> u64 {
+    let far = 32u64.saturating_mul(ef as u64).saturating_mul(slots) / matches.max(1);
+    (matches / 2).min(far)
+}
+
 /// Search result with distance
 #[derive(Debug, Clone)]
 pub struct SearchResult {
@@ -166,13 +178,84 @@ impl HnswGraph {
         }
 
         // Search base layer with ef candidates
-        let skip_deleted =
-            self.deleted_count > 0 || self.view.is_some_and(|v| self.node_count > v.committed);
-        let mut candidates = self.search_layer_filtered(query, current, ef, 0, skip_deleted)?;
+        let mut candidates = self.search_layer_filtered(query, current, ef, 0, self.skips())?;
 
         // Return top k
         candidates.truncate(k);
         Ok(candidates)
+    }
+
+    /// The `k` nearest live nodes that `allow` accepts (ADR-0009). HNSW visits about `1 / s` times
+    /// more nodes when a fraction `s` matches, so past a budget it gives up and checks every slot.
+    pub fn search_filtered(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        allow: &dyn Fn(NodeId) -> Result<bool>,
+    ) -> Result<Vec<SearchResult>> {
+        Ok(self.search_filtered_reporting(query, k, ef, allow)?.0)
+    }
+
+    /// `search_filtered`, and whether it fell back to checking every slot.
+    pub(crate) fn search_filtered_reporting(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        allow: &dyn Fn(NodeId) -> Result<bool>,
+    ) -> Result<(Vec<SearchResult>, bool)> {
+        let Some(mut current) = self.entry_point else { return Ok((Vec::new(), false)) };
+        let ef = ef.max(k);
+        let budget = filter_budget(self.estimated_matches(allow)?, self.node_count, ef);
+
+        for layer in (1..=self.max_layer).rev() {
+            current = self.search_layer_greedy(query, current, layer)?;
+        }
+        let filter = Some((allow, budget as usize));
+        if let Some(mut found) =
+            self.search_layer::<true>(query, current, ef, 0, self.skips(), filter)?
+        {
+            found.truncate(k);
+            return Ok((found, false));
+        }
+
+        let mut nearest = BinaryHeap::new();
+        for slot in 0..self.node_count {
+            if self.is_live(slot)? && allow(slot)? {
+                let distance = self.compute_distance_zero_copy(query, slot)?;
+                let nearer = |w: &SearchResult| distance.total_cmp(&w.distance).is_lt();
+                if nearest.len() < k || nearest.peek().is_some_and(nearer) {
+                    nearest.push(SearchResult { id: slot, distance });
+                    if nearest.len() > k {
+                        nearest.pop();
+                    }
+                }
+            }
+        }
+        Ok((nearest.into_sorted_vec(), true))
+    }
+
+    /// Live slots `allow` accepts, estimated from about `FILTER_SAMPLE` of them, one per step,
+    /// jittered within the step so a filter periodic in the slot can't line up with the sample.
+    pub(crate) fn estimated_matches(&self, allow: &dyn Fn(NodeId) -> Result<bool>) -> Result<u64> {
+        let step = (self.node_count / FILTER_SAMPLE).max(1);
+        let sampled = self.node_count / step;
+        let mut matched = 0;
+        for i in 0..sampled {
+            let slot = i * step + (i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) % step;
+            matched += u64::from(self.is_live(slot)? && allow(slot)?);
+        }
+        Ok(matched * self.node_count / sampled.max(1))
+    }
+
+    /// Whether some slot below `node_count` may be deleted or outside a reader's snapshot.
+    fn skips(&self) -> bool {
+        self.deleted_count > 0 || self.view.is_some_and(|v| self.node_count > v.committed)
+    }
+
+    fn is_live(&self, slot: NodeId) -> Result<bool> {
+        Ok(!(self.skips() && self.is_deleted(slot)?))
     }
 
     /// Greedy search for a single best node (used for layer descent).
@@ -261,6 +344,35 @@ impl HnswGraph {
         layer: usize,
         skip_deleted: bool,
     ) -> Result<Vec<SearchResult>> {
+        Ok(self
+            .search_layer::<false>(query, entry, ef, layer, skip_deleted, None)?
+            .unwrap_or_default())
+    }
+
+    /// The search loop. A filter's nodes are traversed like deleted ones but never returned; it
+    /// returns `None` once it has computed the filter's budget of distances. `FILTERED` compiles
+    /// the filter out of unfiltered searches.
+    #[allow(clippy::type_complexity)]
+    fn search_layer<const FILTERED: bool>(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+        skip_deleted: bool,
+        filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
+    ) -> Result<Option<Vec<SearchResult>>> {
+        let excluded = |id| -> Result<bool> {
+            if skip_deleted && self.is_deleted(id)? {
+                return Ok(true);
+            }
+            Ok(match filter {
+                Some((allow, _)) if FILTERED => !allow(id)?,
+                _ => false,
+            })
+        };
+        let mut budget = filter.map_or(usize::MAX, |(_, budget)| budget);
+
         // Dense visited filter: O(n) space, O(1) time per check
         let mut visited = VisitedFilter::new(self.node_count as usize);
 
@@ -270,7 +382,7 @@ impl HnswGraph {
         // Zero-copy distance computation
         let entry_dist = self.compute_distance_zero_copy(query, entry)?;
         candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
-        if !(skip_deleted && self.is_deleted(entry)?) {
+        if !excluded(entry)? {
             results.push(SearchResult { id: entry, distance: entry_dist });
         }
         visited.visit(entry);
@@ -288,6 +400,12 @@ impl HnswGraph {
             // Uses mmap-based iteration (~100ns) instead of Vec allocation (~400ns)
             for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
                 if visited.visit(neighbor_id) {
+                    if FILTERED {
+                        budget = match budget.checked_sub(1) {
+                            Some(left) => left,
+                            None => return Ok(None),
+                        };
+                    }
                     // Zero-copy distance computation
                     // Reads directly from mmap instead of allocating Vec<f32>
                     let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
@@ -302,7 +420,7 @@ impl HnswGraph {
 
                     if should_add {
                         candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
-                        if skip_deleted && self.is_deleted(neighbor_id)? {
+                        if excluded(neighbor_id)? {
                             continue;
                         }
                         results.push(SearchResult { id: neighbor_id, distance: dist });
@@ -317,7 +435,7 @@ impl HnswGraph {
 
         let mut sorted: Vec<_> = results.into_iter().collect();
         sorted.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-        Ok(sorted)
+        Ok(Some(sorted))
     }
 }
 
@@ -426,5 +544,16 @@ mod tests {
         assert_eq!(f32::NAN.total_cmp(&f32::NAN), std::cmp::Ordering::Equal);
         assert_eq!(f32::NAN.total_cmp(&0.0), std::cmp::Ordering::Greater);
         assert_eq!(f32::NAN.total_cmp(&f32::INFINITY), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn test_filter_budget() {
+        // Selective: half the matches.
+        assert_eq!(filter_budget(1_000, 1_000_000, 64), 500);
+        // Broad: twice what a random filter needs, 32 × 64 / 0.3.
+        assert_eq!(filter_budget(300_000, 1_000_000, 64), 6_826);
+        assert_eq!(filter_budget(0, 1_000_000, 64), 0);
+        // Saturates instead of overflowing.
+        assert_eq!(filter_budget(u64::MAX, u64::MAX, usize::MAX), 1);
     }
 }

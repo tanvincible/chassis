@@ -460,3 +460,22 @@ class TestMetric:
         with pytest.raises(ChassisError):
             VectorIndex(path, dimensions=2, options=IndexOptions(), read_only=True)
         writer.close()
+
+
+class TestFiltered:
+    """Search restricted to allowed ids."""
+
+    def test_only_allowed_ids_come_back(self, tmp_path):
+        index = VectorIndex(tmp_path / "f.chassis", dimensions=2)
+        for i in range(20):
+            index.add([float(i), 0.0], id=100 + i)
+        results = index.search([0.0, 0.0], k=4, allowed=[119, 105, 110, 7])
+        assert [r.id for r in results] == [105, 110, 119]
+        as_array = index.search([0.0, 0.0], k=4, allowed=np.array([110, 105], dtype=np.uint64))
+        assert [r.id for r in as_array] == [105, 110]
+        assert index.search([0.0, 0.0], k=4, allowed=[]) == []
+        assert [r.id for r in index.search([0.0, 0.0], k=4, allowed={110, 105})] == [105, 110]
+        for bad in (np.array([-6]), [105.9], ["105"], np.array([[105, 110]]), np.array([True])):
+            with pytest.raises((TypeError, ValueError)):
+                index.search([0.0, 0.0], k=4, allowed=bad)
+        index.close()
