@@ -3,7 +3,7 @@
 import ctypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Union
+from typing import Iterable, List, Optional, Sequence, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -320,12 +320,16 @@ class VectorIndex:
         self,
         query: Union[Sequence[float], npt.NDArray[np.float32]],
         k: int = 10,
+        allowed: Optional[Union[Iterable[int], npt.NDArray[np.uint64]]] = None,
     ) -> List[SearchResult]:
         """Search for k nearest neighbors.
 
         Args:
             query: Query vector (must match index dimensions)
             k: Number of nearest neighbors to return (default: 10)
+            allowed: If given, only these ids can be returned. When walking
+                the graph would cost more, as when few vectors match, every
+                vector is checked instead and the results are exact.
 
         Returns:
             List of SearchResult objects, sorted by distance (ascending)
@@ -371,14 +375,16 @@ class VectorIndex:
         ids_ptr = out_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
         dists_ptr = out_dists.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
-        count = _ffi._lib.chassis_search(
-            self._ptr,
-            query_ptr,
-            len(query),
-            k,
-            ids_ptr,
-            dists_ptr,
-        )
+        if allowed is None:
+            count = _ffi._lib.chassis_search(
+                self._ptr, query_ptr, len(query), k, ids_ptr, dists_ptr
+            )
+        else:
+            allowed = _allowed_ids(allowed)
+            allowed_ptr = allowed.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            count = _ffi._lib.chassis_search_filtered(
+                self._ptr, query_ptr, len(query), k, allowed_ptr, len(allowed), ids_ptr, dists_ptr
+            )
 
         # Check for error (count == 0 could be error or empty index)
         if count == 0:
@@ -473,6 +479,18 @@ class VectorIndex:
             f"len={len(self) if not self._closed else '?'}, "
             f"status={status})"
         )
+
+
+def _allowed_ids(allowed) -> npt.NDArray[np.uint64]:
+    # Like _check_id: numpy and ctypes would silently wrap, truncate or flatten bad ids.
+    ids = np.asarray(allowed if isinstance(allowed, np.ndarray) else list(allowed))
+    if ids.size == 0:
+        return np.zeros(0, dtype=np.uint64)
+    if ids.ndim != 1 or ids.dtype == np.bool_ or not np.issubdtype(ids.dtype, np.integer):
+        raise TypeError(f"allowed must be a flat sequence of int ids, got {ids.dtype} {ids.shape}")
+    if (ids < 0).any() or (ids == 2**64 - 1).any():
+        raise ValueError("allowed ids must be between 0 and 2**64 - 2")
+    return np.ascontiguousarray(ids, dtype=np.uint64)
 
 
 def _check_id(id: int) -> None:

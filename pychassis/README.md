@@ -170,8 +170,11 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
 - **`add(vector: Sequence[float] | ndarray) -> int`**  
   Add a vector to the index. Returns the vector ID.
 
-- **`search(query: Sequence[float] | ndarray, k: int = 10) -> List[SearchResult]`**  
-  Search for k nearest neighbors. Returns sorted list of results.
+- **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
+  Search for k nearest neighbors. Returns sorted list of results. With `allowed`, only those ids
+  can be returned, e.g. `allowed=[row[0] for row in db.execute("SELECT id FROM docs WHERE owner = ?", (user,))]`;
+  when walking the graph would cost more, as when few vectors match, every vector is checked
+  instead and the results are exact.
 
 - **`flush() -> None`**  
   Flush changes to disk. Call after batch insertions.

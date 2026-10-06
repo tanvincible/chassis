@@ -50,16 +50,31 @@ enum Kind {
 }
 
 /// What searches and introspection need, from either kind of handle.
+type Filter<'a> = Option<&'a dyn Fn(u64) -> bool>;
+
 trait Readable {
-    fn search(&mut self, query: &[f32], k: usize) -> anyhow::Result<Vec<SearchResult>>;
+    fn search(
+        &mut self,
+        query: &[f32],
+        k: usize,
+        filter: Filter,
+    ) -> anyhow::Result<Vec<SearchResult>>;
     fn len(&mut self) -> u64;
     fn dimensions(&self) -> u32;
     fn metric(&self) -> DistanceMetric;
 }
 
 impl Readable for &VectorIndex {
-    fn search(&mut self, query: &[f32], k: usize) -> anyhow::Result<Vec<SearchResult>> {
-        VectorIndex::search(self, query, k)
+    fn search(
+        &mut self,
+        query: &[f32],
+        k: usize,
+        filter: Filter,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        match filter {
+            None => VectorIndex::search(self, query, k),
+            Some(filter) => VectorIndex::search_filtered(self, query, k, filter),
+        }
     }
     fn len(&mut self) -> u64 {
         VectorIndex::len(self)
@@ -73,8 +88,16 @@ impl Readable for &VectorIndex {
 }
 
 impl Readable for IndexReader {
-    fn search(&mut self, query: &[f32], k: usize) -> anyhow::Result<Vec<SearchResult>> {
-        IndexReader::search(self, query, k)
+    fn search(
+        &mut self,
+        query: &[f32],
+        k: usize,
+        filter: Filter,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        match filter {
+            None => IndexReader::search(self, query, k),
+            Some(filter) => IndexReader::search_filtered(self, query, k, filter),
+        }
     }
     /// The writer's latest flush, not the last search's snapshot.
     fn len(&mut self) -> u64 {
@@ -804,8 +827,58 @@ pub unsafe extern "C" fn chassis_search(
     out_dists: *mut c_float,
 ) -> size_t {
     ffi_guard(|| {
-        unsafe { read(ptr, |index| search_into(index, query, len, k, out_ids, out_dists)) }
+        unsafe { read(ptr, |index| search_into(index, query, len, k, None, out_ids, out_dists)) }
             .unwrap_or(0)
+    })
+    .unwrap_or(0)
+}
+
+/// Search for the k nearest neighbors among the given ids
+///
+/// # Arguments
+///
+/// - `allowed_ids`: The ids results may have; ids not in the index are ignored. May be NULL when
+///   `allowed_len` is 0, which matches nothing.
+/// - `allowed_len`: Number of ids in `allowed_ids`
+/// - The other arguments are as for `chassis_search()`.
+///
+/// When walking the graph would cost more, as when few vectors match, the search checks every
+/// vector instead and returns the exact nearest.
+///
+/// # Returns
+///
+/// As for `chassis_search()`.
+///
+/// # Safety
+///
+/// As for `chassis_search()`, and `allowed_ids` must point to `allowed_len` valid u64 values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_search_filtered(
+    ptr: *const ChassisIndex,
+    query: *const c_float,
+    len: size_t,
+    k: size_t,
+    allowed_ids: *const u64,
+    allowed_len: size_t,
+    out_ids: *mut u64,
+    out_dists: *mut c_float,
+) -> size_t {
+    ffi_guard(|| {
+        if allowed_ids.is_null() && allowed_len > 0 {
+            set_last_error("Null allowed_ids");
+            return 0;
+        }
+        let allowed: std::collections::HashSet<u64> = if allowed_len == 0 {
+            Default::default()
+        } else {
+            // SAFETY: caller guarantees allowed_ids points to allowed_len u64 values
+            unsafe { slice::from_raw_parts(allowed_ids, allowed_len) }.iter().copied().collect()
+        };
+        let filter = |id| allowed.contains(&id);
+        unsafe {
+            read(ptr, |index| search_into(index, query, len, k, Some(&filter), out_ids, out_dists))
+        }
+        .unwrap_or(0)
     })
     .unwrap_or(0)
 }
@@ -820,6 +893,7 @@ unsafe fn search_into(
     query: *const c_float,
     len: size_t,
     k: size_t,
+    filter: Filter,
     out_ids: *mut u64,
     out_dists: *mut c_float,
 ) -> size_t {
@@ -837,7 +911,7 @@ unsafe fn search_into(
         // SAFETY: Caller guarantees query points to len valid f32 values
         let query_slice = unsafe { slice::from_raw_parts(query, len) };
 
-        match index.search(query_slice, k) {
+        match index.search(query_slice, k, filter) {
             Ok(results) => {
                 let count = results.len();
 
@@ -1193,6 +1267,56 @@ mod tests {
         assert_eq!(unsafe { chassis_flush(writer) }, 0);
         assert_eq!(unsafe { chassis_len(reader) }, 2);
 
+        unsafe { chassis_free(reader) };
+        unsafe { chassis_free(writer) };
+    }
+
+    #[test]
+    fn test_ffi_search_filtered() {
+        let (_dir, path) = temp_index_path();
+        let writer = unsafe { chassis_open(path.as_ptr(), 2) };
+        for i in 0..20u64 {
+            let v = [i as f32, 0.0];
+            assert_eq!(unsafe { chassis_add_with_id(writer, 100 + i, v.as_ptr(), 2) }, 0);
+        }
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+
+        let query = [0.0f32, 0.0];
+        let allowed = [7u64, 119, 105, 110];
+        for handle in [writer as *const ChassisIndex, reader] {
+            let (mut ids, mut dists) = ([0u64; 4], [0.0f32; 4]);
+            let n = unsafe {
+                chassis_search_filtered(
+                    handle,
+                    query.as_ptr(),
+                    2,
+                    4,
+                    allowed.as_ptr(),
+                    allowed.len(),
+                    ids.as_mut_ptr(),
+                    dists.as_mut_ptr(),
+                )
+            };
+            assert_eq!(
+                (n, &ids[..3], &dists[..3]),
+                (3, &[105, 110, 119][..], &[5.0, 10.0, 19.0][..])
+            );
+            let none = unsafe {
+                chassis_search_filtered(
+                    handle,
+                    query.as_ptr(),
+                    2,
+                    4,
+                    ptr::null(),
+                    0,
+                    ids.as_mut_ptr(),
+                    dists.as_mut_ptr(),
+                )
+            };
+            assert_eq!(none, 0);
+            assert!(chassis_last_error_message().is_null());
+        }
         unsafe { chassis_free(reader) };
         unsafe { chassis_free(writer) };
     }
