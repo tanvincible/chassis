@@ -86,6 +86,7 @@ options = IndexOptions(
     max_connections=32,      # Higher = better recall, more memory
     ef_construction=400,     # Higher = better index, slower build
     ef_search=100,           # Higher = better search, slower queries
+    metric="cosine",         # "euclidean" (default) or "cosine"; fixed at creation
 )
 
 index = VectorIndex("tuned.chassis", dimensions=768, options=options)
@@ -187,6 +188,8 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
 #### Properties
 
 - **`dimensions: int`** - Number of dimensions per vector
+- **`metric: str`** - `"euclidean"` or `"cosine"`, as the index was created; opening with
+  `read_only=True` and explicit `options` naming another raises `ChassisError`
 - **`path: Path`** - Path to the index file
 - **`options: IndexOptions`** - HNSW configuration
 
@@ -200,6 +203,7 @@ class IndexOptions:
     max_connections: int = 16      # M parameter
     ef_construction: int = 200     # Build-time search quality
     ef_search: int = 50            # Query-time search quality
+    metric: str = "euclidean"      # or "cosine": 1 - cosine similarity, unit-length storage
 ```
 
 ### `SearchResult`

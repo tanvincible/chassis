@@ -99,7 +99,8 @@ cl myapp.c /I include /link /LIBPATH:target\release chassis_ffi.lib
 ```c
 ChassisIndex* chassis_open(const char* path, uint32_t dimensions);
 ```
-Open or create an index. Returns `NULL` on error.
+Open or create an index. Returns `NULL` on error, including when the file is a cosine index: open
+those with `chassis_open_with_metric` or `chassis_open_reader`.
 
 #### `chassis_open_with_options`
 ```c
@@ -112,6 +113,21 @@ ChassisIndex* chassis_open_with_options(
 );
 ```
 Open with custom HNSW parameters.
+
+#### `chassis_open_with_metric`
+```c
+ChassisIndex* chassis_open_with_metric(
+    const char* path,
+    uint32_t dimensions,
+    uint32_t max_connections,
+    uint32_t ef_construction,
+    uint32_t ef_search,
+    uint32_t metric
+);
+```
+Like `chassis_open_with_options`, with a distance metric: `0` for Euclidean, `1` for cosine
+(`1 - cosine similarity`; vectors are stored at unit length and zero vectors are rejected). The
+metric is fixed when the index is created; reopening with another one fails.
 
 #### `chassis_open_reader`
 ```c
@@ -213,6 +229,12 @@ Check if index is empty. Returns `1` if empty, `0` otherwise.
 uint32_t chassis_dimensions(const ChassisIndex* index);
 ```
 Get vector dimensionality.
+
+#### `chassis_metric`
+```c
+int chassis_metric(const ChassisIndex* index);
+```
+The metric the index was created with: `0` Euclidean, `1` cosine, `-1` if `index` is `NULL`.
 
 ### Error Handling
 

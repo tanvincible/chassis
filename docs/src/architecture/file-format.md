@@ -37,7 +37,7 @@ The valid copy with the higher sequence number is current.
 | 40 | 2 | M | Neighbors per upper-layer list |
 | 42 | 2 | M0 | Neighbors per layer-0 list |
 | 44 | 1 | Max layers | Layers a node can belong to |
-| 45 | 1 | Metric | `0`: Euclidean |
+| 45 | 1 | Metric | `0`: Euclidean; `1`: cosine, over vectors stored at unit length |
 | 46 | 1 | Flags | Bit 0: some id differs from its slot |
 | 47 | 1 | Table page log2 | Entries per table page, as a power of two |
 | 48 | 1 | Segment base log2 | Slots in the first segment, as a power of two |

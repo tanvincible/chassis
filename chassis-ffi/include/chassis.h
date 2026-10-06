@@ -100,6 +100,23 @@ struct ChassisIndex *chassis_open(const char *path, uint32_t dimensions);
 struct ChassisIndex *chassis_open_with_options(const char *path, uint32_t dimensions, uint32_t max_connections, uint32_t ef_construction, uint32_t ef_search);
 
 /**
+ * Open or create a Chassis vector index with custom options and a distance metric
+ *
+ * # Arguments
+ *
+ * - `metric`: `0` for Euclidean (L2) distance, `1` for cosine distance (1 - cosine similarity).
+ *   A cosine index stores vectors scaled to unit length, rejects zero vectors, and reports
+ *   distances from 0 to 2. The metric is fixed when the index is created; reopening an existing
+ *   index with another one fails.
+ * - The other arguments are as for `chassis_open_with_options()`.
+ *
+ * # Safety
+ *
+ * Same safety requirements as `chassis_open()`
+ */
+struct ChassisIndex *chassis_open_with_metric(const char *path, uint32_t dimensions, uint32_t max_connections, uint32_t ef_construction, uint32_t ef_search, uint32_t metric);
+
+/**
  * Open an index to search it while a writer, possibly in another process, adds to it
  *
  * Takes no lock, so any number of readers can open the file next to one writer. Every search
@@ -415,6 +432,20 @@ int chassis_is_empty(const struct ChassisIndex *ptr);
  * - `ptr` must be non-NULL and valid
  */
 uint32_t chassis_dimensions(const struct ChassisIndex *ptr);
+
+/**
+ * Get the distance metric the index was created with
+ *
+ * # Returns
+ *
+ * - `0` for Euclidean, `1` for cosine, as for `chassis_open_with_metric()`
+ * - `-1` if `ptr` is NULL
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_metric(const struct ChassisIndex *ptr);
 
 /**
  * Get the last error message for the current thread

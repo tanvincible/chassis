@@ -10,6 +10,7 @@
 //! Readers in other processes map the file read-only and take a snapshot per query; a writer
 //! publishes what it adds since its last commit in the live page (ADR-0008, decision 5).
 
+use crate::distance::DistanceMetric;
 use crate::header::{FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES, REGIONS_START};
 use crate::hnsw::node::NodeRecordParams;
 use crate::legacy::{LegacyIndex, is_legacy};
@@ -110,7 +111,11 @@ impl Geometry {
     }
 
     /// The header of a new, empty file.
-    fn initial_header(dims: u32, params: NodeRecordParams) -> Result<FileHeader> {
+    fn initial_header(
+        dims: u32,
+        params: NodeRecordParams,
+        metric: DistanceMetric,
+    ) -> Result<FileHeader> {
         if !(1..=MAX_DIMENSIONS).contains(&dims) {
             bail!("Dimensions must be between 1 and {MAX_DIMENSIONS}, got {dims}");
         }
@@ -123,6 +128,7 @@ impl Geometry {
             m: params.m,
             m0: params.m0,
             max_layers: params.max_layers,
+            metric: u8::from(metric == DistanceMetric::Cosine),
             flags: 0,
             segment_base_log2: SEGMENT_BASE_LOG2,
             doubling_segments: 0,
@@ -331,11 +337,11 @@ impl Storage {
     /// - The file exists but has different dimensions
     /// - The file is corrupted
     pub fn open<P: AsRef<Path>>(path: P, dimensions: u32) -> Result<Self> {
-        Self::open_with(path, dimensions, NodeRecordParams::default())
+        Self::open_with(path, dimensions, NodeRecordParams::default(), DistanceMetric::Euclidean)
     }
 
-    /// Opens a Chassis index file, creating it with `params` if it is new. A v1 or v2 file is
-    /// migrated to v3 first.
+    /// Opens a Chassis index file, creating it with `params` and `metric` if it is new. A v1 or v2
+    /// file is migrated to v3 first.
     ///
     /// # Errors
     ///
@@ -344,12 +350,13 @@ impl Storage {
         path: P,
         dimensions: u32,
         params: NodeRecordParams,
+        metric: DistanceMetric,
     ) -> Result<Self> {
         let path = path.as_ref();
         let file = open_locked(path)?;
         let len = file.metadata()?.len();
         if len == 0 {
-            return Self::initialize(file, path, dimensions, params);
+            return Self::initialize(file, path, dimensions, params, metric);
         }
 
         let mut prefix = [0u8; 12];
@@ -371,7 +378,7 @@ impl Storage {
             && headers.bytes(LIVE, HEADER_STRIDE).iter().all(|&b| b == 0)
         {
             drop(headers);
-            return Self::initialize(file, path, dimensions, params);
+            return Self::initialize(file, path, dimensions, params, metric);
         }
         Self::load(file, headers, dimensions)
     }
@@ -409,8 +416,14 @@ impl Storage {
     }
 
     /// Writes the headers of a new, empty file.
-    fn initialize(file: File, path: &Path, dims: u32, params: NodeRecordParams) -> Result<Self> {
-        let header = Geometry::initial_header(dims, params)?;
+    fn initialize(
+        file: File,
+        path: &Path,
+        dims: u32,
+        params: NodeRecordParams,
+        metric: DistanceMetric,
+    ) -> Result<Self> {
+        let header = Geometry::initial_header(dims, params, metric)?;
         file.set_len(REGIONS_START)?;
         let headers = Region::map(&file, 0, REGIONS_START as usize, true)?;
         headers.store_words(0, &FileHeader { sequence: 1, ..header.clone() }.to_bytes());
@@ -661,7 +674,9 @@ impl Storage {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
             _ => {}
         }
-        let mut storage = Self::initialize(open_locked(&temp)?, &temp, dims, legacy.params)?;
+        let euclidean = DistanceMetric::Euclidean;
+        let mut storage =
+            Self::initialize(open_locked(&temp)?, &temp, dims, legacy.params, euclidean)?;
 
         let mut deleted = 0;
         let mut custom_ids = legacy.custom_ids;
@@ -711,7 +726,10 @@ impl Storage {
     /// This method does NOT guarantee durability. Call `commit()` to ensure
     /// data is written to disk.
     pub fn insert(&mut self, vector: &[f32]) -> Result<u64> {
-        self.append(self.count, vector)
+        match self.metric() {
+            DistanceMetric::Cosine => self.append(self.count, &crate::distance::unit(vector)?),
+            _ => self.append(self.count, vector),
+        }
     }
 
     /// Writes `id` and `vector` into the next slot; its graph record is written separately.
@@ -1066,6 +1084,11 @@ impl Storage {
         self.geometry.params
     }
 
+    /// The distance metric the file was created with.
+    pub fn metric(&self) -> DistanceMetric {
+        if self.state.metric == 1 { DistanceMetric::Cosine } else { DistanceMetric::Euclidean }
+    }
+
     /// Forgets slots written past `count`, so the next insert reuses them.
     pub(crate) fn truncate_logical(&mut self, count: u64) {
         self.count = self.count.min(count);
@@ -1268,7 +1291,8 @@ mod tests {
 
     #[test]
     fn test_locate_matches_capacity() {
-        let header = Geometry::initial_header(32, NodeRecordParams::default()).unwrap();
+        let params = NodeRecordParams::default();
+        let header = Geometry::initial_header(32, params, DistanceMetric::Euclidean).unwrap();
         let g = Geometry::new(&header).unwrap();
         let mut slot = 0;
         for k in 0..g.doubling_segments + 3 {

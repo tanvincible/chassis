@@ -40,7 +40,7 @@ index.flush()
 
 ## 3. Searching
 
-Search returns a list of `SearchResult` objects containing the `id` and `distance` (L2 Euclidean).
+Search returns a list of `SearchResult` objects containing the `id` and `distance`: Euclidean (L2) by default, or `1 - cosine similarity` for an index created with `IndexOptions(metric="cosine")`.
 
 ```python
 query_vec = np.random.rand(768).astype(np.float32)
