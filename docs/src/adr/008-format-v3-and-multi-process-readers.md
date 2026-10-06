@@ -299,7 +299,7 @@ As in SQLite's file header, there are two numbers:
 * **Read version.** The oldest reader that can read this file correctly. A release refuses a file
   whose read version is newer than it knows.
 * **Write version.** The oldest writer that may modify it. A release opens a newer-write-version
-  file read-only.
+  file only read-only, with `IndexReader`, ignoring header fields that follow the tables.
 
 v3 sets both to 3. A later feature that older readers can safely ignore, such as metadata they don't
 query, bumps only the write version, so older releases can still read those files.
@@ -309,7 +309,7 @@ version at 12–15, as little-endian u32, at these offsets forever. Every releas
 bytes 8–11 as its version and refuses anything above what it knows before writing: tested on
 2026-10-04 against the original code and the v2 branch, through `Storage::open`,
 `VectorIndex::open`, the C API and Python, 64 of 64 opens of v3-shaped files were refused and every
-file stayed byte-identical. A release checks both version numbers before the checksum, so a newer
+file stayed byte-identical. A release checks the read version before the checksum, so a newer
 header layout is reported as too new, not as corrupt.
 
 Releases up to 0.6.3 initialize any file shorter than 4,096 bytes. v3 creates a new file in place
@@ -376,14 +376,13 @@ On 2026-10-05. Built:
   heap is created yet; every slot's metadata reference is 0.
 * **Compact records (decision 3):** u32 neighbor ids; `M` from 2 to 32,767.
 * **Double-buffered header (decision 4):** xxh3-64 over the header's own bytes, which are 136 bytes
-  plus 8 per table page, not the whole 64 KiB copy.
+  plus 8 per table page, plus any fields a later write version appends, not the whole 64 KiB copy.
 * **Crash safety (decision 6):** the intent header, recovery, and a full slot header on every add.
   One addition: after a failed fsync, every later commit fails until the index is reopened, since
   the OS may already have dropped the dirty pages a retry would claim to commit.
-* **Versioning (decision 7)**, except that a newer write version is refused rather than opened
-  read-only.
+* **Versioning (decision 7).**
 * **Migration (decision 8)** on first open, with the inode re-check on Unix. The Windows path
-  (`MoveFileExW`) compiles but has not run.
+  (`MoveFileExW`) passes the migration tests on `windows-latest` in CI.
 * **Readers in other processes (decision 5):** `IndexReader` in Rust, `chassis_open_reader` in C and
   `read_only=True` in Python open the file read-only without a lock. Every search takes a snapshot
   as described above, copying header words atomically and re-reading a copy that fails its checksum
@@ -422,8 +421,8 @@ Results of "Before Accepting", measured on the same Apple M5 as the
      is why migration doesn't use it.
 
    Renaming the migrated file while this process still holds it open and mapped, as migration
-   does, works on NTFS: the migration tests pass on `windows-latest` in CI, as do the reader tests,
-   one with the writer in another process. Not tested: exFAT.
+   does, works on NTFS: the migration tests pass on `windows-latest` in CI, as do the 7 reader
+   tests that run there (one needs Unix), one with the writer in another process. Not tested: exFAT.
 2. **Search speed: passes on paired measurements.** Today's SIFT-1M and dbpedia graphs, converted,
    return byte-identical results (ids and distances) for every query at every ef from 10 to 512.
    `search.rs` and `distance.rs` were unchanged when this was measured, so each layout ran the same
