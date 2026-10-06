@@ -18,14 +18,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: 1.85
+          toolchain: 1.88
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: msrv-1.85
+          shared-key: msrv-1.88
 
       - name: Check build with MSRV
         run: cargo check --all-features
 
+      # compile_fail_tests compares rustc's error text, which changes between releases; the stable
+      # jobs run it.
       - name: Run tests with MSRV
-        run: cargo test --all-features
+        run: cargo test --all-features -- --skip compile_fail_tests

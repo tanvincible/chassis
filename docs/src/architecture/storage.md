@@ -7,8 +7,9 @@ protocol. The byte layout is in [File Format](./file-format.md).
 
 `Storage::open` and `VectorIndex::open`:
 
-1. Open or create the file, and take an exclusive lock on it (`flock` on Unix, `LockFileEx` on
-   Windows). On Unix they then check that the locked file is still the one at the path, since a
+1. Open or create the file, and take an exclusive lock on it: `flock` on Unix, and on Windows
+   `LockFileEx` on one byte at offset 2^62, since a lock on the whole file would also block
+   readers' `ReadFile`. On Unix they then check that the locked file is still the one at the path, since a
    migration may have replaced it in between.
 2. Initialize an empty file: header copies A and B, fsync, then fsync the directory so power loss
    can't take the new file with it.

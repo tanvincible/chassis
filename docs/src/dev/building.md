@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Rust 1.85 or later
+- Rust 1.88 or later
 - A C compiler (for some dependencies)
 - Git
 

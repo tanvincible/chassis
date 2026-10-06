@@ -29,7 +29,7 @@ Chassis is intentionally limited in scope to ensure correctness and performance.
 
 ## Requirements
 
-* Rust 1.85 or later
+* Rust 1.88 or later
 * A filesystem that supports memory mapping (Linux, macOS, Windows) and `fsync` for durability.
 
 ## License
