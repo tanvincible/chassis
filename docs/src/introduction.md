@@ -19,7 +19,7 @@ Chassis is intentionally limited in scope to ensure correctness and performance.
 
 * **A Database Server**: There is no network listener, SQL interface, or daemon.
 * **A Distributed System**: Replication and sharding are left to the application layer.
-* **A Metadata Store**: Chassis stores vectors and IDs only. You should map these IDs to your application data (JSON, text, etc.) using a separate store like SQLite.
+* **A Metadata Store**: Chassis stores vectors and IDs only. You should map these IDs to your application data (JSON, text, etc.) using a separate store like SQLite, and pass the ids it selects to `search_filtered` to search among them.
 
 ## Current Status
 

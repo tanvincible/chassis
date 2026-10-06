@@ -10,13 +10,14 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 * **One file, in-process**: Vectors and an HNSW graph live in a single memory-mapped file. There is no server. The file grows by appending regions, so nothing is copied or remapped as it grows. Format version 3; files from earlier releases are migrated on first open ([file format](docs/src/architecture/file-format.md)).
 * **Search**: Approximate nearest neighbor search with HNSW, by Euclidean (L2) or cosine distance, chosen when the index is created.
+* **Filtered search**: `search_filtered(query, k, |id| ...)` returns the nearest vectors whose ids pass a filter, such as the ids your own database allows (`allowed=` in Python, `chassis_search_filtered` in C). When walking the graph would cost more, as when few vectors match, it checks every vector instead and is exact ([ADR-0009](docs/src/adr/009-filtered-search.md)).
 * **Your ids and deletes**: `add_with_id(id, vector)` stores your own `u64` id, which search returns; `delete(id)` removes a vector. A delete and an add in the same `flush()` are all-or-nothing, so replacing a vector is safe ([ADR-0007](docs/src/adr/007-ids-and-deletes.md)).
 * **SIMD distance kernels**: AVX2 on x86_64 and NEON on aarch64, with a scalar fallback.
 * **Durability**: `flush()` fsyncs the data, then writes the other of two checksummed header copies. After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. Process kills are tested by [`crash_tests.rs`](chassis-core/tests/crash_tests.rs), and power loss is simulated by [`power_loss.rs`](chassis-core/src/power_loss.rs), where each disk sector keeps either its last synced or its latest contents; real hardware is not tested ([ADR-0008](docs/src/adr/008-format-v3-and-multi-process-readers.md), [ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
 * **Concurrency**: One writer per file, and any number of concurrent searches, from threads of the writer's process or from readers in other processes (`IndexReader`, `read_only=True` in Python, `chassis_open_reader` in C). Readers take no lock; each search sees the writer's newest `flush()` (a flush becomes visible to readers just before its final fsync, so one that then fails, or is lost to power loss, may already have been seen).
 * **Bindings**: A C ABI (`chassis-ffi`) that catches Rust panics at the boundary, and Python bindings (`pychassis/`, version tracks the Rust release, currently **v0.6.3**) with NumPy support. Build `chassis-ffi` (`cargo build --release -p chassis-ffi`), then run `pip install -e .` from `pychassis/`.
 
-Not supported yet: metadata, filtering, and reclaiming the space of deleted vectors.
+Not supported yet: storing metadata in the index, and reclaiming the space of deleted vectors.
 
 Performance numbers, the machine they were measured on and how to reproduce them are in [Performance](docs/src/architecture/performance.md).
 

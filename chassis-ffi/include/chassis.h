@@ -338,6 +338,29 @@ int chassis_delete(struct ChassisIndex *ptr, uint64_t id);
 size_t chassis_search(const struct ChassisIndex *ptr, const float *query, size_t len, size_t k, uint64_t *out_ids, float *out_dists);
 
 /**
+ * Search for the k nearest neighbors among the given ids
+ *
+ * # Arguments
+ *
+ * - `allowed_ids`: The ids results may have; ids not in the index are ignored. May be NULL when
+ *   `allowed_len` is 0, which matches nothing.
+ * - `allowed_len`: Number of ids in `allowed_ids`
+ * - The other arguments are as for `chassis_search()`.
+ *
+ * When walking the graph would cost more, as when few vectors match, the search checks every
+ * vector instead and returns the exact nearest.
+ *
+ * # Returns
+ *
+ * As for `chassis_search()`.
+ *
+ * # Safety
+ *
+ * As for `chassis_search()`, and `allowed_ids` must point to `allowed_len` valid u64 values.
+ */
+size_t chassis_search_filtered(const struct ChassisIndex *ptr, const float *query, size_t len, size_t k, const uint64_t *allowed_ids, size_t allowed_len, uint64_t *out_ids, float *out_dists);
+
+/**
  * Flush all changes to disk
  *
  * # Arguments
