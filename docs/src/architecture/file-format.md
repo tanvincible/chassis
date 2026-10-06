@@ -23,6 +23,7 @@ can be mapped on its own. The file only grows by appending a region, and never s
 ## Header
 
 Each copy is a header of `136 + 8 × (segment table pages + heap table pages)` bytes, little-endian.
+A later write version may add fields after the tables; the length covers them.
 The valid copy with the higher sequence number is current.
 
 | Offset | Size | Field | Description |
@@ -58,9 +59,10 @@ The valid copy with the higher sequence number is current.
 | 132 | 4 | Heap table pages | Number of heap table pages |
 | 136 | 8 each | Table page offsets | Segment table pages, then heap table pages |
 
-A release checks both version numbers before the checksum, so a newer layout is reported as too
-new, not as corrupt. Releases up to 0.6.3 read bytes 8–11 as their version and refuse anything
-above 2.
+A release checks the read version before the checksum, so a newer layout is reported as too new,
+not as corrupt. A newer write version only stops writers: `IndexReader` reads the file and ignores
+the bytes after the tables. Releases up to 0.6.3 read bytes 8–11 as their version and refuse
+anything above 2.
 
 ## Live Page
 

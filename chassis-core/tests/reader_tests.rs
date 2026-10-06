@@ -258,3 +258,38 @@ fn test_reader_adopts_a_header_copy_that_was_torn() {
     reader.refresh().unwrap();
     assert_eq!(reader.len(), 20);
 }
+
+/// ADR-0008: a later feature older readers can ignore bumps only the write version and may add
+/// header fields after the tables. This release must read such a file and refuse to write it.
+#[test]
+fn test_a_newer_write_version_is_read_only() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("newer.chassis");
+    let mut writer = VectorIndex::open(&path, DIMS, options()).unwrap();
+    for id in 0..20 {
+        writer.add(&vector(id)).unwrap();
+    }
+    writer.flush().unwrap();
+    drop(writer);
+
+    let mut bytes = std::fs::read(&path).unwrap();
+    for copy in [0, 64 * 1024] {
+        let header = &mut bytes[copy..copy + 64 * 1024];
+        let len = u32::from_le_bytes(header[32..36].try_into().unwrap()) as usize;
+        header[12..16].copy_from_slice(&4u32.to_le_bytes());
+        // Longer than any header this release writes.
+        let extended = len + 10_000;
+        header[len..extended].fill(0xab);
+        header[32..36].copy_from_slice(&(extended as u32).to_le_bytes());
+        header[16..24].fill(0);
+        let checksum = xxhash_rust::xxh3::xxh3_64(&header[..extended]);
+        header[16..24].copy_from_slice(&checksum.to_le_bytes());
+    }
+    std::fs::write(&path, bytes).unwrap();
+
+    let mut reader = IndexReader::open(&path, DIMS, options()).unwrap();
+    assert_eq!(reader.len(), 20);
+    assert_eq!(top(&mut reader, 7), 7);
+    let error = VectorIndex::open(&path, DIMS, options()).err().unwrap().to_string();
+    assert!(error.contains("newer"), "{error}");
+}

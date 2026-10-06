@@ -31,6 +31,8 @@ const FIXED_LEN: usize = 136;
 /// One header copy. Offsets are bytes, little-endian; see `docs/src/architecture/file-format.md`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileHeader {
+    /// As read; `to_bytes` always writes `VERSION`. Only a writer refuses a newer one.
+    pub write_version: u32,
     pub sequence: u64,
     pub dims: u32,
     pub m: u16,
@@ -112,9 +114,9 @@ impl FileHeader {
         b
     }
 
-    /// Decodes one copy: `Ok(None)` if it is torn or was never written, an error if a newer
-    /// release wrote it. Versions are checked before the checksum, so a newer layout is reported
-    /// as too new, not as corrupt.
+    /// Decodes one copy: `Ok(None)` if it is torn or was never written, an error if it needs a
+    /// newer release to read. The read version is checked before the checksum, so a newer layout
+    /// is reported as too new, not as corrupt. A newer write version is only recorded.
     pub fn from_bytes(copy: &[u8]) -> Result<Option<Self>> {
         if copy.len() < FIXED_LEN || copy[0..8] != *MAGIC {
             return Ok(None);
@@ -132,13 +134,6 @@ impl FileHeader {
         if read_version < 3 {
             return Ok(None);
         }
-        if write_version > VERSION {
-            bail!(
-                "File was written by a newer Chassis (format {write_version}); this release \
-                   can't modify it"
-            );
-        }
-
         let len = u32_at(32) as usize;
         if !(FIXED_LEN..=copy.len()).contains(&len) {
             return Ok(None);
@@ -150,9 +145,10 @@ impl FileHeader {
         }
 
         let (segment_pages, heap_pages) = (u32_at(128) as usize, u32_at(132) as usize);
+        // Bytes after the tables belong to a later write version; this release ignores them.
         if segment_pages > MAX_TABLE_PAGES
             || heap_pages > MAX_TABLE_PAGES
-            || len != FIXED_LEN + 8 * (segment_pages + heap_pages)
+            || len < FIXED_LEN + 8 * (segment_pages + heap_pages)
         {
             bail!("Corrupt file header: table page counts don't match its length");
         }
@@ -161,6 +157,7 @@ impl FileHeader {
             bail!("Unknown distance metric {} in file header", copy[45]);
         }
         Ok(Some(Self {
+            write_version,
             sequence: u64_at(24),
             dims: u32_at(36),
             m: u16_at(40),
@@ -208,6 +205,7 @@ mod tests {
 
     fn sample() -> FileHeader {
         FileHeader {
+            write_version: VERSION,
             sequence: 7,
             dims: 768,
             m: 16,
@@ -268,9 +266,20 @@ mod tests {
         assert_eq!(FileHeader::from_bytes(&bytes).unwrap(), None);
         bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
         assert!(FileHeader::from_bytes(&bytes).is_err());
-        bytes[8..12].copy_from_slice(&3u32.to_le_bytes());
+    }
+
+    #[test]
+    fn test_a_newer_write_version_with_more_fields_still_reads() {
+        let mut bytes = sample().to_bytes();
         bytes[12..16].copy_from_slice(&4u32.to_le_bytes());
-        assert!(FileHeader::from_bytes(&bytes).is_err());
+        bytes.extend_from_slice(&[0xab; 16]);
+        let len = bytes.len() as u32;
+        bytes[32..36].copy_from_slice(&len.to_le_bytes());
+        bytes[CHECKSUM].fill(0);
+        let checksum = xxh3_64(&bytes);
+        bytes[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
+        let header = FileHeader::from_bytes(&bytes).unwrap().unwrap();
+        assert_eq!(header, FileHeader { write_version: 4, ..sample() });
     }
 
     #[test]

@@ -123,6 +123,7 @@ impl Geometry {
             bail!("max_connections must be between 2 and 32,767");
         }
         let mut header = FileHeader {
+            write_version: crate::header::VERSION,
             sequence: 0,
             dims,
             m: params.m,
@@ -469,6 +470,13 @@ impl Storage {
         let a = FileHeader::from_bytes(headers.bytes(0, HEADER_STRIDE))?;
         let b = FileHeader::from_bytes(headers.bytes(HEADER_STRIDE, HEADER_STRIDE))?;
         let (copy, header) = FileHeader::newest(a, b)?;
+        if header.write_version > crate::header::VERSION {
+            bail!(
+                "File was written by a newer Chassis (format {}); this release can only read it, \
+                 with a reader (IndexReader, chassis_open_reader, or read_only=True in Python)",
+                header.write_version
+            );
+        }
         if header.dims != dims {
             bail!("Dimension mismatch: file has {}, requested {dims}", header.dims);
         }
@@ -1133,10 +1141,9 @@ const HEADER_WORDS: [usize; 4] = [16, 24, HEADER_STRIDE + 16, HEADER_STRIDE + 24
 /// is rewriting fails its checksum, so it is read again while it keeps changing, a bounded number
 /// of times; one that reads the same twice is torn.
 fn newest_header(headers: &Region) -> Result<(FileHeader, Option<[u64; 4]>)> {
-    const MAX_LEN: usize = 136 + 16 * MAX_TABLE_PAGES;
     let copy = |at: usize| -> Vec<u8> {
         let len = (headers.u64_at(at + 32).load(Ordering::Relaxed) as u32 as usize)
-            .clamp(136, MAX_LEN)
+            .clamp(136, HEADER_STRIDE)
             .next_multiple_of(8);
         let words = (0..len / 8).map(|i| headers.u64_at(at + 8 * i).load(Ordering::Relaxed));
         words.flat_map(u64::to_le_bytes).collect()
