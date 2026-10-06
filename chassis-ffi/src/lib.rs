@@ -23,22 +23,65 @@
 //! - Every function except `chassis_free` may be called from any thread on a shared handle.
 //!   Searches run concurrently. Adds, deletes and flushes take an internal write lock, so they run
 //!   one at a time and searches wait for them.
+//! - A handle from `chassis_open_reader` runs one search at a time; open one per thread to search
+//!   in parallel. Any number of readers, in any processes, can open the file a writer has open.
 //! - `chassis_free` must not race with any other call on the same handle.
 //! - Each thread has its own error message storage
 
-use chassis_core::{IndexOptions, VectorIndex};
+use chassis_core::{IndexOptions, IndexReader, SearchResult, VectorIndex};
 use libc::{c_char, c_float, c_int, size_t};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::slice;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Mutex, RwLock, RwLockWriteGuard};
 
 /// Internal state holder (not exposed to C)
 ///
-/// This holds the actual VectorIndex and is purely Rust-internal.
+/// This holds the actual index and is purely Rust-internal.
 struct ChassisIndexState {
-    inner: RwLock<VectorIndex>,
+    inner: Kind,
+}
+
+/// A handle opens an index to write it, or to read it while another process writes it.
+enum Kind {
+    Writer(RwLock<VectorIndex>),
+    Reader(Mutex<IndexReader>),
+}
+
+/// What searches and introspection need, from either kind of handle.
+trait Readable {
+    fn search(&mut self, query: &[f32], k: usize) -> anyhow::Result<Vec<SearchResult>>;
+    fn len(&mut self) -> u64;
+    fn dimensions(&self) -> u32;
+}
+
+impl Readable for &VectorIndex {
+    fn search(&mut self, query: &[f32], k: usize) -> anyhow::Result<Vec<SearchResult>> {
+        VectorIndex::search(self, query, k)
+    }
+    fn len(&mut self) -> u64 {
+        VectorIndex::len(self)
+    }
+    fn dimensions(&self) -> u32 {
+        VectorIndex::dimensions(self)
+    }
+}
+
+impl Readable for IndexReader {
+    fn search(&mut self, query: &[f32], k: usize) -> anyhow::Result<Vec<SearchResult>> {
+        IndexReader::search(self, query, k)
+    }
+    /// The writer's latest flush, not the last search's snapshot.
+    fn len(&mut self) -> u64 {
+        if let Err(e) = self.refresh() {
+            set_last_error(e);
+        }
+        IndexReader::len(self)
+    }
+    fn dimensions(&self) -> u32 {
+        IndexReader::dimensions(self)
+    }
 }
 
 /// Borrows the handle, or sets the last error if `ptr` is NULL.
@@ -60,14 +103,17 @@ unsafe fn state<'a>(ptr: *const ChassisIndex) -> Option<&'a ChassisIndexState> {
 
 const POISONED: &str = "Index is unusable after an earlier panic; reopen it";
 
-/// Locks the index for a search or other read, or sets the last error.
+/// Runs `f` on the index for a search or other read, or sets the last error.
 ///
 /// # Safety
 ///
 /// Same as `state`.
-unsafe fn read_index<'a>(ptr: *const ChassisIndex) -> Option<RwLockReadGuard<'a, VectorIndex>> {
-    let lock = unsafe { state(ptr) }?.inner.read();
-    lock.map_err(|_| set_last_error(POISONED)).ok()
+unsafe fn read<T>(ptr: *const ChassisIndex, f: impl FnOnce(&mut dyn Readable) -> T) -> Option<T> {
+    let result = match &unsafe { state(ptr) }?.inner {
+        Kind::Writer(lock) => lock.read().map(|index| f(&mut &*index)).map_err(|_| ()),
+        Kind::Reader(lock) => lock.lock().map(|mut reader| f(&mut *reader)).map_err(|_| ()),
+    };
+    result.map_err(|()| set_last_error(POISONED)).ok()
 }
 
 /// Locks the index for an add, delete or flush, or sets the last error.
@@ -76,8 +122,56 @@ unsafe fn read_index<'a>(ptr: *const ChassisIndex) -> Option<RwLockReadGuard<'a,
 ///
 /// Same as `state`.
 unsafe fn write_index<'a>(ptr: *const ChassisIndex) -> Option<RwLockWriteGuard<'a, VectorIndex>> {
-    let lock = unsafe { state(ptr) }?.inner.write();
-    lock.map_err(|_| set_last_error(POISONED)).ok()
+    match &unsafe { state(ptr) }?.inner {
+        Kind::Writer(lock) => lock.write().map_err(|_| set_last_error(POISONED)).ok(),
+        Kind::Reader(_) => {
+            set_last_error("Index was opened with chassis_open_reader, which is read-only");
+            None
+        }
+    }
+}
+
+/// Validates the arguments of an open call and opens the index, or sets the last error.
+///
+/// # Safety
+///
+/// `path` must be NULL or a NUL-terminated string.
+unsafe fn open_handle(
+    path: *const c_char,
+    dimensions: u32,
+    options: IndexOptions,
+    read_only: bool,
+) -> *mut ChassisIndex {
+    if path.is_null() {
+        set_last_error("Path cannot be NULL");
+        return ptr::null_mut();
+    }
+    if dimensions == 0 {
+        set_last_error("Dimensions must be > 0");
+        return ptr::null_mut();
+    }
+    // SAFETY: Caller guarantees path is valid C string
+    let c_path = unsafe { CStr::from_ptr(path) };
+    // STRICT UTF-8 CHECK: Do not use to_string_lossy()
+    let Ok(path_str) = c_path.to_str() else {
+        set_last_error("Path must be valid UTF-8");
+        return ptr::null_mut();
+    };
+    let inner = if read_only {
+        IndexReader::open(path_str, dimensions, options).map(|r| Kind::Reader(Mutex::new(r)))
+    } else {
+        VectorIndex::open(path_str, dimensions, options).map(|i| Kind::Writer(RwLock::new(i)))
+    };
+    match inner {
+        Ok(inner) => {
+            clear_last_error(); // Success - clear any previous errors
+            Box::into_raw(Box::new(ChassisIndexState { inner })) as *mut ChassisIndex
+        }
+        Err(e) => {
+            set_last_error(e);
+            ptr::null_mut()
+        }
+    }
 }
 
 /// Opaque handle to a Chassis index (C-compatible)
@@ -200,44 +294,8 @@ where
 /// - Caller must free the returned pointer with `chassis_free()`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_open(path: *const c_char, dimensions: u32) -> *mut ChassisIndex {
-    ffi_guard(|| {
-        if path.is_null() {
-            set_last_error("Path cannot be NULL");
-            return ptr::null_mut();
-        }
-
-        if dimensions == 0 {
-            set_last_error("Dimensions must be > 0");
-            return ptr::null_mut();
-        }
-
-        // SAFETY: Caller guarantees path is valid C string
-        let c_path = unsafe { CStr::from_ptr(path) };
-
-        // STRICT UTF-8 CHECK: Do not use to_string_lossy()
-        let path_str = match c_path.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error("Path must be valid UTF-8");
-                return ptr::null_mut();
-            }
-        };
-
-        let options = IndexOptions::default();
-
-        match VectorIndex::open(path_str, dimensions, options) {
-            Ok(index) => {
-                clear_last_error(); // Success - clear any previous errors
-                let state = Box::new(ChassisIndexState { inner: RwLock::new(index) });
-                Box::into_raw(state) as *mut ChassisIndex
-            }
-            Err(e) => {
-                set_last_error(e);
-                ptr::null_mut()
-            }
-        }
-    })
-    .unwrap_or(ptr::null_mut())
+    ffi_guard(|| unsafe { open_handle(path, dimensions, IndexOptions::default(), false) })
+        .unwrap_or(ptr::null_mut())
 }
 
 /// Open or create a Chassis vector index with custom options
@@ -273,50 +331,58 @@ pub unsafe extern "C" fn chassis_open_with_options(
     ef_search: u32,
 ) -> *mut ChassisIndex {
     ffi_guard(|| {
-        if path.is_null() {
-            set_last_error("Path cannot be NULL");
-            return ptr::null_mut();
-        }
-
-        if dimensions == 0 {
-            set_last_error("Dimensions must be > 0");
-            return ptr::null_mut();
-        }
-
         // Validate max_connections is u16
-        if max_connections > u16::MAX as u32 {
+        let Ok(max_connections) = u16::try_from(max_connections) else {
             set_last_error(format!("max_connections must be <= {}", u16::MAX));
             return ptr::null_mut();
-        }
-
-        // SAFETY: Caller guarantees path is valid C string
-        let c_path = unsafe { CStr::from_ptr(path) };
-
-        let path_str = match c_path.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_last_error("Path must be valid UTF-8");
-                return ptr::null_mut();
-            }
         };
-
         let options = IndexOptions {
-            max_connections: max_connections as u16,
+            max_connections,
             ef_construction: ef_construction as usize,
             ef_search: ef_search as usize,
         };
+        unsafe { open_handle(path, dimensions, options, false) }
+    })
+    .unwrap_or(ptr::null_mut())
+}
 
-        match VectorIndex::open(path_str, dimensions, options) {
-            Ok(index) => {
-                clear_last_error();
-                let state = Box::new(ChassisIndexState { inner: RwLock::new(index) });
-                Box::into_raw(state) as *mut ChassisIndex
-            }
-            Err(e) => {
-                set_last_error(e);
-                ptr::null_mut()
-            }
-        }
+/// Open an index to search it while a writer, possibly in another process, adds to it
+///
+/// Takes no lock, so any number of readers can open the file next to one writer. Every search
+/// first takes a new snapshot: it returns what the writer's last flush committed, and nothing that
+/// flush deleted. Adds, deletes and flushes on the handle fail. The file must already exist in the
+/// current format: open it once with `chassis_open` to create or migrate it.
+///
+/// # Arguments
+///
+/// - `path`: UTF-8 encoded path to the index file (must not be NULL)
+/// - `dimensions`: Number of dimensions per vector (must be > 0)
+/// - `max_connections`: The value the index was created with (16 by default)
+/// - `ef_search`: Search quality parameter
+///
+/// # Returns
+///
+/// - Non-NULL pointer on success; free it with `chassis_free()`
+/// - NULL on failure (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// Same safety requirements as `chassis_open()`
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_open_reader(
+    path: *const c_char,
+    dimensions: u32,
+    max_connections: u32,
+    ef_search: u32,
+) -> *mut ChassisIndex {
+    ffi_guard(|| {
+        let Ok(max_connections) = u16::try_from(max_connections) else {
+            set_last_error(format!("max_connections must be <= {}", u16::MAX));
+            return ptr::null_mut();
+        };
+        let options =
+            IndexOptions { max_connections, ef_search: ef_search as usize, ..Default::default() };
+        unsafe { open_handle(path, dimensions, options, true) }
     })
     .unwrap_or(ptr::null_mut())
 }
@@ -684,10 +750,26 @@ pub unsafe extern "C" fn chassis_search(
     out_dists: *mut c_float,
 ) -> size_t {
     ffi_guard(|| {
-        let Some(index) = (unsafe { read_index(ptr) }) else {
-            return 0;
-        };
+        unsafe { read(ptr, |index| search_into(index, query, len, k, out_ids, out_dists)) }
+            .unwrap_or(0)
+    })
+    .unwrap_or(0)
+}
 
+/// The body of `chassis_search`, once the index is locked.
+///
+/// # Safety
+///
+/// As for `chassis_search`.
+unsafe fn search_into(
+    index: &mut dyn Readable,
+    query: *const c_float,
+    len: size_t,
+    k: size_t,
+    out_ids: *mut u64,
+    out_dists: *mut c_float,
+) -> size_t {
+    {
         if query.is_null() || out_ids.is_null() || out_dists.is_null() {
             set_last_error("Null buffer pointers");
             return 0;
@@ -721,8 +803,7 @@ pub unsafe extern "C" fn chassis_search(
                 0
             }
         }
-    })
-    .unwrap_or(0)
+    }
 }
 
 /// Flush all changes to disk
@@ -806,14 +887,7 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
 /// - `ptr` must be non-NULL and valid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
-    ffi_guard(|| {
-        let Some(index) = (unsafe { read_index(ptr) }) else {
-            return 0;
-        };
-
-        index.len()
-    })
-    .unwrap_or(0)
+    ffi_guard(|| unsafe { read(ptr, |index| index.len()) }.unwrap_or(0)).unwrap_or(0)
 }
 
 /// Check if the index is empty
@@ -831,14 +905,8 @@ pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
 /// - `ptr` must be non-NULL and valid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_is_empty(ptr: *const ChassisIndex) -> c_int {
-    ffi_guard(|| {
-        let Some(index) = (unsafe { read_index(ptr) }) else {
-            return 0;
-        };
-
-        if index.is_empty() { 1 } else { 0 }
-    })
-    .unwrap_or(0)
+    ffi_guard(|| unsafe { read(ptr, |index| c_int::from(index.len() == 0)) }.unwrap_or(0))
+        .unwrap_or(0)
 }
 
 /// Get the dimensionality of vectors in the index
@@ -856,14 +924,7 @@ pub unsafe extern "C" fn chassis_is_empty(ptr: *const ChassisIndex) -> c_int {
 /// - `ptr` must be non-NULL and valid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
-    ffi_guard(|| {
-        let Some(index) = (unsafe { read_index(ptr) }) else {
-            return 0;
-        };
-
-        index.dimensions()
-    })
-    .unwrap_or(0)
+    ffi_guard(|| unsafe { read(ptr, |index| index.dimensions()) }.unwrap_or(0)).unwrap_or(0)
 }
 
 //
@@ -1007,6 +1068,36 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_reader_handle() {
+        let (_dir, path) = temp_index_path();
+        let writer = unsafe { chassis_open(path.as_ptr(), 8) };
+        let vec = [0.5f32; 8];
+        assert_eq!(unsafe { chassis_add_with_id(writer, 7, vec.as_ptr(), 8) }, 0);
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 8, 16, 50) };
+        assert!(!reader.is_null());
+        let (mut ids, mut dists) = ([0u64; 1], [0.0f32; 1]);
+        let found = unsafe {
+            chassis_search(reader, vec.as_ptr(), 8, 1, ids.as_mut_ptr(), dists.as_mut_ptr())
+        };
+        assert_eq!((found, ids[0]), (1, 7));
+        assert_eq!(unsafe { (chassis_len(reader), chassis_dimensions(reader)) }, (1, 8));
+
+        assert_eq!(unsafe { chassis_add(reader, vec.as_ptr(), 8) }, u64::MAX);
+        let error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
+        assert!(error.to_str().unwrap().contains("read-only"));
+
+        assert_eq!(unsafe { chassis_add_with_id(writer, 8, [0.9f32; 8].as_ptr(), 8) }, 0);
+        assert_eq!(unsafe { chassis_len(reader) }, 1);
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+        assert_eq!(unsafe { chassis_len(reader) }, 2);
+
+        unsafe { chassis_free(reader) };
+        unsafe { chassis_free(writer) };
+    }
+
+    #[test]
     fn test_ffi_concurrent_search_while_adding() {
         let (_dir, path) = temp_index_path();
         let ptr = unsafe { chassis_open(path.as_ptr(), 64) };
@@ -1036,7 +1127,7 @@ mod tests {
                     }
                 });
             }
-            // Past ~950 records the graph outgrows the file, so it is remapped under the searches.
+            // Past 1,024 records the file grows a second segment under the searches.
             for i in 0..1200 {
                 let v = [i as f32; 64];
                 let id = unsafe { chassis_add(handle as *mut ChassisIndex, v.as_ptr(), 64) };

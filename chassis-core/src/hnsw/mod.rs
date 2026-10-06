@@ -7,14 +7,10 @@ mod search;
 pub use builder::HnswBuilder;
 pub use graph::HnswGraph;
 
-#[cfg(any(test, feature = "internals"))]
-pub use graph::GraphHeader;
 pub use node::NodeRecordParams;
 
 #[cfg(any(test, feature = "internals"))]
-pub use node::{
-    INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, Offset, compute_node_offset,
-};
+pub use node::{INVALID_NODE_ID, Node, NodeHeader, NodeId, NodeRecord, Offset};
 pub use search::SearchResult;
 
 /// Select an HNSW layer from a uniform random sample using exponential decay.

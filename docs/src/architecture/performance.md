@@ -34,11 +34,10 @@ What these numbers do and don't show:
   code). On x86 the gap at 1,536 dims may close. usearch has ARM SIMD and was still slower here.
 * **Chassis searches warm memory-mapped pages.** The harness runs an untimed pass after each open; a
   cold first pass after opening was about half as fast on SIFT at ef 16.
-* **Chassis's file and memory are much larger** (peak memory about 4.2 GB against 0.8–0.9 GB on SIFT
-  and GloVe), from its fixed 2,192-byte node records. ADR-0008 proposes the fix.
-* **GloVe's build spent 568 of its 1,430 s in the kernel,** moving the graph within the file and
-  remapping it as it grows, which ADR-0008 also removes. Chassis's user-space CPU time there, 797 s,
-  was below hnswlib's 978 s.
+* **These Chassis rows are file format 2.** Its files and memory were much larger (peak memory about
+  4.2 GB against 0.8–0.9 GB on SIFT and GloVe), from fixed 2,192-byte node records, and GloVe's build
+  spent 568 of its 1,430 s in the kernel, moving the graph within the file and remapping it as it
+  grew. Format 3 removes both; see [Format 3](#format-3).
 * **Removing the 33-candidate cap made dbpedia's build 19% slower** (420 s against 352 s), in
   exchange for higher recall at every `ef`; on SIFT and the 20k example, build time didn't increase.
 
@@ -119,22 +118,42 @@ far below real search. Use `examples/recall.rs` for end-to-end numbers.
 
 ## Index Size
 
-Every node gets a fixed-size record: `16 + M0 * 8 + (max_layers - 1) * M * 8` bytes, which is 2,192
-bytes with the defaults (`M` 16, `M0` 32, `max_layers` 16). About 94% of nodes only use layer 0 (272
-bytes of it).
+Each slot takes a 24-byte slot header, its vector, and a level-0 record of `8 + 4 × M0` bytes (136
+with the defaults). The few nodes above layer 0 add `4 × M` bytes per extra layer in the upper heap,
+about 4 bytes per vector on average. For 1M vectors with 768 dimensions that is 3.07 GB of vectors
+and 0.16 GB of everything else.
 
-For 1M vectors with 768 dimensions:
+Segments double in size up to 256 MiB, so the file can be up to one segment larger than the data
+written. That unused end is never written; whether it stays sparse depends on the file system (on
+APFS, ranges above about 16 MiB did and smaller ones sometimes didn't; ext4 is untested). Nothing is
+ever copied to grow the file.
 
-- Vectors: 1M × 768 × 4 = 3.07 GB
-- Graph: 1M × 2,192 = 2.19 GB
-- Slack before the graph: 25% of the vector zone, at least 8 MiB
-- Growth headroom: up to 25% of the file
+## Format 3
 
-Measured through `VectorIndex::add`: 10,000 × 768 dims is a 64.4 MB file for 52.6 MB of vectors and
-graph; 100,000 × 128 dims is 290 MB for 270 MB. Slack that vectors have not reached yet usually
-holds an earlier copy of the graph, so it takes disk space. While the graph moves, the file briefly
-needs room for one more copy of the graph: about 1.9× the live data at 128 dimensions, 1.5× at 768
-and up.
+[ADR-0008](../adr/008-format-v3-and-multi-process-readers.md) "Implementation Status" has the full
+results. In short, on the same graphs converted from format 2:
+
+* **Search returns identical results,** ids and distances, for every query at every ef on SIFT-1M
+  and dbpedia, and is 1.5–12% faster (median paired ratio per ef), from smaller records and a
+  smaller working set. Re-measured after the reader changes to the search path: no slower.
+* **Files are 4.7× smaller on SIFT-1M** (713 MB against 3,379 MB) and 1.2× on dbpedia (821 MB
+  against 982 MB). Converting SIFT-1M took 9.4 s.
+* **Opening a 10M-slot file takes under 1 ms;** it only maps the file, so pages load on first
+  touch. An index with its own ids builds its id table on the first add or delete in each process:
+  at 10M ids, a median of 0.47 s with the file in the page cache and 0.91 s right after copying it,
+  on a machine with other load. Filling the hash table is over 90% of that.
+
+Built from scratch on format 3 (one thread, same settings as the table above, with other
+applications running, so build times are indicative):
+
+| Dataset | Build | In the kernel | Peak memory | File | Recall at ef 64 / 256 / 512 |
+|---------|-------|---------------|-------------|------|-----------------------------|
+| SIFT-1M | 527 s | 10.6 s | 1.09 GB | 713 MB | 0.968 / 0.998 / 0.999 |
+| dbpedia | 431 s | 6.4 s | 1.22 GB | 821 MB | 0.978 / 0.998 / 1.000 |
+
+Peak memory includes the training vectors the harness holds (0.51 GB for SIFT, 0.61 GB for
+dbpedia). Format 2 peaked at about 4.2 GB on SIFT, and GloVe's format 2 build spent 568 s in the
+kernel.
 
 ## Reproduce
 

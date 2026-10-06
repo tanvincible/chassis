@@ -350,11 +350,10 @@ fn test_truncated_graph_is_an_error() {
         index.flush().unwrap();
     }
 
-    // The graph offset is header bytes 40..48 (see file-format.md); cut inside the records.
-    let bytes = std::fs::read(temp_file.path()).unwrap();
-    let graph_start = u64::from_le_bytes(bytes[40..48].try_into().unwrap());
+    // Cut inside the last segment.
+    let len = std::fs::metadata(temp_file.path()).unwrap().len();
     let file = std::fs::OpenOptions::new().write(true).open(temp_file.path()).unwrap();
-    file.set_len(graph_start + 64 + 100).unwrap();
+    file.set_len(len - 1000).unwrap();
     assert!(VectorIndex::open(temp_file.path(), 64, IndexOptions::default()).is_err());
 }
 

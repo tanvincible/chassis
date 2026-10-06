@@ -78,6 +78,11 @@ class VectorIndex:
         Every method is safe from any thread. Searches run concurrently;
         add(), delete() and flush() run one at a time and searches wait for
         them. Don't call close() while other threads still use the index.
+        An index opened with read_only=True runs one search at a time.
+
+    Readers in other processes:
+        Any number of processes can open the file with read_only=True while
+        one process writes it. Each search sees the writer's last flush.
 
     Example:
         >>> index = VectorIndex("vectors.chassis", dimensions=128)
@@ -100,6 +105,7 @@ class VectorIndex:
         path: Union[str, Path],
         dimensions: int,
         options: Optional[IndexOptions] = None,
+        read_only: bool = False,
     ):
         """Open or create a vector index.
 
@@ -107,6 +113,9 @@ class VectorIndex:
             path: Path to the index file
             dimensions: Number of dimensions per vector
             options: Optional HNSW configuration. If None, uses defaults.
+            read_only: Open an existing index to search it while another
+                process writes it. Takes no lock; add(), delete() and
+                flush() raise ChassisError.
 
         Raises:
             InvalidPathError: If path is invalid or inaccessible
@@ -124,7 +133,14 @@ class VectorIndex:
         path_bytes = str(self._path).encode("utf-8")
 
         # Open index with options
-        if options is None:
+        if read_only:
+            ptr = _ffi._lib.chassis_open_reader(
+                path_bytes,
+                dimensions,
+                self._options.max_connections,
+                self._options.ef_search,
+            )
+        elif options is None:
             # Use default options
             ptr = _ffi._lib.chassis_open(path_bytes, dimensions)
         else:

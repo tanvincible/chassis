@@ -13,7 +13,9 @@ Chassis uses memory-mapped I/O (`mmap`) as its exclusive persistence mechanism, 
 - **OS-managed caching**: Delegates page management to the kernel's VMM
 - **Burst-friendly durability**: Memory-speed writes with async kernel flushes
 
-**Trade-off**: Requires `unsafe` Rust and careful lifetime management. File growth invalidates existing pointers.
+**Trade-off**: Requires `unsafe` Rust and careful lifetime management. Since file format 3 the file
+grows by appending regions that are each mapped once, so growth never invalidates a mapping
+([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md)).
 
 ### 2. Sequential Construction (ADR-0002)
 
@@ -26,7 +28,7 @@ Invariant: A node with ID N may only link to neighbors M where M < N
 **Benefits**:
 - Zero-check search path (no existence validation)
 - Crash-safe by design (no dangling forward pointers)
-- Deterministic O(1) addressing: `offset = base + (node_id × record_size)`
+- Deterministic O(1) addressing: a slot's segment and index follow from its number
 
 **Trade-off**: Limits parallel construction without a merge phase.
 
@@ -36,7 +38,8 @@ Chassis implements a **SWMR (Single-Writer, Multi-Reader)** model:
 
 - **Writers**: `&mut self` borrow, one writer at a time
 - **Readers**: Concurrent `&self` searches from many threads of the same process
-- **Other processes**: Kept out entirely by an exclusive file lock, readers included
+- **Other processes**: Writers are kept out by an exclusive file lock; any number of `IndexReader`s
+  search without a lock, each search on the writer's newest flush (ADR-0008, decision 5)
 
 **Benefits**:
 - Lock-free search (no mutex acquisition overhead)
@@ -60,10 +63,10 @@ Chassis implements a **SWMR (Single-Writer, Multi-Reader)** model:
 │                                                             │
 ├─────────────────────────────────────────────────────────────┤
 │              Memory-Mapped File (Single File)               │
-│  ┌────────────┬────────────┬──────────────────────────────┐ │
-│  │  Header    │  Vectors   │  Graph (Nodes + Adjacency)   │ │
-│  │  4KB       │  Dense     │  Fixed-size records          │ │
-│  └────────────┴────────────┴──────────────────────────────┘ │
+│  ┌────────────┬──────────────────────────┬────────────────┐ │
+│  │  Header    │  Segments: slot headers, │  Upper heap,   │ │
+│  │  A and B   │  vectors, level-0 lists  │  table pages   │ │
+│  └────────────┴──────────────────────────┴────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
               │
               ▼
@@ -81,17 +84,18 @@ Measured numbers, the machine they came from and how to reproduce them are in
 ## Component Responsibilities
 
 ### Orchestration Layer (`lib.rs`)
-- **`VectorIndex`**: The public facade. It manages the `Storage` and `HnswGraph` instances, ensuring that all operations follow the **Crash Consistency Protocol** (e.g., correct write ordering) and handling **Ghost Node Recovery** automatically on startup.
+- **`VectorIndex`**: The public facade. It manages the `Storage` and `HnswGraph` instances, ensuring that all operations follow the **Crash Consistency Protocol** (e.g., correct write ordering). Slots written after the last flush are reused by the next add.
 
 ### Storage Layer (`storage.rs`)
-- **File lifecycle**: Open, growth, exclusive locking
-- **Vector persistence**: Append-only insertion; the file grows 25% at a time
+- **File lifecycle**: Open, migration from formats 1 and 2, exclusive locking
+- **Slots**: Append-only; the file grows by appending segments and heap chunks, and committed
+  regions never move
 - **Zero-copy reads**: `get_vector_slice()` returns `&[f32]` backed by mmap
-- **Durability**: `commit()` performs msync + `fsync` (`F_FULLFSYNC` on macOS)
+- **Durability**: Two checksummed header copies; a commit fsyncs data, then writes the other copy
 
 ### HNSW Graph (`hnsw/graph.rs`)
-- **Topology management**: Node records, adjacency lists, graph header
-- **O(1) addressing**: Direct offset computation without hash maps
+- **Topology management**: Node records and adjacency lists, read and written through `Storage`
+- **O(1) addressing**: A slot's segment and index are computed, not looked up
 - **Persistence**: Write-ahead ordering (node → neighbors → header)
 - **Traversal**: Neighbor iteration reads the mmap directly via `neighbors_iter_from_mmap()`
 
@@ -101,9 +105,8 @@ Measured numbers, the machine they came from and how to reproduce them are in
 - **Optimization**: 4-way accumulator unrolling for pipeline saturation
 
 ### Node Layout (`hnsw/node.rs`)
-- **Fixed-size records**: Determined by `(M, M0, max_layers)` at index creation
-- **Direct addressing**: `offset = graph_start + (node_id × record_size)`
-- **Compact representation**: Unused neighbor slots filled with `INVALID_NODE_ID`
+- **In-memory records**: A node's id, layers and neighbor lists while it is linked
+- **Format 2 records**: The fixed-size byte layout of format 2, read only to migrate old files
 
 ### Linking (`hnsw/link.rs`)
 - **Bidirectional edges**: Forward (A→B) and backward (B→A) link maintenance
@@ -119,20 +122,19 @@ Measured numbers, the machine they came from and how to reproduce them are in
 
 1. **Node ID density**: IDs must be 0, 1, 2, ..., N without gaps
 2. **Forward links validity**: All neighbor IDs < current `node_count`
-3. **Mmap stability**: No references held across `ensure_capacity()` calls
+3. **Mmap stability**: Mappings never move; a reference into one lives as long as its borrow
 4. **Write ordering**: Node → backward links → header (crash safety)
 5. **Alignment**: All offsets and sizes are 8-byte aligned
 
 ## File Format
 
 ```text
-Offset          Content                 Size
+Offset          Content
 ─────────────────────────────────────────────────────────
-0               Storage Header          4KB (page-aligned)
-4096            Vector Data             count × dims × 4 bytes
-<vector_end>    [padding to 4KB]
-<graph_start>   Graph Header            64 bytes
-<graph_start>+64 Node Records           node_count × record_size
+0               Header copy A
+64 KiB          Header copy B
+128 KiB         Live page, for readers in other processes
+192 KiB         Regions: segments, heap chunks, table pages (64 KiB aligned)
 ```
 
 See [File Format](./file-format.md) for detailed layout specifications.
@@ -141,14 +143,16 @@ See [File Format](./file-format.md) for detailed layout specifications.
 
 Chassis guarantees structural integrity without Write-Ahead Logging (ADR-0005):
 
-1. **Ghost nodes**: Nodes written but not reachable (ID >= header.node_count) are safely ignored
+1. **Ghost nodes**: Slots written but not committed (slot >= header count) are ignored and reused
 2. **One-way edges**: Incomplete backward links are legal in HNSW and don't break search
-3. **Header authority**: `node_count` is the sole source of truth for valid data range
-4. **Stale backlinks**: Links to rolled-back nodes are skipped by search until their ID is reused
+3. **Header authority**: the header's slot count is what is committed; readers in other processes
+   route past it but never return a slot at or past it
+4. **Stale backlinks**: Links to rolled-back nodes are skipped by search until their slot is reused,
+   and linking skips a stale link on a layer the reusing node isn't on
 
 After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. Process kills are tested (`chassis-core/tests/crash_tests.rs`), and power loss is simulated (`chassis-core/src/power_loss.rs`), though not on real hardware.
 
-**Recovery**: Zero-cost. Opening the index after a crash requires no log replay or validation—just read the header and resume operations.
+**Recovery**: Opening the index after a crash reads the newest valid header copy. Only a crash during a flush with deletes leaves work: clearing that flush's delete marks, one pass over the slot headers.
 
 ## Design Trade-offs Summary
 
@@ -157,5 +161,5 @@ After a crash, reopening keeps every add and delete up to the last `flush()` and
 | Memory-mapping | ns-latency reads, instant startup | `unsafe` Rust, SIGBUS risk |
 | Sequential construction | Zero-check search, crash safety | No parallel building |
 | SWMR concurrency | Lock-free reads, no races | Serialized writes |
-| Fixed-size records | O(1) addressing, no pointers | Wasted space for low-layer nodes |
+| Level-0 records in slots, upper layers in a heap | Records 13× smaller than format 2's | One heap lookup for the few nodes above layer 0 |
 | Diversity heuristic | Better graph quality | O(N·M) pruning complexity |

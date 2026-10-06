@@ -155,8 +155,8 @@ fn bench_sequential_read(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_remap_overhead(c: &mut Criterion) {
-    let mut group = c.benchmark_group("remap_overhead");
+fn bench_growth(c: &mut Criterion) {
+    let mut group = c.benchmark_group("growth");
     group.sample_size(50);
 
     group.bench_function("grow_from_empty_to_1000", |b| {
@@ -183,7 +183,7 @@ criterion_group!(
     bench_hot_read,
     bench_cold_read,
     bench_sequential_read,
-    bench_remap_overhead
+    bench_growth
 );
 
 criterion_main!(benches);

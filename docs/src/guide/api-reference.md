@@ -101,6 +101,27 @@ let dim = index.dimensions();    // Vector size
 let empty = index.is_empty();    // True if count == 0
 ```
 
+### `IndexReader`
+
+Searches an index while a `VectorIndex` in another process writes it. It takes no lock, so any
+number of processes can open readers on one file next to its single writer
+([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md), decision 5).
+
+```rust
+use chassis_core::{IndexOptions, IndexReader};
+
+let mut reader = IndexReader::open("embeddings.chassis", 768, IndexOptions::default())?;
+let results = reader.search(&query, 10)?;
+```
+
+Every search first takes a new snapshot: it returns what the writer's newest `flush()` committed,
+and nothing that flush deleted, while routing through vectors added since, so a long unflushed batch
+costs readers little recall. A flush becomes visible just before its final fsync, so one that then
+fails, or is lost to power loss, may already have been seen. `len()` reports the last snapshot;
+`refresh()` takes a new one without searching, and `snapshot()` identifies it, for keying a cache.
+`search` takes `&mut self`: open one reader per thread. The file must exist in the current format;
+open it once with `VectorIndex::open` to create or migrate it.
+
 ## Configuration
 
 ### `IndexOptions`

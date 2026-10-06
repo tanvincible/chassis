@@ -37,7 +37,8 @@ index.flush()?;
 
 ## 3. Search
 
-Search is thread-safe and can run concurrently with other readers (but not writers).
+Search is thread-safe and can run concurrently with other searches (but not with writes). Other
+processes can search the same file with `IndexReader` while this one writes.
 
 ```rust
 let query = compute_embedding("Search query");

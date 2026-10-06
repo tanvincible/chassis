@@ -1,30 +1,18 @@
 use chassis_core::Storage;
-use chassis_core::{GraphHeader, HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
+use chassis_core::{HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
+use std::path::Path;
 use tempfile::NamedTempFile;
 
-const ONE_GIB: u64 = 1024 * 1024 * 1024;
+/// A graph whose file holds `n` vectors, so records can be written into slots `0..n`.
+fn graph_with_vectors(path: &Path, n: u64) -> HnswGraph {
+    let mut storage = Storage::open(path, 128).unwrap();
+    for i in 0..n {
+        storage.insert(&[i as f32; 128]).unwrap();
+    }
+    HnswGraph::open(storage, HnswParams::default()).unwrap()
+}
 
 // Header persistence
-
-#[test]
-fn test_graph_header_roundtrip() {
-    let params = NodeRecordParams::new(16, 32, 8);
-    let mut header = GraphHeader::new(params);
-    header.entry_point = 42;
-    header.max_layer = 5;
-    header.node_count = 100;
-
-    let bytes = header.to_bytes();
-    assert_eq!(bytes.len(), 64);
-
-    let restored = GraphHeader::from_bytes(&bytes).unwrap();
-    assert_eq!(restored.entry_point, 42);
-    assert_eq!(restored.max_layer, 5);
-    assert_eq!(restored.node_count, 100);
-    assert_eq!(restored.m, 16);
-    assert_eq!(restored.m0, 32);
-    assert_eq!(restored.max_layers, 8);
-}
 
 #[test]
 fn test_graph_header_survives_reopen() {
@@ -33,8 +21,7 @@ fn test_graph_header_survives_reopen() {
 
     // Create graph and insert some nodes
     {
-        let storage = Storage::open(path, 128).unwrap();
-        let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+        let mut graph = graph_with_vectors(path, 3);
 
         graph.insert(0, 0).unwrap();
         graph.insert(1, 1).unwrap();
@@ -57,20 +44,6 @@ fn test_graph_header_survives_reopen() {
     }
 }
 
-#[test]
-fn test_graph_header_magic_validation() {
-    let params = NodeRecordParams::new(16, 32, 8);
-    let header = GraphHeader::new(params);
-
-    assert!(header.is_valid());
-
-    let mut bytes = header.to_bytes();
-    bytes[0] = b'X'; // Corrupt magic
-
-    let corrupted = GraphHeader::from_bytes(&bytes).unwrap();
-    assert!(!corrupted.is_valid());
-}
-
 // Node record I/O
 
 #[test]
@@ -78,8 +51,7 @@ fn test_write_and_read_node_record() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    let mut graph = graph_with_vectors(path, 43);
 
     // Create a node record
     let params = NodeRecordParams::default();
@@ -106,19 +78,16 @@ fn test_node_record_addressing_formula() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    let mut graph = graph_with_vectors(path, 6);
 
     // Write a node first so we can test addressing
     let params = NodeRecordParams::default();
     let record = NodeRecord::new(5, 2, params);
     graph.write_node_record(&record).unwrap();
 
-    // Now we can successfully get bytes for node 5
-    let bytes_5 = graph.get_node_bytes(5);
-    assert!(bytes_5.is_ok());
-
-    assert!(graph.get_node_bytes(1_000_000).is_err());
+    // Slot 5 has a record; a slot past the last vector has nowhere to hold one
+    assert!(graph.read_node_record(5).is_ok());
+    assert!(graph.read_node_record(1_000_000).is_err());
 }
 
 #[test]
@@ -126,8 +95,7 @@ fn test_multiple_node_records() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    let mut graph = graph_with_vectors(path, 10);
 
     let params = NodeRecordParams::default();
 
@@ -154,8 +122,7 @@ fn test_node_record_update_in_place() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    let mut graph = graph_with_vectors(path, 6);
 
     let params = NodeRecordParams::default();
 
@@ -183,8 +150,7 @@ fn test_neighbors_iter_from_mmap() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    let mut graph = graph_with_vectors(path, 8);
 
     let params = NodeRecordParams::default();
     let mut record = NodeRecord::new(7, 3, params);
@@ -212,8 +178,7 @@ fn test_neighbors_iter_empty_layer() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    let mut graph = graph_with_vectors(path, 4);
 
     let params = NodeRecordParams::default();
     let record = NodeRecord::new(3, 2, params); // Empty neighbors
@@ -233,8 +198,7 @@ fn test_neighbors_iter_out_of_bounds_layer() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    let mut graph = graph_with_vectors(path, 5);
 
     let params = NodeRecordParams::default();
     let mut record = NodeRecord::new(4, 2, params); // Only 2 layers (0, 1)
@@ -342,10 +306,12 @@ fn test_node_record_with_partial_neighbors() {
         max_layers: 3,
     };
 
-    let storage = Storage::open(path, 128).unwrap();
-    let mut graph = HnswGraph::open(storage, custom_params).unwrap();
-
     let params = NodeRecordParams::new(4, 8, 3); // Matches custom_params
+    let mut storage = Storage::open_with(path, 128, params).unwrap();
+    for _ in 0..11 {
+        storage.insert(&[0.0; 128]).unwrap();
+    }
+    let mut graph = HnswGraph::open(storage, custom_params).unwrap();
     let mut record = NodeRecord::new(10, 3, params);
 
     // Fill layer 0 partially (max is 8, we add 5)
@@ -363,34 +329,6 @@ fn test_node_record_with_partial_neighbors() {
     assert_eq!(read_record.get_neighbors(0), vec![1, 2, 3, 4, 5]);
     assert_eq!(read_record.get_neighbors(1), vec![10, 11, 12, 13]);
     assert!(read_record.get_neighbors(2).is_empty());
-}
-
-#[test]
-fn test_legacy_graph_zone_compacts_on_open() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-    let params = HnswParams::default();
-    let record_params = params.to_record_params();
-
-    {
-        let mut storage = Storage::open(path, 128).unwrap();
-        let legacy_header = GraphHeader::new(record_params).to_bytes();
-        storage.ensure_graph_capacity(ONE_GIB as usize + legacy_header.len()).unwrap();
-        storage
-            .graph_zone_mut(ONE_GIB as usize, legacy_header.len())
-            .unwrap()
-            .copy_from_slice(&legacy_header);
-
-        assert!(std::fs::metadata(path).unwrap().len() >= ONE_GIB);
-    }
-
-    {
-        let storage = Storage::open(path, 128).unwrap();
-        let graph = HnswGraph::open(storage, params).unwrap();
-
-        assert_eq!(graph.node_count(), 0);
-        assert!(std::fs::metadata(path).unwrap().len() < ONE_GIB / 10);
-    }
 }
 
 #[test]

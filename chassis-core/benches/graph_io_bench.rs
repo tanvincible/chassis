@@ -3,9 +3,7 @@
 //! Focus: persistence overhead, mmap-based access, and allocation-free hot paths.
 
 use chassis_core::Storage;
-use chassis_core::{
-    HnswGraph, HnswParams, NodeId, NodeRecord, NodeRecordParams, compute_node_offset,
-};
+use chassis_core::{HnswGraph, HnswParams, NodeId, NodeRecord};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use tempfile::NamedTempFile;
@@ -71,35 +69,6 @@ fn create_test_graph_with_params(
     }
 
     (graph, temp_file)
-}
-
-// Graph header I/O (persistence overhead)
-
-fn bench_graph_header_read(c: &mut Criterion) {
-    let mut group = c.benchmark_group("graph_header");
-
-    let (graph, _temp_file) = create_test_graph(100, 128);
-
-    group.bench_function("read", |b| b.iter(|| black_box(graph.read_graph_header().unwrap())));
-
-    group.finish();
-}
-
-fn bench_graph_header_write(c: &mut Criterion) {
-    let mut group = c.benchmark_group("graph_header");
-
-    // This is safe because write_graph_header just updates the header in place
-    let (mut graph, _temp_file) = create_test_graph(10, 128);
-
-    group.bench_function("write", |b| {
-        b.iter(|| {
-            // Benchmark:  write header (overwrites same location each time)
-            let _: () = graph.write_graph_header().unwrap();
-            black_box(())
-        })
-    });
-
-    group.finish();
 }
 
 // Node record I/O (fixed-size mmap records)
@@ -226,54 +195,6 @@ fn bench_neighbors_from_mmap(c: &mut Criterion) {
     group.finish();
 }
 
-// Zero-copy access to node bytes
-
-fn bench_get_node_bytes(c: &mut Criterion) {
-    let mut group = c.benchmark_group("node_bytes");
-
-    let (graph, _temp_file) = create_test_graph(1000, 128);
-
-    group.bench_function("get_bytes", |b| {
-        let mut node_id = 0u64;
-        b.iter(|| {
-            let bytes = graph.get_node_bytes(node_id % 1000).unwrap();
-            node_id += 1;
-            black_box(bytes)
-        })
-    });
-
-    group.finish();
-}
-
-// O(1) node offset computation
-
-fn bench_offset_computation(c: &mut Criterion) {
-    let mut group = c.benchmark_group("offset");
-
-    let params = NodeRecordParams::default();
-    let record_size = params.record_size();
-    let graph_start = 8192u64; // 2 pages
-
-    group.bench_function("compute_single", |b| {
-        let mut node_id = 0u64;
-        b.iter(|| {
-            let offset = compute_node_offset(graph_start, node_id, record_size);
-            node_id = node_id.wrapping_add(1);
-            black_box(offset)
-        })
-    });
-
-    group.bench_function("compute_batch_1000", |b| {
-        b.iter(|| {
-            for node_id in 0..1000u64 {
-                black_box(compute_node_offset(graph_start, node_id, record_size));
-            }
-        })
-    });
-
-    group.finish();
-}
-
 // Search-like traversal (hot-path behavior)
 
 fn bench_search_pattern(c: &mut Criterion) {
@@ -307,20 +228,10 @@ fn bench_search_pattern(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(header_benches, bench_graph_header_read, bench_graph_header_write,);
-
 criterion_group!(node_record_benches, bench_node_record_read, bench_node_record_write,);
 
 criterion_group!(neighbor_benches, bench_neighbors_from_mmap,);
 
-criterion_group!(utility_benches, bench_get_node_bytes, bench_offset_computation,);
-
 criterion_group!(integration_benches, bench_search_pattern,);
 
-criterion_main!(
-    header_benches,
-    node_record_benches,
-    neighbor_benches,
-    utility_benches,
-    integration_benches,
-);
+criterion_main!(node_record_benches, neighbor_benches, integration_benches,);

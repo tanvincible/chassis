@@ -251,7 +251,7 @@ impl NodeRecordParams {
 /// No hash maps or indirection required.
 #[derive(Debug)]
 pub struct NodeRecord {
-    /// Position in the graph zone. Not stored on disk; reads and writes are addressed by it.
+    /// The slot this record belongs to. Not stored on disk; reads and writes are addressed by it.
     pub slot: NodeId,
 
     /// Node header
@@ -508,23 +508,6 @@ impl Node {
     }
 }
 
-/// Compute the offset of a node given its ID.
-///
-/// # Formula
-///
-/// ```text
-/// node_offset = graph_start + (node_id * record_size)
-/// ```
-#[inline]
-#[must_use]
-pub const fn compute_node_offset(
-    graph_start: Offset,
-    node_id: NodeId,
-    record_size: usize,
-) -> Offset {
-    graph_start + (node_id * record_size as u64)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,17 +713,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_node_offset() {
-        let graph_start: Offset = 8192; // 2 pages
-        let record_size = 656; // From earlier test
-
-        assert_eq!(compute_node_offset(graph_start, 0, record_size), 8192);
-        assert_eq!(compute_node_offset(graph_start, 1, record_size), 8192 + 656);
-        assert_eq!(compute_node_offset(graph_start, 2, record_size), 8192 + 1312);
-        assert_eq!(compute_node_offset(graph_start, 100, record_size), 8192 + 100 * 656);
-    }
-
-    #[test]
     fn test_node_header_deleted_flag() {
         let mut header = NodeHeader::new(0, 1);
         assert!(!header.is_deleted());
@@ -748,25 +720,6 @@ mod tests {
         header.deleted_epoch = 3;
         assert!(header.is_deleted());
         assert_eq!(std::mem::offset_of!(NodeHeader, deleted_epoch), 12);
-    }
-
-    #[test]
-    fn test_addressing_formula_consistency() {
-        // Verify that the addressing formula works for various node IDs
-        let params = NodeRecordParams::default();
-        let graph_start: Offset = 4096;
-        let record_size = params.record_size();
-
-        for node_id in [0, 1, 10, 100, 1000, 10000] {
-            let offset = compute_node_offset(graph_start, node_id, record_size);
-
-            // Verify the offset is what we expect
-            assert_eq!(offset, graph_start + (node_id * record_size as u64));
-
-            // Verify we can compute the node_id back from the offset
-            let computed_id = (offset - graph_start) / record_size as u64;
-            assert_eq!(computed_id, node_id);
-        }
     }
 
     #[test]

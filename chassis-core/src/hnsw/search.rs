@@ -166,7 +166,8 @@ impl HnswGraph {
         }
 
         // Search base layer with ef candidates
-        let skip_deleted = self.deleted_count > 0;
+        let skip_deleted =
+            self.deleted_count > 0 || self.view.is_some_and(|v| self.node_count > v.committed);
         let mut candidates = self.search_layer_filtered(query, current, ef, 0, skip_deleted)?;
 
         // Return top k

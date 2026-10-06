@@ -49,8 +49,10 @@ writes mmap pages back in any order; under power loss the fsyncs in `flush()` ar
 * **After Step A:** Node `A` exists on disk but has no incoming edges. It is technically "invisible" to search from the entry point, but the file is valid.
 * **During Step B:** Some neighbors point to `A`, others don't. This creates "one-way edges," which are valid in HNSW and do not break search.
 * **After a crash before `flush()`:** `node_count` rolls back but backlinks to `A` may survive. Search
-  skips them until the next insert reuses `A`'s ID; after that they are ordinary edges to the new node.
-  Edges pruned to make room for them stay lost.
+  skips them until the next insert reuses `A`'s slot; after that they are ordinary edges to the new
+  node. If the new node is on fewer layers than `A` was, a surviving link on a higher layer points at
+  a node not on that layer: search finds no neighbors there, and linking adds no backlink to it.
+  Edges pruned to make room for `A`'s backlinks stay lost.
 
 ## 3. Neighbor Selection (Diversity Heuristic)
 
