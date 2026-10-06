@@ -421,8 +421,9 @@ Results of "Before Accepting", measured on the same Apple M5 as the
      `std::fs::rename` replaced it in every case, under open handles and mapped views alike, which
      is why migration doesn't use it.
 
-   Not tested: exFAT, and renaming the migrated file while this process still holds it open and
-   mapped, as migration does.
+   Renaming the migrated file while this process still holds it open and mapped, as migration
+   does, works on NTFS: the migration tests pass on `windows-latest` in CI, as do the reader tests,
+   one with the writer in another process. Not tested: exFAT.
 2. **Search speed: passes on paired measurements.** Today's SIFT-1M and dbpedia graphs, converted,
    return byte-identical results (ids and distances) for every query at every ef from 10 to 512.
    `search.rs` and `distance.rs` were unchanged when this was measured, so each layout ran the same
