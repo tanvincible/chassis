@@ -14,7 +14,6 @@ use crate::header::{FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES, REGIONS_START};
 use crate::hnsw::node::NodeRecordParams;
 use crate::legacy::{LegacyIndex, is_legacy};
 use anyhow::{Context, Result, bail};
-use fs2::FileExt;
 use memmap2::{MmapOptions, MmapRaw};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -1073,15 +1072,6 @@ impl Storage {
     }
 }
 
-impl Drop for Storage {
-    fn drop(&mut self) {
-        // Explicitly unlock the file (happens automatically, but being explicit)
-        if self.writable {
-            let _ = self.file.unlock();
-        }
-    }
-}
-
 /// Writes `ids` into a list readers may be traversing. An id in both the old and the new list
 /// keeps its entry, so a reader never misses it; entries left empty are cleared last.
 fn store_list(list: &[AtomicU32], ids: &[u64]) {
@@ -1171,13 +1161,39 @@ fn open_locked(path: &Path) -> Result<File> {
             .with_context(|| format!("Failed to open chassis file: {}", path.display()))?;
 
         // CRITICAL: Exclusive file locking prevents concurrent access corruption
-        file.try_lock_exclusive().context("Chassis file is already open by another process")?;
+        lock_writer(&file).context("Chassis file is already open by another process")?;
         // A migration may have replaced the file between our open and our lock.
         if is_at(&file, path)? {
             return Ok(file);
         }
     }
     bail!("{} kept being replaced while opening it", path.display())
+}
+
+/// Takes the one writer's lock; closing the file releases it.
+#[cfg(not(windows))]
+fn lock_writer(file: &File) -> std::io::Result<()> {
+    fs2::FileExt::try_lock_exclusive(file)
+}
+
+/// On Windows a lock on the whole file would make readers' `ReadFile` fail, so the writer locks one
+/// byte at 2^62, which still overlaps the whole-range lock releases up to 0.6.3 take.
+#[cfg(windows)]
+fn lock_writer(file: &File) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
+    };
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+    // SAFETY: OVERLAPPED is plain data; zero is a valid value.
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    overlapped.Anonymous.Anonymous.OffsetHigh = 1 << 30; // byte 2^62
+    let flags = LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY;
+    // SAFETY: a valid handle, and the call completes before `overlapped` goes out of scope.
+    if unsafe { LockFileEx(file.as_raw_handle() as _, flags, 0, 1, 0, &mut overlapped) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

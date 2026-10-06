@@ -397,16 +397,32 @@ On 2026-10-05. Built:
   last read valid, and reads the file length only to map a new uncommitted region: about 60 ns when
   nothing changed, against about 1.2 µs (an `fstat`, two checksums, eight allocations).
 
-Not built yet: the single-byte Windows lock (the whole-file lock is still taken, so Windows readers
-are untested), the "superseded" flag and `st_nlink` reopen check (nothing replaces a v3 file by
+The writer takes the single-byte lock at 2^62 on Windows (decision 5) and `flock` elsewhere.
+
+Not built yet: the "superseded" flag and `st_nlink` reopen check (nothing replaces a v3 file by
 rename yet), lock-free reads within one process (the bindings keep their lock), allocating space
 before writing to it, an explicit `migrate()`, and `rebuild_graph()`.
 
 Results of "Before Accepting", measured on the same Apple M5 as the
 [Performance](../architecture/performance.md) page:
 
-1. **Windows:** a probe that runs every check in experiment 1 on `windows-latest` is written, on the
-   unpushed branch `probe/windows-mmap`. Not run.
+1. **Windows: passes on NTFS; exFAT and one migration step untested.** A probe on GitHub's
+   `windows-latest` (branch `probe/windows-mmap`, 2026-10-06), each check run against another
+   process:
+   * (a) extending a file another process has mapped works, both with `SetEndOfFile` and with
+     `WriteFile` past the end, and the other process can map the new range at a 64 KiB offset and
+     read it;
+   * (b) shrinking it fails with `ERROR_USER_MAPPED_FILE` (1224), as expected; v3 never shrinks;
+   * (c) under a whole-range lock, another process's `ReadFile` fails (error 33); under a one-byte
+     lock at 2^62 it works, and a whole-range lock request still conflicts with that byte, so
+     releases up to 0.6.3 stay excluded;
+   * (d) `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` replaces a file nothing holds, and fails
+     with access denied (5), leaving the original, while another process holds it open or mapped.
+     `std::fs::rename` replaced it in every case, under open handles and mapped views alike, which
+     is why migration doesn't use it.
+
+   Not tested: exFAT, and renaming the migrated file while this process still holds it open and
+   mapped, as migration does.
 2. **Search speed: passes on paired measurements.** Today's SIFT-1M and dbpedia graphs, converted,
    return byte-identical results (ids and distances) for every query at every ef from 10 to 512.
    `search.rs` and `distance.rs` were unchanged when this was measured, so each layout ran the same
