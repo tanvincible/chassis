@@ -113,6 +113,21 @@ ChassisIndex* chassis_open_with_options(
 ```
 Open with custom HNSW parameters.
 
+#### `chassis_open_reader`
+```c
+ChassisIndex* chassis_open_reader(
+    const char* path,
+    uint32_t dimensions,
+    uint32_t max_connections,
+    uint32_t ef_search
+);
+```
+Open an existing index to search it while a writer, possibly in another process, adds to it. Takes
+no lock, so any number of readers can open the file next to one writer. Each search sees the
+writer's newest flush, which becomes visible just before its final fsync; `chassis_len` takes a new
+snapshot first. Adds, deletes and flushes on the
+handle fail. A file in an older format must be opened once with `chassis_open` to migrate it.
+
 #### `chassis_free`
 ```c
 void chassis_free(ChassisIndex* index);
@@ -223,7 +238,8 @@ Every function except `chassis_free` is safe to call from any thread on the same
 `chassis_len`, `chassis_is_empty` and `chassis_dimensions` run concurrently. `chassis_add`,
 `chassis_add_with_id`, `chassis_add_batch`, `chassis_delete` and `chassis_flush` take the handle's
 write lock, so they run one at a time and searches wait for them. `chassis_free` must not race with
-any other call on the same handle.
+any other call on the same handle. A handle from `chassis_open_reader` runs one call at a time,
+introspection included; open one per thread to search in parallel.
 
 ### Concurrency Example
 

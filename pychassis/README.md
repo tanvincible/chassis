@@ -227,6 +227,12 @@ Every method is safe to call from any thread. Searches run concurrently (ctypes 
 during each call); `add()`, `delete()` and `flush()` take the index's write lock, so they run one
 at a time and searches wait for them. Don't call `close()` while other threads still use the index.
 
+Other processes can search the file while one process writes it: open it with
+`VectorIndex(path, dimensions, read_only=True)`. Such an index takes no lock, sees the writer's
+newest `flush()` on every search, runs one search at a time, and raises `ChassisError` on writes.
+A flush becomes visible just before its final fsync, so one that then fails, or is lost to power
+loss, may already have been seen.
+
 ```python
 from concurrent.futures import ThreadPoolExecutor
 

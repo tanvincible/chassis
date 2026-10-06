@@ -102,6 +102,15 @@ _lib.chassis_open_with_options.argtypes = [
 ]
 _lib.chassis_open_with_options.restype = ChassisIndexPtr
 
+# chassis_open_reader
+_lib.chassis_open_reader.argtypes = [
+    ctypes.c_char_p,  # path
+    ctypes.c_uint32,  # dimensions
+    ctypes.c_uint32,  # max_connections
+    ctypes.c_uint32,  # ef_search
+]
+_lib.chassis_open_reader.restype = ChassisIndexPtr
+
 # chassis_free
 _lib.chassis_free.argtypes = [ChassisIndexPtr]
 _lib.chassis_free.restype = None

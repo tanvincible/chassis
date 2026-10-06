@@ -115,9 +115,11 @@ back: edges pruned after the last flush to make room for backlinks stay lost, wh
 The same is expected after power loss, because `flush()` is the fsync barrier.
 
 Since 2026-10-05, `chassis-core/src/power_loss.rs` simulates power loss. At every fsync and between
-operations, each 512-byte sector of a crash image keeps either its durable or its current contents,
-and every image must reopen to exactly the last completed flush or the one in progress, then keep
-accepting writes. Today's code passes 248 such images. The simulator catches each of five protocol
-mutants: a missing fsync before the graph header, a missing fsync before a graph move switches, no
-dirty flag before delete marks, in-place overlapping graph moves, and recovery disabled. It does not
+operations, each 512-byte sector of a crash image keeps its durable or its current contents, and
+every image must reopen to exactly the last completed flush or the one in progress, then keep
+accepting writes. Against format 2 it passed 248 images and caught each of five protocol mutants: a
+missing fsync before the graph header, a missing fsync before a graph move switches, no dirty flag
+before delete marks, in-place overlapping graph moves, and recovery disabled. Format 3 replaced
+that code; the simulator's results for it, which also tear sectors and crash inside recovery, are in
+the [ADR-0008](008-format-v3-and-multi-process-readers.md) implementation status. It does not
 model a sector persisted at an intermediate version, and real hardware is not tested.

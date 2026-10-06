@@ -396,3 +396,31 @@ class TestIdsAndDelete:
         with VectorIndex(temp_index_path, dimensions=3) as index:
             assert len(index) == 1
             assert [r.id for r in index.search([1.0, 0.0, 0.0], k=2)] == [20]
+
+
+class TestReadOnly:
+    """An index opened read-only next to a writer."""
+
+    def test_reader_sees_flushed_writes(self, tmp_path):
+        path = tmp_path / "shared.chassis"
+        writer = VectorIndex(path, dimensions=3)
+        writer.add([1.0, 0.0, 0.0], id=10)
+        writer.flush()
+
+        reader = VectorIndex(path, dimensions=3, read_only=True)
+        assert reader.search([1.0, 0.0, 0.0], k=1)[0].id == 10
+        with pytest.raises(ChassisError, match="read-only"):
+            reader.add([0.0, 1.0, 0.0])
+
+        writer.add([0.0, 1.0, 0.0], id=11)
+        assert len(reader) == 1
+        writer.flush()
+        assert len(reader) == 2
+        assert reader.search([0.0, 1.0, 0.0], k=1)[0].id == 11
+        reader.close()
+        writer.close()
+
+    def test_reader_needs_an_existing_index(self, tmp_path):
+        with pytest.raises(ChassisError):
+            VectorIndex(tmp_path / "missing.chassis", dimensions=3, read_only=True)
+        assert not (tmp_path / "missing.chassis").exists()

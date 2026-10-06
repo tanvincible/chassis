@@ -12,6 +12,7 @@ crate-type = ["cdylib"]  # Create dynamic library for C FFI
 name = "chassis_ffi"
 
 [dependencies]
+anyhow = { workspace = true }
 chassis-core = { path = "../chassis-core" }
 libc = { workspace = true }
 

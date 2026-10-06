@@ -23,6 +23,7 @@ memmap2 = "0.9.9"
 rand = "0.9.3"
 tempfile = "3.24.0"
 trybuild = "1.0.114"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

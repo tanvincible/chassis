@@ -471,3 +471,28 @@ fn test_node_id_invariant_returns_error() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Node ID invariant violated"));
 }
+
+#[test]
+fn test_stale_upper_layer_link_to_a_reused_slot_is_skipped() {
+    let temp = NamedTempFile::new().unwrap();
+    {
+        let mut storage = Storage::open(temp.path(), 4).unwrap();
+        storage.insert(&[0.0; 4]).unwrap();
+        storage.insert(&[1.0; 4]).unwrap();
+        let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+        graph.link_node_bidirectional(0, 2, &[vec![], vec![]]).unwrap();
+        graph.commit().unwrap();
+        // Linked into node 0's layer-1 list, then lost to a crash before publishing.
+        graph.write_node_and_backlinks(1, 2, &[vec![0], vec![0]]).unwrap();
+    }
+
+    let mut storage = Storage::open(temp.path(), 4).unwrap();
+    storage.insert(&[1.0; 4]).unwrap();
+    storage.insert(&[2.0; 4]).unwrap();
+    let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
+    // Slot 1 is reused by a node on layer 0 only; node 0 still names it on layer 1.
+    graph.link_node_bidirectional(1, 1, &[vec![0]]).unwrap();
+    assert_eq!(graph.neighbors_iter_from_mmap(0, 1).unwrap().collect::<Vec<_>>(), vec![1]);
+    graph.link_node_bidirectional(2, 2, &[vec![0, 1], vec![1]]).unwrap();
+    assert_eq!(graph.read_node_record(1).unwrap().header.layer_count, 1);
+}

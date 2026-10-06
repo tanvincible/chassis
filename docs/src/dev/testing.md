@@ -68,11 +68,12 @@ Tests the memory-mapped storage engine:
 
 **File Growth**:
 - `test_storage_growth()`: Automatic file expansion
-- `test_remap_overhead()`: Performance of remapping
+- `growth` bench (`storage_bench`): growing an empty file to 1,000 vectors
 
 **Concurrency**:
 - `test_exclusive_lock()`: File locking
-- `test_concurrent_readers()`: Multi-reader support (if implemented)
+- `tests/reader_tests.rs`: readers in this and another process while a writer adds, deletes and
+  restarts
 
 ### Graph I/O Tests (`graph_io_tests.rs`)
 
@@ -228,11 +229,10 @@ fn test_neon_specific()              // aarch64 only
 
 ```rust
 #[test]
-fn test_header_size()               // Compile-time size check
-fn test_header_alignment()          // 4KB alignment
-fn test_new_header_is_valid()
-fn test_invalid_dimensions()
-fn test_invalid_magic()
+fn test_roundtrip()
+fn test_any_flipped_bit_invalidates_the_copy()
+fn test_newer_versions_are_errors_and_old_ones_are_not_v3()
+fn test_newest_copy()
 ```
 
 **Coverage**:

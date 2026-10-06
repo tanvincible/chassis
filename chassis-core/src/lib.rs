@@ -7,8 +7,9 @@
 //! # Features
 //!
 //! - On-disk storage using memory-mapped I/O
-//! - Page-aligned file format (4KB boundaries)
-//! - One writer, concurrent readers within a process; other processes are locked out
+//! - One file: two checksummed header copies, then append-only regions aligned to 64 KiB
+//! - One writer per file; concurrent searches from its threads and from `IndexReader`s in other
+//!   processes
 //! - Explicit durability control via flush()
 //! - Zero external dependencies (no daemons or services)
 //!
@@ -49,6 +50,7 @@
 pub mod distance;
 mod header;
 mod hnsw;
+mod legacy;
 mod storage;
 
 #[cfg(test)]
@@ -58,8 +60,8 @@ mod power_loss;
 pub use hnsw::*;
 
 pub use distance::{DistanceMetric, cosine_distance, euclidean_distance};
-pub use header::{HEADER_SIZE, Header, MAGIC, VERSION};
-pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, SearchResult};
+pub use header::{MAGIC, VERSION};
+pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
 pub use storage::Storage;
 
 use anyhow::Result;
@@ -103,7 +105,7 @@ pub struct VectorIndex {
     ml: f32,
 
     /// id → slot, built on first use once some id differs from its slot (ADR-0007)
-    ids: Option<HashMap<u64, u64>>,
+    ids: Option<IdMap>,
 
     /// One past the largest id ever stored, valid once `ids` is built
     next_id: u64,
@@ -118,12 +120,8 @@ impl VectorIndex {
     /// * `dims` - Number of dimensions per vector
     /// * `options` - Index configuration options
     ///
-    /// # Crash Consistency
-    ///
-    /// This method handles ghost nodes (vectors written but not indexed due to crash):
-    /// - If `storage.count() < graph.node_count()`: Returns error (corruption)
-    /// - If `storage.count() > graph.node_count()`: Ghost vectors are ignored
-    /// - If `storage.count() == graph.node_count()`: Success
+    /// A file in format v1 or v2 is migrated to v3 first (ADR-0008). After a crash, slots written
+    /// after the last flush are simply reused.
     ///
     /// # Errors
     ///
@@ -131,61 +129,20 @@ impl VectorIndex {
     /// - The file cannot be opened or created
     /// - The file is corrupted
     /// - Dimension mismatch with existing index
-    /// - Graph references non-existent vectors
+    /// - The file was created with a different `max_connections`
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
-        // Open storage
-        let storage = Storage::open(path, dims)?;
-
-        // Compute layer multiplier
-        let ml = 1.0 / (options.max_connections as f32).ln();
-
-        // Create HNSW params from options
-        let params = HnswParams {
-            max_connections: options.max_connections,
-            ef_construction: options.ef_construction,
-            ef_search: options.ef_search,
-            ml,
-            max_layers: 16, // Fixed for now
-        };
-
-        // Open graph
-        let mut graph = HnswGraph::open_no_reset(storage, params)?;
-
-        // Consistency check: Ghost node handling
-        let storage_count = graph.storage.count();
-        let graph_node_count = graph.node_count();
-
-        if storage_count < graph_node_count {
-            // Graph references vectors that don't exist = corruption
-            anyhow::bail!(
-                "Index corruption detected: graph has {} nodes but storage has only {} vectors",
-                graph_node_count,
-                storage_count
-            );
-        } else if storage_count > graph_node_count {
-            // GHOST NODE RECOVERY
-            // Storage is ahead of Graph (crash during write).
-            // We must rollback Storage to match Graph so the next insert
-            // reclaims the 'ghost' ID instead of appending after it.
-            graph.storage.truncate_logical(graph_node_count);
-        }
-
-        Ok(Self { graph, options, ml, ids: None, next_id: 0 })
+        let params = hnsw_params(&options);
+        let storage = Storage::open_with(path, dims, params.to_record_params())?;
+        let graph = HnswGraph::open_no_reset(storage, params)?;
+        Ok(Self { graph, ml: params.ml, options, ids: None, next_id: 0 })
     }
 
     /// Add a vector and return the id assigned to it: one past the largest id used so far.
     ///
     /// Ids are never reused by `add`, even after a delete. Use `add_with_id` to choose the id.
     ///
-    /// # Crash Consistency Protocol (ADR-005)
-    ///
-    /// This method follows a strict 3-phase protocol:
-    /// 1. **Persist Vector**: Write vector data to storage
-    /// 2. **Write Node**: Write HNSW node with links (invisible to readers)
-    /// 3. **Publish**: Update in-memory counters (visible to readers)
-    ///
-    /// If a crash occurs during step 2, we have a "ghost node" (vector without
-    /// graph entry). The next add() will reclaim this space.
+    /// The vector, its id and its graph record go into the next slot; the slot counts only once
+    /// linking finishes, so a failed or interrupted add leaves a slot the next add reuses.
     ///
     /// # Errors
     ///
@@ -255,17 +212,21 @@ impl VectorIndex {
     /// The id → slot table of live vectors, built by one scan of the graph on first use.
     // ponytail: O(n) scan once per process when custom ids are in use; persist the table if
     // open-to-first-write latency on large indexes matters.
-    fn ids(&mut self) -> Result<&mut HashMap<u64, u64>> {
+    fn ids(&mut self) -> Result<&mut IdMap> {
         if self.ids.is_none() {
-            let mut ids = HashMap::new();
+            let live = self.graph.node_count() - self.graph.deleted_count;
+            let mut pairs = Vec::with_capacity(live as usize);
             let mut next_id = 0;
             for slot in 0..self.graph.node_count() {
                 let id = self.graph.id_of(slot)?;
                 next_id = next_id.max(id + 1);
                 if !self.graph.is_deleted(slot)? {
-                    ids.insert(id, slot);
+                    pairs.push((id, slot));
                 }
             }
+            // Filling from a Vec keeps the loop small enough to overlap the table's cache misses.
+            let mut ids = IdMap::with_capacity_and_hasher(pairs.len(), IdHasher::default());
+            ids.extend(pairs);
             self.next_id = next_id;
             self.ids = Some(ids);
         }
@@ -279,11 +240,10 @@ impl VectorIndex {
             anyhow::bail!("Vector dimension mismatch: expected {}, got {}", dims, vector.len());
         }
 
-        // Relocate graph zone if the next vector append would overlap it
-        self.graph.prepare_for_vector_insert()?;
-
-        // STEP 1: Persist vector (reclaims ghost node space if any)
-        let new_id = self.graph.storage.insert(vector)?;
+        // STEP 1: Persist vector and id, reusing the slot of an add that failed part way
+        let slot = self.graph.node_count();
+        self.graph.storage.truncate_logical(slot);
+        let new_id = self.graph.storage.append(id, vector)?;
 
         // STEP 2: Determine layer for new node
         let layer = self.select_layer();
@@ -446,6 +406,131 @@ impl VectorIndex {
     }
 }
 
+type IdMap = HashMap<u64, u64, IdHasher>;
+
+/// Hashes an id with one 64×64→128-bit multiply folded to 64 bits, keyed per table: ids are
+/// integers, so SipHash's byte-stream work buys nothing here.
+#[derive(Clone, Copy)]
+struct IdHasher(u64);
+
+impl Default for IdHasher {
+    fn default() -> Self {
+        Self(rand::random())
+    }
+}
+
+impl std::hash::BuildHasher for IdHasher {
+    type Hasher = Self;
+    fn build_hasher(&self) -> Self {
+        *self
+    }
+}
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(word));
+        }
+    }
+    fn write_u64(&mut self, id: u64) {
+        let product = u128::from(id ^ self.0) * 0x9e37_79b9_7f4a_7c15;
+        self.0 = (product as u64) ^ ((product >> 64) as u64);
+    }
+}
+
+fn hnsw_params(options: &IndexOptions) -> HnswParams {
+    HnswParams {
+        max_connections: options.max_connections,
+        ef_construction: options.ef_construction,
+        ef_search: options.ef_search,
+        ml: 1.0 / f32::from(options.max_connections).ln(),
+        max_layers: 16, // Fixed for now
+    }
+}
+
+/// Searches an index while a `VectorIndex` in another process may be writing it (ADR-0008,
+/// decision 5). Any number of readers can open the same file; they take no lock.
+///
+/// Every search first takes a new snapshot: it returns vectors committed by the writer's last
+/// `flush()`, and none deleted by it, while routing through everything the writer has added since,
+/// so a long unflushed batch costs readers little recall.
+#[derive(Debug)]
+pub struct IndexReader {
+    graph: HnswGraph,
+    ef_search: usize,
+}
+
+impl IndexReader {
+    /// Opens `path` for searching.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is missing, uses file format 1 or 2 (open it once with
+    /// `VectorIndex::open` to migrate it), has other dimensions, was created with another
+    /// `max_connections`, or is corrupt.
+    pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
+        let storage = Storage::open_read_only(path, dims)?;
+        let graph = HnswGraph::reader(storage, hnsw_params(&options))?;
+        Ok(Self { graph, ef_search: options.ef_search })
+    }
+
+    /// Search for the `k` nearest committed vectors, by the ids given to `add`/`add_with_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query has other dimensions or the file is corrupt.
+    pub fn search(&mut self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
+        let dims = self.graph.storage.dimensions() as usize;
+        if query.len() != dims {
+            anyhow::bail!("Query dimension mismatch: expected {}, got {}", dims, query.len());
+        }
+        self.graph.refresh()?;
+        let mut results = self.graph.search(query, k, self.ef_search)?;
+        if self.graph.custom_ids {
+            for result in &mut results {
+                result.id = self.graph.id_of(result.id)?;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Get the dimensionality of vectors in this index
+    pub fn dimensions(&self) -> u32 {
+        self.graph.storage.dimensions()
+    }
+
+    /// Take a new snapshot without searching, so `len` reflects the writer's latest flush.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is corrupt.
+    pub fn refresh(&mut self) -> Result<()> {
+        self.graph.refresh()
+    }
+
+    /// Identifies the last snapshot: committed slots and the last delete flush. Two snapshots with
+    /// the same value have the same contents, so it can key a cache of search results, unless a
+    /// power loss discarded a flush readers had already seen.
+    pub fn snapshot(&self) -> (u64, u64) {
+        self.graph.view.map_or((0, 0), |view| (view.committed, view.epoch))
+    }
+
+    /// Live vectors as of the last snapshot, taken by `search` or `refresh`.
+    pub fn len(&self) -> u64 {
+        self.graph.view.map_or(0, |view| view.committed) - self.graph.deleted_count
+    }
+
+    /// Whether the last snapshot had no live vectors.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,10 +629,10 @@ mod tests {
             let params = HnswParams::default();
             let mut graph = HnswGraph::open(storage, params).unwrap();
 
-            // Insert vector into storage (creates ghost node)
+            // A vector written but never linked when the graph flushes (creates ghost node)
             let vector = vec![1.0; 128];
             graph.storage.insert(&vector).unwrap();
-            graph.storage.commit().unwrap();
+            graph.commit().unwrap();
 
             // Don't add to graph - this creates a ghost node
             assert_eq!(graph.storage.count(), 1);

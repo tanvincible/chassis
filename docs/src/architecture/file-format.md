@@ -1,156 +1,163 @@
 # File Format
 
-A Chassis file is a single memory-mapped file with a fixed header, dense vector
-data, and a relocatable HNSW graph zone. The vector and graph zones share one
-mmap so vector reads and neighbor iteration remain zero-copy.
+A Chassis file is one file in format version 3 ([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md)).
+It holds two header copies, then append-only **regions**: segments of slots, heap chunks of
+upper-layer neighbor lists, and table pages that list where the others start. Each region is
+mapped once, and committed bytes never move.
+
+Opening a version 1 or 2 file migrates it to version 3 (see [Migration](#migration)).
 
 ## Top-Level Layout
 
-| Region | Offset | Size |
-|--------|--------|------|
-| Header | `0` | `4096` bytes |
-| Vector zone | `HEADER_SIZE` | `count * dimensions * 4` bytes |
-| Slack / padding | End of vector zone | Variable, page-aligned |
-| Graph header | `graph_offset` from the header metadata | `64` bytes |
-| Node records | `graph_offset + 64` | `node_count * record_size` bytes |
+| Offset | Size | Contents |
+|--------|------|----------|
+| `0` | 64 KiB | Header copy A |
+| `64 KiB` | 64 KiB | Header copy B |
+| `128 KiB` | 64 KiB | Live page, for readers in other processes |
+| `192 KiB` | rest | Regions, in the order they were allocated |
 
-The graph zone is placed after the vector zone with slack of 25% of the vector
-zone (at least 8 MiB), so it moves O(log n) times as the index grows. Each move
-copies the zone, fsyncs, points `graph_offset` at the copy, fsyncs again, and
-trims the file to the new end. A copy never overwrites the copy the header points
-at: when the new range overlaps the old one, the zone is first moved past both,
-then to its target. That needs free disk for one extra copy of the graph while
-the move runs.
+The header copies sit 64 KiB apart so they never share a page. Every region starts at a multiple of
+64 KiB, the Windows mapping granularity and a multiple of every supported page size, so each one
+can be mapped on its own. The file only grows by appending a region, and never shrinks.
 
-## Header Structure
+## Header
 
-The header is exactly 4096 bytes and begins with the stable fields below.
+Each copy is a header of `136 + 8 × (segment table pages + heap table pages)` bytes, little-endian.
+The valid copy with the higher sequence number is current.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| 0 | 8 | Magic | `CHASSIS\0` identifies the file type |
-| 8 | 4 | Version | File format version, currently `2`. Every flush writes `2`; version `1` files open unchanged. Releases before 0.7 refuse version `2` |
-| 12 | 4 | Dimensions | Number of `f32` dimensions per vector |
-| 16 | 8 | Count | Number of logical vectors currently stored |
-| 24 | 4072 | Reserved | Extended layout metadata and future padding |
+| 0 | 8 | Magic | `CHASSIS\0` in every format version |
+| 8 | 4 | Read version | Oldest format a reader must understand: `3` |
+| 12 | 4 | Write version | Oldest format a writer must understand: `3` |
+| 16 | 8 | Checksum | xxh3-64 of the header's bytes with this field zeroed |
+| 24 | 8 | Sequence | Increases by one with every header written |
+| 32 | 4 | Length | Header length in bytes, table page lists included |
+| 36 | 4 | Dimensions | `f32` values per vector, 1 to 4096 |
+| 40 | 2 | M | Neighbors per upper-layer list |
+| 42 | 2 | M0 | Neighbors per layer-0 list |
+| 44 | 1 | Max layers | Layers a node can belong to |
+| 45 | 1 | Metric | `0`: Euclidean |
+| 46 | 1 | Flags | Bit 0: some id differs from its slot |
+| 47 | 1 | Table page log2 | Entries per table page, as a power of two |
+| 48 | 1 | Segment base log2 | Slots in the first segment, as a power of two |
+| 49 | 1 | Doubling segments | Segments that double in size before the size stays constant |
+| 50 | 1 | Heap base log2 | Bytes in the first heap chunk, as a power of two |
+| 51 | 1 | Doubling chunks | Heap chunks that double in size before the size stays constant |
+| 56 | 8 | Count | Committed slots |
+| 64 | 8 | Entry point | Slot of the graph's entry point, `u64::MAX` if empty |
+| 72 | 4 | Max layer | Highest layer in the graph |
+| 80 | 8 | Epoch | Last flush that committed deletes |
+| 88 | 8 | Pending epoch | Nonzero while a flush with deletes is in progress |
+| 96 | 8 | Deleted count | Deleted slots |
+| 104 | 8 | File end | End of the last committed region |
+| 112 | 4 | Segments | Committed segments |
+| 116 | 4 | Heap chunks | Committed heap chunks |
+| 120 | 8 | Heap used | Next free heap position, `chunk << 32 \| byte offset` |
+| 128 | 4 | Segment table pages | Number of segment table pages |
+| 132 | 4 | Heap table pages | Number of heap table pages |
+| 136 | 8 each | Table page offsets | Segment table pages, then heap table pages |
 
-The extended layout metadata stored at the start of `reserved` is:
+A release checks both version numbers before the checksum, so a newer layout is reported as too
+new, not as corrupt. Releases up to 0.6.3 read bytes 8–11 as their version and refuse anything
+above 2.
 
-| Reserved offset | Size | Field | Description |
-|-----------------|------|-------|-------------|
-| 0 | 8 | Layout magic | `CHLAYOUT` |
-| 8 | 4 | Layout version | Current extended layout version |
-| 16 | 8 | Graph offset | Byte offset of the graph header |
+## Live Page
 
-Files without this extended metadata are treated as legacy files. If a legacy
-HNSW graph header is found at the old 1 GiB graph offset, Chassis compacts it
-into the dynamic layout on open.
+What the writer has added since its last commit, so readers in other processes can route through
+it. Every field is a little-endian u64. The counts and the routing count are written with release
+ordering after the data, offsets and table entries they cover. It is not durable: a writer resets
+it to its committed state when it opens the file, and a reader that opens the file before any
+writer, after a crash, uses it as found, treating records it can't read past the committed count as
+having no neighbors.
 
-## Vector Zone
+| Offset in page | Field |
+|----------------|-------|
+| 0 | Routing count: slots whose nodes and backlinks are written |
+| 8, 16, 24, 32 | Segments, heap chunks, segment table pages, heap table pages |
+| 64 | Segment table page offsets (512 entries) |
+| 4,160 | Heap table page offsets (512 entries) |
 
-Vectors are stored sequentially after the header. Each vector is an array of
-`f32` values.
+## Segments
 
-For a file with dimension `d`, each vector occupies `d * 4` bytes. The vector at
-index `i` is located at:
+Segment `k` holds `2^(base + min(k, K))` slots, where `base` is the segment base log2 and `K` the
+number of doubling segments. A new file uses `base = 10` and the largest `K` whose segment fits in
+256 MiB, so every segment after the first `K` has the same `C = 2^(base + K)` slots. With
+`B = C − 2^base`, the slots in all doubling segments together:
 
-```text
-HEADER_SIZE + (i * dimensions * 4)
-```
+- slot `s < B` is in segment `⌊log2(s + 2^base)⌋ − base`, at index `s + 2^base − 2^⌊log2(s + 2^base)⌋`;
+- slot `s ≥ B` is in segment `K + ((s − B) >> log2 C)`, at index `(s − B) & (C − 1)`.
 
-There is no padding between vectors.
+A segment of `n` slots holds three arrays, each starting at a multiple of 64 bytes:
 
-## Graph Zone
+| Array | Per slot | Contents |
+|-------|----------|----------|
+| Slot headers | 24 bytes | id (u64), metadata reference (u64, `0`), deleted epoch (u64, `0` while live) |
+| Vectors | `dims × 4` bytes | the vector |
+| Level-0 records | `8 + 4 × M0` bytes | head (u64), then `M0` neighbor slots (u32) |
 
-The graph zone starts at `graph_offset` and begins with a 64-byte graph header.
+A record's head holds the node's layer count in bits 0–7 and, for a node above layer 0, the heap
+position of its upper-layer lists in bits 8–63. Empty neighbor entries are `0xFFFFFFFF`. A slot is
+deleted once its deleted epoch is nonzero; only a flush writes it.
 
-| Offset in graph header | Size | Field | Description |
-|------------------------|------|-------|-------------|
-| 0 | 4 | Magic | `HNSW` |
-| 4 | 4 | Version | Graph format version |
-| 8 | 8 | Entry point | Node ID of the current entry point, or `u64::MAX` |
-| 16 | 8 | Node count | Number of published graph nodes |
-| 24 | 4 | Max layer | Highest layer currently present |
-| 28 | 2 | M | Max upper-layer connections |
-| 30 | 2 | M0 | Max layer-0 connections |
-| 32 | 1 | Max layers | Fixed layer capacity for node records |
-| 33 | 1 | Flags | Bit 0: a flush with deletes is in progress. Bit 1: some id differs from its slot |
-| 36 | 4 | Epoch | Last flush that committed deletes |
-| 40 | 8 | Deleted count | Number of deleted nodes |
-| 48 | 16 | Reserved | Future padding |
+## Upper Heap
 
-Files written before version 2 have zeros at offsets 33–63, which read as no deletes and ids equal
-to slots.
+Heap chunk `c` is `2^(heap base + min(c, doubling chunks))` bytes; a new file uses 64 KiB chunks
+that double up to 256 MiB. A node on `L` layers has one heap entry of `L − 1` lists of `M` neighbor
+slots (u32), for layers 1 to `L − 1`. An entry never straddles two chunks.
 
-Node records are fixed-width for O(1) addressing by slot (insertion position):
+## Table Pages
 
-```text
-node_offset = graph_offset + 64 + (slot * record_size)
-```
+A table page holds `2^(table page log2)` file offsets (u64), 8,192 in a new file, so a page is
+64 KiB. Entry `i` of the segment table is in page `i >> log2`, at index `i & (2^log2 − 1)`; the heap
+table works the same way. The header lists up to 512 pages per table, enough for 2^32 slots.
 
-Each record starts with a 16-byte node header, followed by the neighbor slots:
+## Commits and Recovery
 
-| Offset in record | Size | Field | Description |
-|------------------|------|-------|-------------|
-| 0 | 8 | Id | The caller's id. Equal to the slot unless set with `add_with_id` |
-| 8 | 1 | Layer count | Layers the node belongs to |
-| 9 | 3 | Reserved | |
-| 12 | 4 | Deleted epoch | Flush epoch that deleted the node, `0` while live |
+A flush writes data in place, fsyncs, then writes the header copy that does not hold the newest
+header and fsyncs again. Slots, regions and table entries past the committed counts are leftovers
+of a flush that never committed: the next writer reuses them, and until then readers may route
+through them but never return them.
 
-A flush with deletes sets the dirty flag, writes the deleted epochs, then commits them with the
-graph header. Open clears any deleted epoch newer than the header's epoch while the dirty flag is
-set ([ADR-0007](../adr/007-ids-and-deletes.md)).
-
-For the default parameters (`M = 16`, `M0 = 32`, `max_layers = 16`):
-
-```text
-record_size = 16 + (32 * 8) + ((16 - 1) * 16 * 8) = 2192 bytes
-```
-
-The fixed record reserves neighbor slots for every configured layer. This keeps
-neighbor iteration zero-copy and allocation-free, at the cost of unused slots for
-nodes that only participate in lower layers.
+A flush with deletes commits through an *intent* header first: the previous commit with
+`pending epoch = epoch + 1`, then the delete marks, then the commit header in the other copy, with
+an fsync after each step. Opening a file whose newest header has a pending epoch clears every
+deleted epoch above the header's epoch in committed slots, then writes a clean header. Process
+kills are tested in `chassis-core/tests/crash_tests.rs`; power loss is simulated in
+`chassis-core/src/power_loss.rs`, including crashes inside recovery.
 
 ## Size Example
 
-For 10,000 vectors with 768 dimensions and default HNSW parameters:
+10,000 vectors with 768 dimensions and default parameters take 3,232 bytes per slot (24-byte slot
+header, 3,072-byte vector, 136-byte level-0 record) plus about 4 bytes of upper heap. The first four
+segments hold 1,024, 2,048, 4,096 and 8,192 slots, so the file is about 50 MB, of which 32 MB is
+written. The unused end of the last segment is never written, but whether the file system keeps it
+sparse varies: on APFS, a real build of this example allocated 33.6 MB, while unused ranges of
+16 MiB or less next to written data were sometimes allocated in full. ext4 is untested.
 
-| Region | Approximate size |
-|--------|------------------|
-| Header | 4 KiB |
-| Vectors | `10,000 * 768 * 4` = 30.7 MB |
-| Graph header | 64 bytes |
-| Node records | `10,000 * 2192` = 21.9 MB |
-| Slack / page padding | 25% of the vector zone (at least 8 MiB), plus up to 25% growth headroom |
+## Migration
 
-The expected logical size is under 100 MiB. Older files could report a logical
-size near 1 GiB because the graph zone was hard-coded to start at byte
-`1,073,741,824`, leaving a large unused gap between vectors and graph data.
-
-## Alignment
-
-The header is 4096 bytes, so vector data begins on a page boundary. File sizes
-and graph offsets are page-aligned.
+Opening a version 1 or 2 file converts it. Chassis takes the original's lock, writes the committed
+state into `<name>.migrating`: slots below the graph's node count, and only the delete marks the
+graph header committed. It converts neighbor ids from u64 to u32 and moves upper layers into the
+heap, then fsyncs the new file and renames it over the original, and fsyncs the directory. The
+graph is converted, not rebuilt, so search results are unchanged. A failed or interrupted migration
+leaves the original in place.
 
 ## Validation
 
-On open, Chassis checks:
+On open, Chassis checks that:
 
-- The main magic bytes match `CHASSIS\0`.
-- The main version is greater than 0 and less than or equal to the current version.
-- The dimensions are greater than 0 and less than or equal to 4096.
-- The file size is at least `HEADER_SIZE` bytes.
-- If a graph header exists, its magic, version, and record parameters match the requested index options.
-- The file is long enough to hold every node record the graph header counts.
-- `VectorIndex::open` only: if vectors are stored, a graph header exists. A new index fsyncs its
-  graph header before the first vector, so an all-zero header over stored vectors means a truncated
-  or corrupted file, or one written with `Storage` alone.
+- one header copy has the magic, versions it understands and a valid checksum; two valid copies
+  with the same sequence number are corruption;
+- the dimensions match, and the graph parameters and geometry are possible;
+- the counts fit the tables, and every committed region lies inside the file;
+- `VectorIndex::open` only: the graph parameters match the requested `max_connections`, and a file
+  with vectors has a graph.
 
-If any check fails, the file is considered corrupted and open returns an error. A check that fails
-never modifies the stored vectors.
+A failed check returns an error and never modifies the file.
 
-## Future Changes
+## Stability
 
-The file format is not stable. Breaking changes may occur before version 1.0.
-When the format stabilizes, the version fields will be used to detect
-incompatible files.
+Format version 3 is the format ADR-0008 proposes to freeze. Until that ADR is accepted, it may
+still change.

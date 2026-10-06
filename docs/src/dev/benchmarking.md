@@ -113,15 +113,16 @@ sequential_read/read_1000_sequential
 
 **What it tests**: Cache locality, prefetcher effectiveness, kernel page-in latency.
 
-#### Remap Overhead
+#### Growth
 
 ```rust
-remap_overhead/grow_from_empty_to_1000
+growth/grow_from_empty_to_1000
 ```
 
-Measures file growth and remapping cost.
+Measures growing a file from empty to 1,000 vectors and committing it.
 
-**Result**: ~5.9 ms total for 1000 vectors
+**Result**: ~5.9 ms total for 1000 vectors, measured with file format 2, which remapped the file to
+grow it. Format 3 appends segments instead; not re-measured.
 
 **What it tests**: `truncate() + mmap()` overhead.
 

@@ -1,4 +1,4 @@
-use chassis_core::node::{Node, NodeRecord, NodeRecordParams, compute_node_offset};
+use chassis_core::node::{Node, NodeRecord, NodeRecordParams};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
@@ -16,24 +16,6 @@ fn bench_record_size_calculation(c: &mut Criterion) {
             },
         );
     }
-
-    group.finish();
-}
-
-fn bench_node_offset_computation(c: &mut Criterion) {
-    let mut group = c.benchmark_group("node_offset");
-
-    let params = NodeRecordParams::default();
-    let record_size = params.record_size();
-    let graph_start = 4096u64;
-
-    group.bench_function("compute_offset", |b| {
-        b.iter(|| {
-            for node_id in 0..1000 {
-                black_box(compute_node_offset(graph_start, node_id, record_size));
-            }
-        });
-    });
 
     group.finish();
 }
@@ -132,7 +114,6 @@ fn bench_node_conversion(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_record_size_calculation,
-    bench_node_offset_computation,
     bench_record_serialization,
     bench_neighbor_access,
     bench_node_conversion,

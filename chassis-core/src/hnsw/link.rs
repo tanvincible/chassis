@@ -146,8 +146,9 @@ impl HnswGraph {
             );
         }
 
-        // STEP C: Update in-memory counters
+        // STEP C: Update in-memory counters, and let readers in other processes route through it
         self.node_count += 1;
+        self.storage.publish_routing(self.node_count);
 
         // Update entry point and max layer if this is the highest layer node
         if self.entry_point.is_none() || layer_count - 1 > self.max_layer {
@@ -184,10 +185,15 @@ impl HnswGraph {
         new_node: NodeId,
         layer: usize,
     ) -> Result<()> {
-        let mut record = self.read_node_record(neighbor_id)?;
+        // A stale list can name a slot a crash rolled back and an add reused for a lower node.
+        if layer >= self.storage.layer_count(neighbor_id)? {
+            return Ok(());
+        }
         // Ids at or past node_count point at nodes a crash rolled back; their vectors are gone.
-        let mut candidates: Vec<NodeId> =
-            record.get_neighbors(layer).into_iter().filter(|&id| id < self.node_count).collect();
+        let mut candidates: Vec<NodeId> = self
+            .neighbors_iter_from_mmap(neighbor_id, layer)?
+            .filter(|&id| id < self.node_count)
+            .collect();
 
         // Duplicate check (idempotency)
         if candidates.contains(&new_node) {
@@ -203,8 +209,7 @@ impl HnswGraph {
             Some(new_node), // Prioritize the new node for connectivity
         )?;
 
-        record.set_neighbors(layer, &selected);
-        self.update_node_record(&record)
+        self.storage.write_neighbors(neighbor_id, layer, &selected)
     }
 
     /// Select diverse neighbors using HNSW Heuristic 2.
@@ -376,5 +381,17 @@ mod tests {
 
         // Priority node should be included if it's close enough
         // (exact behavior depends on vector distances)
+    }
+
+    #[test]
+    fn test_readers_route_through_a_node_only_once_it_is_published() {
+        let (mut graph, temp) = create_test_graph(128);
+        let mut reader = Storage::open_read_only(temp.path(), 128).unwrap();
+        graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
+        reader.refresh().unwrap();
+        assert_eq!(reader.count(), 0, "routing published before the node");
+        graph.publish_node(0, 1).unwrap();
+        reader.refresh().unwrap();
+        assert_eq!(reader.count(), 1);
     }
 }

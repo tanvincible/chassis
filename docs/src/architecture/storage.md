@@ -1,39 +1,45 @@
 # Storage Layer
 
-The storage layer manages the lifecycle of a Chassis file, including creation, validation, growth, and durability.
+The storage layer (`storage.rs`) owns the index file: its lock, its regions, and the commit
+protocol. The byte layout is in [File Format](./file-format.md).
 
 ## Opening a File
 
-When you call `Storage::open`, the following steps occur:
+`Storage::open` and `VectorIndex::open`:
 
-1. Open or create the file with read and write permissions
-2. Acquire an exclusive lock on the file using `flock` (Linux/macOS) or equivalent
-3. If the file is new or empty, initialize it with a header
-4. Map the file into memory using `mmap`
-5. Validate the header magic bytes, version, and dimensions
-6. Return a `Storage` handle or an error if validation fails
+1. Open or create the file, and take an exclusive lock on it (`flock` on Unix, `LockFileEx` on
+   Windows). On Unix they then check that the locked file is still the one at the path, since a
+   migration may have replaced it in between.
+2. Initialize an empty file: header copies A and B, fsync, then fsync the directory so power loss
+   can't take the new file with it.
+3. Migrate a version 1 or 2 file to version 3.
+4. Read both header copies, take the newest valid one, map every committed region, and run recovery
+   if a flush with deletes was interrupted.
 
-## File Growth
+## Growth
 
-The file grows as needed to accommodate new vectors. Growth happens in the `ensure_capacity` method, which is called before each insert.
-
-The file grows by 25% at a time, rounded to a page, so a growing index remaps O(log n) times. Growing
-one page at a time remapped on every other insert.
-
-When the file grows, the existing `mmap` is unmapped and a new one is created. All pointers into the old mapping become invalid. This is why `get_vector` returns an owned `Vec<f32>` instead of a reference.
+Slots fill segments; when a slot needs a segment that doesn't exist yet, the next region is
+appended at the header's file end and mapped. Existing mappings never change, so a reference into
+the file stays valid while the index grows, and nothing is ever copied or remapped. Regions past
+the committed file end were left by a flush that never committed, and are reused.
 
 ## Durability
 
-Inserts are not durable by default. They write to the memory-mapped region, which the OS flushes to disk at its discretion.
-
-`commit` calls `mmap.flush()` (msync) and then `file.sync_all()`, which is `fsync` on Linux,
-`fcntl(F_FULLFSYNC)` on macOS and `FlushFileBuffers` on Windows. Writes made after the last commit
-can reach disk in any order.
+Writes are not durable until a commit. A commit calls `msync` on every mapped region, then
+`sync_all` (`fsync` on Linux, `fcntl(F_FULLFSYNC)` on macOS, `FlushFileBuffers` on Windows), then
+writes the header copy that does not hold the newest header, and syncs again. If any of those
+fails, the storage refuses every later commit: after a failed fsync the OS may already have dropped
+the dirty pages, so a retry that succeeds would commit data that is gone. Reopen the index instead.
 
 ## Concurrency
 
-The current implementation does not support concurrent access. Only one process can hold the file lock at a time.
+One writer at a time: a second writer's `open` of a locked file returns an error immediately. It
+does not block or retry. The lock is released when the `Storage` is dropped.
 
-If a second process tries to open the file, `Storage::open` returns an error immediately. It does not block or retry.
-
-When the `Storage` object is dropped, the lock is released automatically.
+Readers (`Storage::open_read_only`, behind `IndexReader`) take no lock and map the file read-only.
+Before every search a reader takes a snapshot: it copies both header copies a word at a time,
+keeps the newest valid one (never an older one than it already used), maps any region the header
+or the live page shows, and routes through slots up to the live page's routing count. Search
+returns only slots the header commits and no flush up to its epoch deleted. The writer stores
+neighbor lists, delete marks, headers and the live page as atomic words, and rewrites a neighbor
+list in place so that an entry in both the old and the new list keeps its slot.

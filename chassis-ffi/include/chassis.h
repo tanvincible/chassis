@@ -100,6 +100,32 @@ struct ChassisIndex *chassis_open(const char *path, uint32_t dimensions);
 struct ChassisIndex *chassis_open_with_options(const char *path, uint32_t dimensions, uint32_t max_connections, uint32_t ef_construction, uint32_t ef_search);
 
 /**
+ * Open an index to search it while a writer, possibly in another process, adds to it
+ *
+ * Takes no lock, so any number of readers can open the file next to one writer. Every search
+ * first takes a new snapshot: it returns what the writer's last flush committed, and nothing that
+ * flush deleted. Adds, deletes and flushes on the handle fail. The file must already exist in the
+ * current format: open it once with `chassis_open` to create or migrate it.
+ *
+ * # Arguments
+ *
+ * - `path`: UTF-8 encoded path to the index file (must not be NULL)
+ * - `dimensions`: Number of dimensions per vector (must be > 0)
+ * - `max_connections`: The value the index was created with (16 by default)
+ * - `ef_search`: Search quality parameter
+ *
+ * # Returns
+ *
+ * - Non-NULL pointer on success; free it with `chassis_free()`
+ * - NULL on failure (check `chassis_last_error_message()`)
+ *
+ * # Safety
+ *
+ * Same safety requirements as `chassis_open()`
+ */
+struct ChassisIndex *chassis_open_reader(const char *path, uint32_t dimensions, uint32_t max_connections, uint32_t ef_search);
+
+/**
  * Free a Chassis index and release all resources
  *
  * # Arguments

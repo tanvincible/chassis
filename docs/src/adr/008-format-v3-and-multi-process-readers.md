@@ -1,7 +1,7 @@
 # ADR-0008: File Format v3 and Multi-Process Readers
 
 **Date:** 2026-10-04 **Status:** Proposed. Accept only after the experiments in "Before Accepting"
-pass.
+pass. Implemented on 2026-10-05, readers in other processes included; see "Implementation Status".
 
 ## Summary
 
@@ -14,7 +14,9 @@ stable. This ADR proposes one last breaking change, file format v3, designed so 
    relocation and the pointer invalidation that comes with remapping disappear. Operations that
    replace the graph wholesale (`rebuild_graph()`, a new `max_connections`) or reclaim space
    (vacuum, migration) write a new file and swap it in (decision 8). Apart from single-word edge
-   updates (decision 5), nothing rewrites bytes a reader may be traversing.
+   updates (decision 5), nothing rewrites committed bytes a reader may be traversing; a writer that
+   reopens the file after an unflushed exit reuses slots and regions past the committed counts,
+   which readers only route through.
 2. **Data and index are separate.** Vectors, ids, deletes and (later) metadata are the data and are
    never lost. The HNSW graph is derived from them and can always be rebuilt into a new file.
 3. **Graph records shrink about 13×,** from 2,192 to about 164 bytes per vector at the default `M =
@@ -184,8 +186,9 @@ A reader process opens the file read-only, with no lock. Per query it:
    re-read, a bounded number of times, rather than skipped. A reader never adopts a snapshot older
    than one it already used: if the newest valid copy is older, it keeps its previous snapshot,
    which stays valid because committed data never changes;
-2. maps any segment or heap chunk it hasn't mapped yet (existing mappings never change, because
-   nothing moves);
+2. maps any segment or heap chunk it hasn't mapped yet, and remaps an uncommitted one whose table
+   entry changed: a writer that restarts after an unflushed exit reuses that space (committed
+   mappings never change, because nothing committed moves);
 3. searches, treating a slot as present only if it is below `N` and its deleted epoch is 0 or above
    `E`.
 
@@ -194,8 +197,9 @@ The writer guarantees only these things:
 * **Committed data never changes.** Vectors, ids and metadata references are immutable once
   committed, so metadata changes by delete and re-add, never by rewriting a reference. The writer
   reuses a slot only if it is beyond every committed count (ghost slots after a crash). Readers
-  never see those, except that after a power loss a reader may already have returned slots from the
-  lost commit.
+  never return those, except that after a power loss a reader may already have returned slots from
+  the lost commit. They may route through them while a restarted writer rewrites them, vectors
+  included, which costs routing quality, never results.
 * **Graph updates are single aligned u32 stores made as relaxed atomics,** and readers load them as
   relaxed atomics too. Through a plain slice the compiler may re-read an id after its `< N` check,
   and a plain store is a data race in Rust's memory model; on arm64 relaxed atomics compile to the
@@ -216,9 +220,13 @@ The writer guarantees only these things:
   recall (0.975 at ef 64). So after each insert's node and backlinks are written, the writer stores
   the routing count `R ≥ N` in the live page with release ordering. Readers traverse slots below `R`
   but return only slots below `N` that are live at `E`. `R` is not durable: recovery resets it to
-  the committed count before reusing any ghost slot. Auto-flushing every few hundred adds would also
-  bound the loss, but it would make a caller's batch durable in pieces, which breaks ADR-0007's
-  all-or-nothing flush.
+  the committed count before reusing any ghost slot. A reader that loaded `R` before the reset, or
+  is in the middle of a search, can still route through ghost slots the new writer is rewriting, and
+  through uncommitted regions that now hold other data, so readers treat records at or past `N` as
+  hints and skip any they can't decode. The same holds for a reader that opens the file after a
+  power loss before any writer does: the live page it finds may describe records that never reached
+  the disk. Auto-flushing every few hundred adds would also bound the loss, but it would make a
+  caller's batch durable in pieces, which breaks ADR-0007's all-or-nothing flush.
 * **The file never shrinks.** No v3 code path sets a smaller length: not recovery, not
   `rebuild_graph()`, not compaction. Space is reclaimed only by copy and rename (decision 8).
   Measured on macOS: after a 4 MiB to 1 MiB truncate, an attached reader died with SIGBUS, and after
@@ -278,7 +286,9 @@ header has `pending_epoch ≠ 0`, recovery resets every deleted epoch above the 
 slots below the committed count, fsyncs, writes a header with `pending_epoch = 0` into the copy it
 did not read, and fsyncs. Readers ignore `pending_epoch`. A power-loss model checker of this
 protocol (1,194 crash continuations, including crashes inside recovery) found no violation; every
-simpler placement of the flag failed it.
+simpler placement of the flag failed it. The protocol assumes power loss never tears an aligned
+8-byte write: recovery clears only marks above the committed epoch, so a mark torn at a byte
+boundary (257 landing as 1) would survive it.
 
 Recovery does not restore edges that an interrupted flush pruned from committed records, so some
 committed vectors can be unreachable until `rebuild_graph()` (see the ADR-0005 amendment).
@@ -302,8 +312,12 @@ bytes 8–11 as its version and refuses anything above what it knows before writ
 file stayed byte-identical. A release checks both version numbers before the checksum, so a newer
 header layout is reported as too new, not as corrupt.
 
-Releases up to 0.6.3 initialize any file shorter than 4,096 bytes, so v3 creates a new file under a
-temporary name and renames it into place once its first header is durable.
+Releases up to 0.6.3 initialize any file shorter than 4,096 bytes. v3 creates a new file in place
+while holding its lock, which keeps those releases out until the first header is durable. A crash
+before then leaves an empty file, which any release may initialize since it holds nothing, or a
+header-sized file whose header copies are zero or torn and whose live page is zero, which v3 treats
+as new: both copies are invalid at once only during creation. (This replaces a temporary name and a
+rename, which added a path a concurrent creator could race without protecting more.)
 
 Starting with 1.0, every release reads every file format since v3, forever. Releases only refuse
 files, and only by these version checks; they never misread one.
@@ -353,6 +367,165 @@ original stays in use, and migration retries on the next open.
 | A directory of segment files | Solves Windows growth (see below) but gives up the single file |
 | Store each vector next to its graph record (hnswlib's layout) | Measured no faster than separate arrays in our search loop (0.89–1.02×), and mixes data with the derived index and makes rebuilding the graph a rewrite of every vector |
 
+## Implementation Status
+
+On 2026-10-05. Built:
+* **Layout (decision 1):** header copies at 0 and 64 KiB, the live page, then 64 KiB-aligned
+  segments, upper-heap chunks and table pages, as in [File Format](../architecture/file-format.md).
+  A heap reference is `chunk << 32 | offset`, so chunks need no shared offset formula. No metadata
+  heap is created yet; every slot's metadata reference is 0.
+* **Compact records (decision 3):** u32 neighbor ids; `M` from 2 to 32,767.
+* **Double-buffered header (decision 4):** xxh3-64 over the header's own bytes, which are 136 bytes
+  plus 8 per table page, not the whole 64 KiB copy.
+* **Crash safety (decision 6):** the intent header, recovery, and a full slot header on every add.
+  One addition: after a failed fsync, every later commit fails until the index is reopened, since
+  the OS may already have dropped the dirty pages a retry would claim to commit.
+* **Versioning (decision 7)**, except that a newer write version is refused rather than opened
+  read-only.
+* **Migration (decision 8)** on first open, with the inode re-check on Unix. The Windows path
+  (`MoveFileExW`) compiles but has not run.
+* **Readers in other processes (decision 5):** `IndexReader` in Rust, `chassis_open_reader` in C and
+  `read_only=True` in Python open the file read-only without a lock. Every search takes a snapshot
+  as described above, copying header words atomically and re-reading a copy that fails its checksum
+  while it keeps changing. The writer stores edges, delete marks, headers and the live page as
+  relaxed atomic words with release fences before what publishes them, rewrites neighbor lists so
+  surviving entries keep their slots, and publishes the routing count after each insert. One
+  addition: the routing count can reach slots in a segment no header counts yet, so the live page
+  also mirrors the writer's segment, heap chunk and table page counts and table page offsets.
+  Readers treat a record at or past `N` that they can't decode as having no neighbors. A snapshot
+  re-verifies the headers only when a copy's checksum or sequence word changed since both copies
+  last read valid, and reads the file length only to map a new uncommitted region: about 60 ns when
+  nothing changed, against about 1.2 µs (an `fstat`, two checksums, eight allocations).
+
+Not built yet: the single-byte Windows lock (the whole-file lock is still taken, so Windows readers
+are untested), the "superseded" flag and `st_nlink` reopen check (nothing replaces a v3 file by
+rename yet), lock-free reads within one process (the bindings keep their lock), allocating space
+before writing to it, an explicit `migrate()`, and `rebuild_graph()`.
+
+Results of "Before Accepting", measured on the same Apple M5 as the
+[Performance](../architecture/performance.md) page:
+
+1. **Windows:** a probe that runs every check in experiment 1 on `windows-latest` is written, on the
+   unpushed branch `probe/windows-mmap`. Not run.
+2. **Search speed: passes on paired measurements.** Today's SIFT-1M and dbpedia graphs, converted,
+   return byte-identical results (ids and distances) for every query at every ef from 10 to 512.
+   `search.rs` and `distance.rs` were unchanged when this was measured, so each layout ran the same
+   loop. The machine was not quiet (load average 5 to 10 from other applications), and separate
+   processes varied 2 to 5×. So one process opened all three files, each searched by its own library
+   build, and alternated passes: 7 processes × 5 repetitions per ef, after a warm-up pass. Median
+   v3/v2 QPS ratio per ef:
+
+   | ef | 10 | 16 | 32 | 64 | 128 | 256 | 512 |
+   |----|----|----|----|----|-----|-----|-----|
+   | SIFT-1M | 1.056 | 1.015 | 1.018 | 1.049 | 1.031 | 1.070 | 1.089 |
+   | dbpedia | 1.087 | 1.095 | 1.097 | 1.052 | 1.099 | 1.109 | 1.117 |
+
+SIFT at ef 512 counts only the 26 of 35 passes with no major page fault: v2's 3.4 GB file took
+14,050 faults there and v3's 1. On the criterion as written, medians of each layout's own QPS, SIFT
+at ef 32 came out at 0.950 (8,630 against 9,082), within that cell's noise: its paired ratio is
+1.018, with an interquartile range of 0.946 to 1.131. A quiet machine should confirm it. The flat
+control (one segment, no address arithmetic) puts segment addressing's cost at 2–5% on SIFT (v3/flat
+0.950 to 0.981) and none measurable on dbpedia (0.985 to 1.077). Files: 713 MB for SIFT-1M (3,379 MB
+in v2) and 821 MB for dbpedia (982 MB), as estimated above; allocated about 688 and 630 MB,
+estimated from a fill without linking, against hnswlib's 661 and 623 MB. Migrating SIFT-1M took 9.4
+s.
+
+The reader work later changed the hot path: neighbor ids are loaded as relaxed atomics, record heads
+with acquire ordering, and `search.rs` filters a reader's snapshot. Re-measured against the code
+measured above, interleaving the layouts query by query and timing thread CPU time, on SIFT 300k and
+dbpedia: the shipped code's paired ratio is 1.003 to 1.015 at every ef, with every 95% lower bound
+at or above 0.997, and a relaxed head load is no faster. Against format 2 on the same SIFT 200k
+graph, it is 1.06 to 1.085 (at least 1.051 at the 95% level). Reader searches, which take a snapshot
+each time, run at 1.002 to 1.024 of the measured code.
+3. **Readers tolerating a writer: passes for adds, deletes and flushes; incomplete, because
+   `rebuild_graph()` is not built.** One writer and two reader processes on SIFT: 100,000 vectors,
+   then 20 flushes of 1,000 adds and 50 deletes each, then 50,000 adds (42% of `N`) in one unflushed
+   bulk load. The readers searched continuously, 200 queries at each ef in {16, 32, 64, 128}, and
+   after every flush, with the writer idle, searched the same queries on the same snapshot; each
+   query is paired with that idle run, and recall@10 is against the exact top 10 of the snapshot's
+   live vectors. 587,200 searches, zero errors, zero returned ids that were not live in their
+   snapshot, and no reader moving to an older snapshot. Mean paired loss in recall points (negative:
+   better than idle) with 95% intervals from a bootstrap over queries, and pairs losing 0.5 or more:
+
+   | ef | 16 | 32 | 64 | 128 |
+   |----|----|----|----|-----|
+   | Flushed batches | −0.04 [−0.10, +0.01], 0% | −0.02 [−0.05, 0.00], 0% | −0.01 [−0.02, 0.00], 0% | −0.01 [−0.01, 0.00], 0% |
+   | Unflushed bulk load | −1.50 [−2.47, −0.56], 0.05% | −0.64 [−1.20, −0.09], 0% | +0.01 [−0.30, +0.34], 0% | −0.09 [−0.24, +0.02], 0% |
+
+Two more runs gave −1.63 and −1.47 at ef 16 during the bulk load, and the batch row within 0.01.
+Readers looked for the idle window only between passes of 800 searches, so 7% of the batch pairs
+(17% at ef 128) ran with the writer already idle, where the loss is exactly zero; leaving them out
+changes no cell by more than 0.01.
+
+The bulk load's gain is not from concurrency. Its idle run came before the bulk load, and the
+concurrent searches routed through up to 50,000 unflushed nodes they can't return; the filtered
+search keeps expanding such nodes until it holds ef returnable results, so these searches computed
+12–17% more distances. With the writer paused, without flushing, after every 10,000 bulk adds, idle
+searches on the same snapshot gained 0.85 to 2.35 points at ef 16 (454 to 568 distances per query);
+against those paused runs, concurrent searches lost −0.50 to +0.44 points, every interval below
++1.0. So writes in progress cost no measurable recall, but a criterion measured against the pre-bulk
+idle run can't see up to about 2 points of such loss: this experiment should judge the bulk load
+against paused runs.
+
+With routing disabled in the readers, the bulk load lost 1.15 [0.37, 1.98], 1.10 [0.57, 1.68], 0.64
+and 0.11 points, and 1.49, 1.18, 0.63 and 0.11 in a second run: failing at ef 16 and 32 both times,
+but only by 0.1 to 0.5 points, with intervals reaching below 1. This bulk load is too small to
+reproduce the 16 to 21 points decision 5 measured with a backlog as large as `N`; the control should
+use a larger one.
+
+The run had no writer restarts. A separate in-process stress test with the unit-test geometry (4 to
+6 readers, a writer that adds, deletes and drops itself unflushed in up to 80% of batches, about
+12.6 million searches, 1,970 restarts, files up to 135 segments and 34 table pages) found no wrong
+result. It did find two interleavings, both deterministic, in which a search spanning a writer
+restart failed on a record the new writer was reusing; readers now treat records at or past `N` as
+hints (decision 5), with a regression test. Not covered: `rebuild_graph()`, a writer killed and
+restarted with readers in other processes, a flush with deletes and no adds, a table page boundary
+in another process, more than two reader processes, Linux and Windows.
+
+Test coverage: the reader tests catch disabled routing, disabled snapshot filtering, search without
+a new snapshot and `chassis_len` without one. Monotonic snapshots, header re-reads, remapping,
+region publishing, the routing reset on open, slot-preserving rewrites, ignoring an uncommitted
+delete's marks and publishing routing only after backlinks each have a targeted unit test. Memory
+ordering (release and acquire on the routing count, the live page counts and record heads) is
+covered by review only: neither the tests nor a litmus test on this machine can tell it from relaxed
+ordering.
+4. **Power loss:** `chassis-core/src/power_loss.rs` passes about 200 crash points: 50 in the
+   workload (two between operations and three fsyncs per flush, ten flushes) plus about 150 inside
+   the recovery a crash image triggers, about 510 crash images in all. Node levels come from an
+   unseeded RNG, so the recovery count varies: runs on 2026-10-05 and 06 gave 198 to 214 crash
+   points and 496 to 528 images. Unchanged sectors stay as they are; each changed one keeps its
+   durable or its current contents, or is torn into a mix of their 8-byte words. Unit tests use
+   16-slot segments, 1 KiB heap chunks and 4-entry table pages, so the workload crosses all three,
+   and every flush deletes a vector added in that same flush. Each image must reopen to the last
+   flush or the one in progress, then take one more add-and-delete flush and reopen to exactly that
+   state. It catches each of eight protocol mutants, re-run against the reader-era storage code with
+   3 runs each, every one failing an invariant at run time: no fsync before the commit header, no
+   intent header, no fsync between the intent and the marks, header copies that don't alternate,
+   recovery disabled, recovery that keeps the marks, an add that doesn't clear the slot header, and
+   a checksum that isn't checked. The last two needed torn sectors: a header fits in one sector, so
+   whole-sector choices never tear it.
+
+(b): before any writer reopens it, a reader opens every crash image as found. It must show an
+accepted state, never fail a search, and return only live ids of that state: in two runs it missed
+the top hit for 0 and 144 of about 50,000 searches, from routing through slots the power loss
+emptied. Before readers treated records past `N` as hints, about 7% of such opens failed a search
+(`Invalid graph record`), because the crashed writer's live page reached the disk and records it
+routes to did not. Creating a file is covered too: 100 crashes of its one fsync, which before the
+fix left an unopenable file whenever both header copies tore. Not covered: orderings only readers
+see within one sync interval (record head after its lists, routing after nodes, slot-preserving
+rewrites), whose mutants pass the simulator; the unit tests above cover them.
+5. **Id table build time: met with the page cache warm, barely, and only with a faster build.** The
+   first `add_with_id` at 10M slots builds the table; the add itself is under 0.5 ms of it. Reading
+   the 240 MB of slot headers takes 84 to 224 ms of CPU, depending on whether the pages are mapped,
+   cached or on disk; filling the hash table is about 93% of the build, from its cache misses rather
+   than hashing. Collecting the pairs first and filling a table keyed by a seeded multiply hash cut
+   the build to 0.67× in paired runs (0.57 to 0.75×); either change alone did nothing. With that, at
+   load average 6 to 15: 351 to 885 ms with the file in the page cache (median 468 ms, under 1
+   second in 5 of 5), and 419 to 1,316 ms right after copying the file, which on macOS leaves it out
+   of the page cache (median 913 ms, 3 of 5). Earlier runs of the original build, reported as warm,
+   were in fact cold (742 to 1,039 ms). Under heavy load (load average 34 to 59), the original build
+   took 1.1 to 1.8 s of CPU.
+
 ## Before Accepting
 
 Each of these is an experiment with a clear pass criterion:
@@ -387,14 +560,14 @@ Each of these is an experiment with a clear pass criterion:
    or past `N` or deleted in the snapshot returned, panic, signal); at every ef in {16, 32, 64,
    128}, mean paired recall@10 loss of at most 1 point and at most 1% of queries losing 0.5 or more.
 4. **Header commit under power loss.** A power-loss simulator that drops, reorders and tears
-   unsynced writes, run against the real implementation of decisions 4, 6 and 8. One exists for
-   today's format (`chassis-core/src/power_loss.rs`, see the ADR-0005 amendment); v3 extends it.
-   Crash points include inside recovery, a delete of a vector added in the same flush, and a flush
-   that appends a segment. Pass: (a) every reopen shows the last acknowledged flush or the one in
-   progress, never older; (b) a reader opening the crashed file without recovery sees that same
-   state; (c) after every reopen, one more delete flush and a clean reopen show exactly that state
-   plus the flush. A model checker (2026-10-04) showed that "every reopen shows exactly one
-   committed state" alone accepts 6 of 8 broken protocols.
+   unsynced writes, run against the real implementation of decisions 4, 6 and 8
+   (`chassis-core/src/power_loss.rs`; results under "Implementation Status"). Crash points include
+   inside recovery, a delete of a vector added in the same flush, and a flush that appends a
+   segment. Pass: (a) every reopen shows the last acknowledged flush or the one in progress, never
+   older; (b) a reader opening the crashed file without recovery sees that same state; (c) after
+   every reopen, one more delete flush and a clean reopen show exactly that state plus the flush. A
+   model checker (2026-10-04) showed that "every reopen shows exactly one committed state" alone
+   accepts 6 of 8 broken protocols.
 5. **Id table build time.** Building the id table at 10M slots stays under 1 second with the page
    cache warm.
 
@@ -409,8 +582,9 @@ Each of these is an experiment with a clear pass criterion:
 * Many readers across processes, with lock-free reads.
 * Opening reads two header copies and maps one region per segment and chunk on first use: 11 for
   SIFT-1M, about 2,350 for 100M vectors at 1536 dimensions. Nothing is loaded up front, except that
-  each process looking up custom ids builds its own id table (553 MB peak memory at 10M ids,
-  measured).
+  each process looking up custom ids builds its own id table (a 287 MB table at 10M ids, measured as
+  peak memory footprint; peak resident memory, 527 MB, also counts the 240 MB of slot headers mapped
+  from the page cache).
 * Changing index parameters becomes a rebuild into a new file instead of an error.
 * A format that can be frozen, with a SQLite-style compatibility promise.
 
