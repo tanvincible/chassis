@@ -115,6 +115,24 @@ fn test_compact_never_frees_an_id_for_add() {
     assert_eq!(index.search(&vector(42), 1).unwrap()[0].id, 42);
 }
 
+/// `u64::MAX` is reserved, so the id before it is the last `add` can give.
+#[test]
+fn test_add_fails_once_ids_run_out_and_compaction_keeps_it_so() {
+    let dir = tempdir().unwrap();
+    let mut index =
+        VectorIndex::open(dir.path().join("top.chassis"), DIMS as u32, options()).unwrap();
+    index.add_with_id(u64::MAX - 2, &vector(0)).unwrap();
+    assert_eq!(index.add(&vector(1)).unwrap(), u64::MAX - 1);
+    for _ in 0..2 {
+        assert!(index.add(&vector(2)).is_err());
+        assert!(index.add_batch(&vector(2)).is_err());
+        assert_eq!(index.len(), 2);
+        index.compact().unwrap();
+    }
+    index.add_with_id(7, &vector(2)).unwrap();
+    assert_eq!(index.search(&vector(1), 1).unwrap()[0].id, u64::MAX - 1);
+}
+
 /// The copy replaces the file a symlink points to, not the link.
 #[cfg(unix)]
 #[test]
