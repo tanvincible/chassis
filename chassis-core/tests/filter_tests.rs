@@ -121,3 +121,30 @@ fn test_cosine_filtered_search_reports_cosine_distance() {
         }
     }
 }
+
+/// Adds lost to a crash leave committed nodes with links to slots that are gone, so the graph
+/// search can run out of nodes before it runs out of budget. A filter must still find its ids.
+#[test]
+fn test_a_filter_finds_its_ids_in_a_graph_a_crash_thinned() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.chassis");
+    let kept = 20;
+    let mut index = VectorIndex::open(&path, DIMS, IndexOptions::default()).unwrap();
+    for id in 0..kept {
+        index.add(&vector(id)).unwrap();
+    }
+    index.flush().unwrap();
+    for id in kept..2000 {
+        index.add(&vector(id)).unwrap();
+    }
+    drop(index);
+
+    let index = VectorIndex::open(&path, DIMS, IndexOptions::default()).unwrap();
+    assert_eq!(index.len(), kept);
+    for id in 0..kept {
+        let found = index.search_filtered(&vector(id), 1, |other| other == id).unwrap();
+        assert_eq!(found.iter().map(|r| r.id).collect::<Vec<_>>(), [id]);
+        let all = index.search_filtered(&vector(id), kept as usize, |_| true).unwrap();
+        assert_eq!(all.len(), kept as usize, "from {id}");
+    }
+}
