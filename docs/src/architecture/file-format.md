@@ -22,8 +22,8 @@ can be mapped on its own. The file only grows by appending a region, and never s
 
 ## Header
 
-Each copy is a header of `136 + 8 × (segment table pages + heap table pages)` bytes, little-endian.
-A later write version may add fields after the tables; the length covers them.
+Each copy is a header of `144 + 8 × (segment table pages + heap table pages)` bytes, little-endian.
+A later write version may add fields after these; the length covers them.
 The valid copy with the higher sequence number is current.
 
 | Offset | Size | Field | Description |
@@ -39,7 +39,7 @@ The valid copy with the higher sequence number is current.
 | 42 | 2 | M0 | Neighbors per layer-0 list |
 | 44 | 1 | Max layers | Layers a node can belong to |
 | 45 | 1 | Metric | `0`: Euclidean; `1`: cosine, over vectors stored at unit length |
-| 46 | 1 | Flags | Bit 0: some id differs from its slot |
+| 46 | 1 | Flags | Bit 0: some id differs from its slot. Bit 1: superseded, a compacted copy is replacing this file at its path ([ADR-0011](../adr/011-compaction.md)) |
 | 47 | 1 | Table page log2 | Entries per table page, as a power of two |
 | 48 | 1 | Segment base log2 | Slots in the first segment, as a power of two |
 | 49 | 1 | Doubling segments | Segments that double in size before the size stays constant |
@@ -58,10 +58,11 @@ The valid copy with the higher sequence number is current.
 | 128 | 4 | Segment table pages | Number of segment table pages |
 | 132 | 4 | Heap table pages | Number of heap table pages |
 | 136 | 8 each | Table page offsets | Segment table pages, then heap table pages |
+| after the tables | 8 | Next id | One past the largest id used before the last compaction, which removed the deleted slots that showed it; `0` if never compacted. Absent from headers written before it existed, which read as `0` |
 
 A release checks the read version before the checksum, so a newer layout is reported as too new,
 not as corrupt. A newer write version only stops writers: `IndexReader` reads the file and ignores
-the bytes after the tables. Releases up to 0.6.3 read bytes 8–11 as their version and refuse
+the bytes after the next id. Releases up to 0.6.3 read bytes 8–11 as their version and refuse
 anything above 2.
 
 ## Live Page

@@ -258,6 +258,19 @@ Flush changes to disk. Returns `0` on success, `-1` on error.
 
 **Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
 
+#### `chassis_compact`
+```c
+int chassis_compact(ChassisIndex* index);
+```
+Rewrite the index without its deleted vectors and with a newly built graph, then replace the file
+with the copy ([ADR-0011](../adr/011-compaction.md)). Ids don't change. Like `chassis_flush`, it
+makes every add and delete so far durable. Returns `0`, or `-1` with the index left as it was; on
+Windows it fails while another process has the index open. It takes as long as building the index
+and needs free disk for a second copy.
+
+**Thread Safety**: holds the write lock for its whole run, so searches on this handle wait;
+readers in other processes keep searching
+
 ### Introspection
 
 #### `chassis_len`

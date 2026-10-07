@@ -421,6 +421,30 @@ size_t chassis_search_filtered(const struct ChassisIndex *ptr, const float *quer
 int chassis_flush(struct ChassisIndex *ptr);
 
 /**
+ * Rewrite the index without its deleted vectors and with a newly built graph
+ *
+ * Reclaims the space of deleted vectors and replaces the index file with the copy. Ids don't
+ * change. Like `chassis_flush()`, it makes every add and delete so far durable. Takes as long
+ * as building the index, on every core, and needs free disk for a second copy of the live
+ * vectors. Readers in other processes keep searching and move to the new file by themselves.
+ *
+ * # Returns
+ *
+ * - `0` on success
+ * - `-1` on failure, with the index left as it was (check `chassis_last_error_message()`). On
+ *   Windows it fails while another process has the index open.
+ *
+ * # Thread Safety
+ *
+ * Same as `chassis_flush()`: it holds the write lock, so searches on this handle wait.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_compact(struct ChassisIndex *ptr);
+
+/**
  * Get the number of vectors in the index
  *
  * # Arguments
