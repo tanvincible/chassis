@@ -58,6 +58,18 @@ Search results report `42`. Fails if a live vector already has that id; delete i
 it. `u64::MAX` is reserved. Indexes that use their own ids build an id table in memory on the first
 lookup in a process, which scans the index once ([ADR-0007](../adr/007-ids-and-deletes.md)).
 
+#### Adding Many Vectors
+
+```rust
+let vectors: Vec<f32> = rows.concat(); // count × dims floats, back to back
+let ids = index.add_batch(&vectors)?;  // or index.add_batch_with_ids(&my_ids, &vectors)?
+```
+
+Links the batch on every core, so a large batch builds many times faster than `add` in a loop
+([ADR-0010](../adr/010-parallel-batch-builds.md)). Ids are assigned as `add` assigns them. A batch is
+added whole or not at all. The graph depends on thread timing, so two builds of the same data
+differ slightly, as sequential builds already do through their random layers.
+
 #### Deleting
 
 ```rust

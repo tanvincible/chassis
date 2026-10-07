@@ -1,8 +1,9 @@
 //! Runs Chassis on a dataset written by `bench/ann/prepare.py`: build time, file size, and
-//! recall@10 against queries per second on one thread, across `ef_search` values.
-//! `bench/ann/hnswlib_bench.py` runs hnswlib with the same settings.
+//! recall@10 against queries per second on one thread, across `ef_search` values. `batch` builds
+//! with one `add_batch` on every core instead of an `add` per vector.
+//! `bench/ann/reference_bench.py` runs hnswlib or usearch with the same settings.
 //!
-//! `cargo run --release --example ann -- <data_dir> <dataset>`
+//! `cargo run --release --example ann -- <data_dir> <dataset> [batch]`
 
 use chassis_core::{IndexOptions, VectorIndex};
 use std::path::Path;
@@ -42,10 +43,14 @@ fn main() -> anyhow::Result<()> {
 
     let mut index = VectorIndex::open(&path, dims_u32, options(K))?;
     let start = Instant::now();
-    for (i, vector) in train.chunks_exact(dims).enumerate() {
-        index.add(vector)?;
-        if (i + 1) % 100_000 == 0 {
-            eprintln!("  {} added, {:.0}s", i + 1, start.elapsed().as_secs_f64());
+    if args.next().as_deref() == Some("batch") {
+        index.add_batch(&train)?;
+    } else {
+        for (i, vector) in train.chunks_exact(dims).enumerate() {
+            index.add(vector)?;
+            if (i + 1) % 100_000 == 0 {
+                eprintln!("  {} added, {:.0}s", i + 1, start.elapsed().as_secs_f64());
+            }
         }
     }
     index.flush()?;

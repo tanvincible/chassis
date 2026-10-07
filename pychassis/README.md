@@ -170,6 +170,10 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
 - **`add(vector: Sequence[float] | ndarray) -> int`**  
   Add a vector to the index. Returns the vector ID.
 
+- **`add_batch(vectors: ndarray, ids: Iterable[int] | None = None) -> ndarray`**  
+  Add a `(count, dimensions)` array at once, linking it on every core: much faster than `add` in a
+  loop. Returns the ids. All or nothing: if any vector or id is rejected, none is added.
+
 - **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
   Search for k nearest neighbors. Returns sorted list of results. With `allowed`, only those ids
   can be returned, e.g. `allowed=[row[0] for row in db.execute("SELECT id FROM docs WHERE owner = ?", (user,))]`;

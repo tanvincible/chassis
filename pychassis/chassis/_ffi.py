@@ -143,6 +143,26 @@ _lib.chassis_add_with_id.argtypes = [
 ]
 _lib.chassis_add_with_id.restype = ctypes.c_int
 
+# chassis_add_batch
+_lib.chassis_add_batch.argtypes = [
+    ChassisIndexPtr,
+    ctypes.POINTER(ctypes.c_float),  # vectors, count * dim, row-major
+    ctypes.c_size_t,  # count
+    ctypes.c_size_t,  # dim
+    ctypes.POINTER(ctypes.c_uint64),  # out_ids
+]
+_lib.chassis_add_batch.restype = ctypes.c_size_t
+
+# chassis_add_batch_with_ids
+_lib.chassis_add_batch_with_ids.argtypes = [
+    ChassisIndexPtr,
+    ctypes.POINTER(ctypes.c_uint64),  # ids
+    ctypes.POINTER(ctypes.c_float),  # vectors, count * dim, row-major
+    ctypes.c_size_t,  # count
+    ctypes.c_size_t,  # dim
+]
+_lib.chassis_add_batch_with_ids.restype = ctypes.c_int
+
 # chassis_delete
 _lib.chassis_delete.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
 _lib.chassis_delete.restype = ctypes.c_int

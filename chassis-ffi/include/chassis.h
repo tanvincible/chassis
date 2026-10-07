@@ -207,7 +207,7 @@ void chassis_free(struct ChassisIndex *ptr);
 uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
 
 /**
- * Add multiple vectors to the index in one call (row-major layout)
+ * Add multiple vectors to the index in one call (row-major layout), linking them on every core
  *
  * # Arguments
  *
@@ -220,9 +220,9 @@ uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
  *
  * # Returns
  *
- * - Number of vectors successfully inserted
- * - On first error, stops and returns the count inserted so far; use
- *   `chassis_last_error_message()` for the reason
+ * - `count` on success
+ * - `0` on failure, with none of the batch added; use `chassis_last_error_message()` for the
+ *   reason
  * - If `count == 0`, returns `0` and succeeds (pointers need not be valid)
  *
  * # Thread Safety
@@ -231,8 +231,9 @@ uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
  *
  * # Performance Note
  *
- * Amortizes FFI overhead across many rows; does not by itself change durability.
- * Call `chassis_flush()` when you need data on disk.
+ * Links the batch on every core, so a large batch builds many times faster than adding one
+ * vector at a time; the graph then depends on thread timing. Does not by itself change
+ * durability: call `chassis_flush()` when you need data on disk.
  *
  * # Example (C)
  *
@@ -240,7 +241,7 @@ uint64_t chassis_add(struct ChassisIndex *ptr, const float *vector, size_t len);
  * float *batch; // count * dim elements, row-major
  * uint64_t ids[1000];
  * size_t n = chassis_add_batch(index, batch, 1000, 768, ids);
- * if (n < 1000) {
+ * if (n == 0) {
  *     fprintf(stderr, "Batch add failed: %s\n", chassis_last_error_message());
  * }
  * ```
@@ -268,6 +269,24 @@ size_t chassis_add_batch(struct ChassisIndex *ptr, const float *vectors, size_t 
  * Same as `chassis_add()`.
  */
 int chassis_add_with_id(struct ChassisIndex *ptr, uint64_t id, const float *vector, size_t len);
+
+/**
+ * Add multiple vectors under the caller's ids in one call, linking them on every core
+ *
+ * `ids[i]` is the id of row `i` of `vectors` (`count * dim` floats, row-major).
+ *
+ * # Returns
+ *
+ * - `0` on success, including when `count == 0`
+ * - `-1` on failure, with none of the batch added: an id repeats, already exists or is
+ *   `UINT64_MAX`, or the dimensions don't match (check `chassis_last_error_message()`)
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ * - If `count > 0`, `ids` must point to `count` ids and `vectors` to `count * dim` floats
+ */
+int chassis_add_batch_with_ids(struct ChassisIndex *ptr, const uint64_t *ids, const float *vectors, size_t count, size_t dim);
 
 /**
  * Delete the vector with `id`
