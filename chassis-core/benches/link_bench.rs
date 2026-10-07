@@ -319,7 +319,7 @@ fn bench_idempotency_check(c: &mut Criterion) {
     group.bench_function("retry_existing_link", |b| {
         b.iter_batched(
             || create_prepared_graph(100, 128, 10),
-            |(mut graph, _temp_dir)| {
+            |(graph, _temp_dir)| {
                 // Attempt to re-add existing link (should be fast - duplicate check)
                 let _: () = graph.add_backward_link_with_pruning(1, 0, 0).unwrap();
                 black_box(());

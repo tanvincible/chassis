@@ -83,6 +83,15 @@ fn test_reader_returns_custom_ids_and_maps_new_segments() {
 
 #[test]
 fn test_reader_routes_through_an_unflushed_bulk_load() {
+    routes_through_an_unflushed_bulk_load(false);
+}
+
+#[test]
+fn test_reader_routes_through_an_unflushed_batch() {
+    routes_through_an_unflushed_bulk_load(true);
+}
+
+fn routes_through_an_unflushed_bulk_load(batch: bool) {
     let dir = tempdir().unwrap();
     let path = dir.path().join("index.chassis");
     let mut writer = VectorIndex::open(&path, DIMS, options()).unwrap();
@@ -92,8 +101,12 @@ fn test_reader_routes_through_an_unflushed_bulk_load() {
     writer.flush().unwrap();
     let mut reader = IndexReader::open(&path, DIMS, options()).unwrap();
     // The committed nodes' lists now lead mostly to nodes added after the flush.
-    for id in 300..3000 {
-        writer.add(&vector(id)).unwrap();
+    if batch {
+        writer.add_batch(&(300..3000).flat_map(vector).collect::<Vec<_>>()).unwrap();
+    } else {
+        for id in 300..3000 {
+            writer.add(&vector(id)).unwrap();
+        }
     }
     // recall@10 among the committed vectors, for queries near them
     let mut hits = 0;

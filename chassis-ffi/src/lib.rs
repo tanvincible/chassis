@@ -13,9 +13,8 @@
 //! # Error Handling
 //!
 //! Errors are reported through:
-//! - Return values: `u64::MAX` for add, `size_t` insert count for `chassis_add_batch`
-//!   (on partial failure, less than requested; on total failure of a non-empty batch, `0`),
-//!   `0` for search, `-1` for flush
+//! - Return values: `u64::MAX` for add, `size_t` insert count for `chassis_add_batch` (`0` on
+//!   failure: a batch is added whole or not at all), `0` for search, `-1` for flush
 //! - Thread-local error message: `chassis_last_error_message()`
 //!
 //! # Thread Safety
@@ -572,7 +571,7 @@ pub unsafe extern "C" fn chassis_add(
     .unwrap_or(u64::MAX)
 }
 
-/// Add multiple vectors to the index in one call (row-major layout)
+/// Add multiple vectors to the index in one call (row-major layout), linking them on every core
 ///
 /// # Arguments
 ///
@@ -585,9 +584,9 @@ pub unsafe extern "C" fn chassis_add(
 ///
 /// # Returns
 ///
-/// - Number of vectors successfully inserted
-/// - On first error, stops and returns the count inserted so far; use
-///   `chassis_last_error_message()` for the reason
+/// - `count` on success
+/// - `0` on failure, with none of the batch added; use `chassis_last_error_message()` for the
+///   reason
 /// - If `count == 0`, returns `0` and succeeds (pointers need not be valid)
 ///
 /// # Thread Safety
@@ -596,8 +595,9 @@ pub unsafe extern "C" fn chassis_add(
 ///
 /// # Performance Note
 ///
-/// Amortizes FFI overhead across many rows; does not by itself change durability.
-/// Call `chassis_flush()` when you need data on disk.
+/// Links the batch on every core, so a large batch builds many times faster than adding one
+/// vector at a time; the graph then depends on thread timing. Does not by itself change
+/// durability: call `chassis_flush()` when you need data on disk.
 ///
 /// # Example (C)
 ///
@@ -605,7 +605,7 @@ pub unsafe extern "C" fn chassis_add(
 /// float *batch; // count * dim elements, row-major
 /// uint64_t ids[1000];
 /// size_t n = chassis_add_batch(index, batch, 1000, 768, ids);
-/// if (n < 1000) {
+/// if (n == 0) {
 ///     fprintf(stderr, "Batch add failed: %s\n", chassis_last_error_message());
 /// }
 /// ```
@@ -669,24 +669,18 @@ pub unsafe extern "C" fn chassis_add_batch(
         // SAFETY: Caller guarantees `vectors` points to at least `total` floats
         let data = unsafe { slice::from_raw_parts(vectors, total) };
 
-        for i in 0..count {
-            let start = i * dim;
-            let row = &data[start..start + dim];
-            match index.add(row) {
-                Ok(id) => {
-                    unsafe {
-                        *out_ids.add(i) = id;
-                    }
-                    clear_last_error();
-                }
-                Err(e) => {
-                    set_last_error(e);
-                    return i;
-                }
+        match index.add_batch(data) {
+            Ok(ids) => {
+                // SAFETY: Caller guarantees out_ids has room for `count` ids
+                unsafe { slice::from_raw_parts_mut(out_ids, count) }.copy_from_slice(&ids);
+                clear_last_error();
+                count
+            }
+            Err(e) => {
+                set_last_error(e);
+                0
             }
         }
-
-        count
     })
     .unwrap_or(0)
 }
@@ -723,6 +717,68 @@ pub unsafe extern "C" fn chassis_add_with_id(
         let slice = unsafe { slice::from_raw_parts(vector, len) };
 
         match index.add_with_id(id, slice) {
+            Ok(()) => {
+                clear_last_error();
+                0
+            }
+            Err(e) => {
+                set_last_error(e);
+                -1
+            }
+        }
+    })
+    .unwrap_or(-1)
+}
+
+/// Add multiple vectors under the caller's ids in one call, linking them on every core
+///
+/// `ids[i]` is the id of row `i` of `vectors` (`count * dim` floats, row-major).
+///
+/// # Returns
+///
+/// - `0` on success, including when `count == 0`
+/// - `-1` on failure, with none of the batch added: an id repeats, already exists or is
+///   `UINT64_MAX`, or the dimensions don't match (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+/// - If `count > 0`, `ids` must point to `count` ids and `vectors` to `count * dim` floats
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_add_batch_with_ids(
+    ptr: *mut ChassisIndex,
+    ids: *const u64,
+    vectors: *const c_float,
+    count: size_t,
+    dim: size_t,
+) -> c_int {
+    ffi_guard(|| {
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return -1;
+        };
+        if count == 0 {
+            clear_last_error();
+            return 0;
+        }
+        if ids.is_null() || vectors.is_null() {
+            set_last_error("Null buffer pointers");
+            return -1;
+        }
+        let Some(total) = dim.checked_mul(count) else {
+            set_last_error("Vector batch size overflow");
+            return -1;
+        };
+        if dim != index.dimensions() as usize {
+            set_last_error(format!(
+                "Vector dimension mismatch: expected {}, got {dim}",
+                index.dimensions()
+            ));
+            return -1;
+        }
+        // SAFETY: caller guarantees both buffers are this long
+        let (ids, data) =
+            unsafe { (slice::from_raw_parts(ids, count), slice::from_raw_parts(vectors, total)) };
+        match index.add_batch_with_ids(ids, data) {
             Ok(()) => {
                 clear_last_error();
                 0
@@ -1457,6 +1513,33 @@ mod tests {
         };
         assert_eq!(count, 1);
 
+        unsafe { chassis_free(ptr) };
+    }
+
+    #[test]
+    fn test_ffi_add_batch_with_ids() {
+        let (_dir, path) = temp_index_path();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 2) };
+        let vectors: Vec<f32> = (0..100).flat_map(|i| [i as f32, 0.0]).collect();
+        let ids: Vec<u64> = (0..100).map(|i| 1000 + i).collect();
+        let added =
+            unsafe { chassis_add_batch_with_ids(ptr, ids.as_ptr(), vectors.as_ptr(), 100, 2) };
+        assert_eq!(added, 0);
+        let (mut found, mut dists) = ([0u64; 1], [0.0f32; 1]);
+        let query = [42.0f32, 0.0];
+        unsafe {
+            chassis_search(ptr, query.as_ptr(), 2, 1, found.as_mut_ptr(), dists.as_mut_ptr())
+        };
+        assert_eq!(found[0], 1042);
+
+        // An id already present rejects the whole batch.
+        let again = [7u64, 1042];
+        let rows = [1.0f32, 1.0, 2.0, 2.0];
+        let rejected =
+            unsafe { chassis_add_batch_with_ids(ptr, again.as_ptr(), rows.as_ptr(), 2, 2) };
+        assert_eq!(rejected, -1);
+        assert_eq!(unsafe { chassis_len(ptr) }, 100);
+        assert_eq!(unsafe { chassis_add_batch_with_ids(ptr, ptr::null(), ptr::null(), 0, 2) }, 0);
         unsafe { chassis_free(ptr) };
     }
 
