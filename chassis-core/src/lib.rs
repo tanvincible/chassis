@@ -174,14 +174,23 @@ impl VectorIndex {
     /// - Storage write fails
     /// - Graph write fails
     pub fn add(&mut self, vector: &[f32]) -> Result<u64> {
-        let id = if self.graph.custom_ids {
+        let id = self.next_ids(1)?.start;
+        self.insert(id, vector)?;
+        Ok(id)
+    }
+
+    /// The ids `add` gives the next `count` vectors. `u64::MAX` is reserved, so they can run out.
+    fn next_ids(&mut self, count: u64) -> Result<std::ops::Range<u64>> {
+        let first = if self.graph.custom_ids {
             self.ids()?;
             self.next_id
         } else {
             self.graph.node_count()
         };
-        self.insert(id, vector)?;
-        Ok(id)
+        match first.checked_add(count) {
+            Some(end) => Ok(first..end),
+            None => anyhow::bail!("No ids are left; choose free ones with add_with_id"),
+        }
     }
 
     /// Add a vector under the caller's `id`. Search results report this id.
@@ -215,13 +224,7 @@ impl VectorIndex {
     /// or if storing or linking them fails.
     pub fn add_batch(&mut self, vectors: &[f32]) -> Result<Vec<u64>> {
         let count = self.batch_len(vectors)? as u64;
-        let first = if self.graph.custom_ids {
-            self.ids()?;
-            self.next_id
-        } else {
-            self.graph.node_count()
-        };
-        let ids: Vec<u64> = (first..first + count).collect();
+        let ids: Vec<u64> = self.next_ids(count)?.collect();
         self.insert_batch(&ids, vectors)?;
         Ok(ids)
     }
