@@ -67,7 +67,7 @@ pub use storage::Storage;
 use anyhow::Result;
 use hnsw::layer_from_uniform;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Configuration options for VectorIndex
 #[derive(Debug, Clone)]
@@ -117,6 +117,9 @@ pub struct VectorIndex {
 
     /// One past the largest id ever stored, valid once `ids` is built
     next_id: u64,
+
+    /// Where the index file is, for `compact` to replace it
+    path: PathBuf,
 }
 
 impl VectorIndex {
@@ -140,7 +143,8 @@ impl VectorIndex {
     /// - The file was created with a different `max_connections`
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
         let params = hnsw_params(&options);
-        let storage = Storage::open_with(path, dims, params.to_record_params(), options.metric)?;
+        let path = path.as_ref().to_path_buf();
+        let storage = Storage::open_with(&path, dims, params.to_record_params(), options.metric)?;
         if storage.metric() != options.metric {
             anyhow::bail!(
                 "Index was created with {:?} distance but opened with {:?}",
@@ -149,7 +153,9 @@ impl VectorIndex {
             );
         }
         let graph = HnswGraph::open_no_reset(storage, params)?;
-        Ok(Self { graph, ml: params.ml, options, ids: None, next_id: 0 })
+        // This is the one writer, so no compaction is running: a copy here is a crashed one's.
+        let _ = std::fs::remove_file(storage::sibling(&path, "compacting"));
+        Ok(Self { graph, ml: params.ml, options, ids: None, next_id: 0, path })
     }
 
     /// Add a vector and return the id assigned to it: one past the largest id used so far.
@@ -271,16 +277,20 @@ impl VectorIndex {
         if ids.is_empty() {
             return Ok(());
         }
-        let dims = self.dims();
-        let unit: Vec<f32>;
-        let vectors = match self.graph.storage.metric() {
-            DistanceMetric::Euclidean => vectors,
+        match self.graph.storage.metric() {
+            DistanceMetric::Euclidean => self.insert_stored(ids, vectors),
             DistanceMetric::Cosine => {
-                let rows = vectors.chunks_exact(dims).map(distance::unit);
-                unit = rows.collect::<Result<Vec<_>>>()?.concat();
-                &unit
+                let rows = vectors.chunks_exact(self.dims()).map(distance::unit);
+                self.insert_stored(ids, &rows.collect::<Result<Vec<_>>>()?.concat())
             }
-        };
+        }
+    }
+
+    /// `insert_batch` for vectors already in their stored form: unit length in a cosine index.
+    fn insert_stored(&mut self, ids: &[u64], vectors: &[f32]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
         let layers: Vec<usize> = ids.iter().map(|_| self.select_layer()).collect();
         let first = self.graph.node_count();
         let saved = (self.graph.entry_point, self.graph.max_layer);
@@ -360,7 +370,8 @@ impl VectorIndex {
         if self.ids.is_none() {
             let live = self.graph.node_count() - self.graph.deleted_count;
             let mut pairs = Vec::with_capacity(live as usize);
-            let mut next_id = 0;
+            // A compaction removed the deleted slots that showed which ids were used (ADR-0011).
+            let mut next_id = self.graph.storage.next_id();
             for slot in 0..self.graph.node_count() {
                 let id = self.graph.id_of(slot)?;
                 next_id = next_id.max(id + 1);
@@ -478,6 +489,92 @@ impl VectorIndex {
     /// Returns an error if the flush fails
     pub fn flush(&mut self) -> Result<()> {
         self.graph.commit()
+    }
+
+    /// Rewrites the index without its deleted vectors and with a newly built graph, then replaces
+    /// the file with the copy (ADR-0011). Ids don't change. Like `flush`, it makes every add and
+    /// delete so far durable. It takes as long as building the index, on every core, and needs
+    /// free disk for a second copy of the live vectors. Readers in other processes keep searching
+    /// and move to the new file by themselves.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, leaving the index as it was, if the copy can't be written or, on
+    /// Windows, another process has the index open.
+    pub fn compact(&mut self) -> Result<()> {
+        let temp = storage::sibling(&self.path, "compacting");
+        let swapped = self.compacted_copy(&temp).and_then(|fresh| {
+            self.graph.storage.set_superseded(true)?;
+            self.swap_in(fresh, &temp)
+        });
+        if swapped.is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
+        swapped
+    }
+
+    /// A flushed index at `temp` holding this one's live vectors under their ids.
+    fn compacted_copy(&mut self, temp: &Path) -> Result<Self> {
+        match std::fs::remove_file(temp) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
+        self.ids()?;
+        let dims = self.dims();
+        let mut fresh = Self::open(temp, dims as u32, self.options.clone())?;
+        fresh.ids()?;
+        let count = self.graph.node_count();
+        // About 32 MiB of vectors at a time.
+        let chunk = ((32 << 20) / (dims * 4)).max(1);
+        let (mut ids, mut vectors) = (Vec::new(), Vec::new());
+        for start in (0..count).step_by(chunk) {
+            ids.clear();
+            vectors.clear();
+            for slot in start..(start + chunk as u64).min(count) {
+                if !self.graph.is_deleted(slot)? {
+                    ids.push(self.graph.id_of(slot)?);
+                    vectors.extend_from_slice(self.graph.storage.get_vector_slice(slot)?);
+                }
+            }
+            let first = fresh.graph.node_count();
+            fresh.graph.custom_ids |= ids.iter().zip(first..).any(|(&id, slot)| id != slot);
+            fresh.insert_stored(&ids, &vectors)?;
+        }
+        // The deleted slots showed which ids were used; without them the header has to, and
+        // `add` must stop taking the slot number for the next id.
+        fresh.graph.custom_ids |= self.next_id != fresh.graph.node_count();
+        fresh.next_id = self.next_id;
+        fresh.graph.storage.carry_over(self.next_id, self.graph.storage.epoch() + 1);
+        fresh.flush()?;
+        Ok(fresh)
+    }
+
+    /// Renames the compacted copy at `temp` over this index's file and continues on it. A failed
+    /// rename leaves this index on its old file, with the superseded flag cleared.
+    #[cfg(unix)]
+    fn swap_in(&mut self, mut fresh: Self, temp: &Path) -> Result<()> {
+        if let Err(e) = std::fs::rename(temp, &self.path) {
+            self.graph.storage.set_superseded(false)?;
+            return Err(e.into());
+        }
+        fresh.path = std::mem::take(&mut self.path);
+        *self = fresh;
+        // Either file may be at the path after a power loss; they hold the same vectors.
+        storage::sync_dir(&self.path)
+    }
+
+    /// Windows can't rename over a file with open handles, so this index moves to the copy before
+    /// the rename, and reopens the old file, which clears its superseded flag, if that fails.
+    #[cfg(windows)]
+    fn swap_in(&mut self, fresh: Self, temp: &Path) -> Result<()> {
+        let (path, dims, options) = (self.path.clone(), self.dims() as u32, self.options.clone());
+        drop(std::mem::replace(self, fresh));
+        if let Err(e) = storage::rename_over(temp, &path) {
+            *self = Self::open(&path, dims, options)?;
+            return Err(e);
+        }
+        self.path = path;
+        Ok(())
     }
 
     /// Get the number of live (not deleted) vectors in the index
@@ -605,6 +702,10 @@ fn hnsw_params(options: &IndexOptions) -> HnswParams {
 pub struct IndexReader {
     graph: HnswGraph,
     ef_search: usize,
+    /// What it was opened with, to open the file that replaces this one after a compaction
+    path: PathBuf,
+    dims: u32,
+    options: IndexOptions,
 }
 
 impl IndexReader {
@@ -616,9 +717,20 @@ impl IndexReader {
     /// `VectorIndex::open` to migrate it), has other dimensions, was created with another
     /// `max_connections`, or is corrupt.
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
-        let storage = Storage::open_read_only(path, dims)?;
+        let path = path.as_ref().to_path_buf();
+        let storage = Storage::open_read_only(&path, dims)?;
         let graph = HnswGraph::reader(storage, hnsw_params(&options))?;
-        Ok(Self { graph, ef_search: options.ef_search })
+        Ok(Self { graph, ef_search: options.ef_search, path, dims, options })
+    }
+
+    /// Takes a new snapshot, moving to the file a compaction put at the path (ADR-0011). Until
+    /// that file is there, and if it never arrives, this file's snapshot stands.
+    fn sync(&mut self) -> Result<()> {
+        self.graph.refresh()?;
+        if self.graph.storage.superseded() && !self.graph.storage.is_at(&self.path)? {
+            *self = Self::open(&self.path, self.dims, self.options.clone())?;
+        }
+        Ok(())
     }
 
     /// Search for the `k` nearest committed vectors, by the ids given to `add`/`add_with_id`.
@@ -627,7 +739,7 @@ impl IndexReader {
     ///
     /// Returns an error if the query has other dimensions or the file is corrupt.
     pub fn search(&mut self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        self.graph.refresh()?;
+        self.sync()?;
         search_graph(&self.graph, query, k, self.ef_search, None)
     }
 
@@ -643,7 +755,7 @@ impl IndexReader {
         k: usize,
         filter: impl Fn(u64) -> bool,
     ) -> Result<Vec<SearchResult>> {
-        self.graph.refresh()?;
+        self.sync()?;
         search_graph(&self.graph, query, k, self.ef_search, Some(&filter))
     }
 
@@ -663,7 +775,7 @@ impl IndexReader {
     ///
     /// Returns an error if the file is corrupt.
     pub fn refresh(&mut self) -> Result<()> {
-        self.graph.refresh()
+        self.sync()
     }
 
     /// Identifies the last snapshot: committed slots and the last delete flush. Two snapshots with
@@ -738,6 +850,59 @@ mod tests {
         }
         let live = index.graph.estimated_matches(&|_| Ok(true)).unwrap();
         assert!((1000..=1500).contains(&live), "deleted slots counted as matches: {live}");
+    }
+
+    /// A rename that fails after the copy is built: the path is a directory with a file in it.
+    #[cfg(unix)]
+    #[test]
+    fn test_a_failed_swap_clears_the_flag_and_removes_the_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let mut index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        for id in 0..50 {
+            index.add(&random_vector(id)).unwrap();
+        }
+        index.flush().unwrap();
+        let blocked = dir.path().join("blocked");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("file"), b"").unwrap();
+        index.path = blocked.clone();
+
+        assert!(index.compact().is_err());
+        assert!(!dir.path().join("blocked.compacting").exists(), "the copy was left behind");
+        assert!(!index.graph.storage.superseded(), "readers would wait for a file that won't come");
+        index.path = path.clone();
+        assert_eq!(index.search(&random_vector(7), 1).unwrap()[0].id, 7);
+        let mut reader = IndexReader::open(&path, 16, IndexOptions::default()).unwrap();
+        assert!(!reader.graph.storage.superseded());
+        assert_eq!(reader.search(&random_vector(7), 1).unwrap()[0].id, 7);
+        index.compact().unwrap();
+        assert_eq!(index.len(), 50);
+    }
+
+    #[test]
+    fn test_a_superseded_flag_left_by_a_crash_is_cleared() {
+        let file = NamedTempFile::new().unwrap();
+        let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+        for id in 0..50 {
+            index.add(&random_vector(id)).unwrap();
+        }
+        index.flush().unwrap();
+        // A compaction that died after flagging the file and before renaming its copy over it.
+        index.graph.storage.set_superseded(true).unwrap();
+        drop(index);
+
+        // The file is still the one at the path, so a reader's snapshot of it stands.
+        let mut reader = IndexReader::open(file.path(), 16, IndexOptions::default()).unwrap();
+        assert!(reader.graph.storage.superseded());
+        assert_eq!(reader.search(&random_vector(7), 1).unwrap()[0].id, 7);
+
+        let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+        assert!(!index.graph.storage.superseded(), "the next writer clears the flag");
+        index.add(&random_vector(50)).unwrap();
+        index.flush().unwrap();
+        assert_eq!(reader.search(&random_vector(50), 1).unwrap()[0].id, 50);
+        assert!(!reader.graph.storage.superseded());
     }
 
     #[test]

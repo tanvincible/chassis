@@ -183,6 +183,10 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
 - **`flush() -> None`**  
   Flush changes to disk. Call after batch insertions.
 
+- **`compact() -> None`**  
+  Rewrite the index without its deleted vectors and with a rebuilt graph, reclaiming their space.
+  Ids don't change. Takes as long as building the index and needs disk for a second copy.
+
 - **`close() -> None`**  
   Close the index and free resources. Called automatically.
 

@@ -398,9 +398,11 @@ On 2026-10-05. Built:
 
 The writer takes the single-byte lock at 2^62 on Windows (decision 5) and `flock` elsewhere.
 
-Not built yet: the "superseded" flag and `st_nlink` reopen check (nothing replaces a v3 file by
-rename yet), lock-free reads within one process (the bindings keep their lock), allocating space
-before writing to it, an explicit `migrate()`, and `rebuild_graph()`.
+`rebuild_graph()` and the "superseded" flag are built as `compact()`
+([ADR-0011](011-compaction.md)). Not built yet: the `st_nlink` reopen check (every replacement of
+a v3 file goes through the flag), lock-free reads within one process (the bindings keep their
+lock), allocating space before writing to it, an explicit `migrate()`, and changing
+`max_connections`.
 
 Results of "Before Accepting", measured on the same Apple M5 as the
 [Performance](../architecture/performance.md) page:
