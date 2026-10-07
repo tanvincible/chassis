@@ -115,6 +115,26 @@ fn test_compact_never_frees_an_id_for_add() {
     assert_eq!(index.search(&vector(42), 1).unwrap()[0].id, 42);
 }
 
+/// The copy replaces the file a symlink points to, not the link.
+#[cfg(unix)]
+#[test]
+fn test_compaction_through_a_symlink_replaces_the_file_it_points_to() {
+    let dir = tempdir().unwrap();
+    let (file, link) = (dir.path().join("file.chassis"), dir.path().join("link.chassis"));
+    build(&file, 300).flush().unwrap();
+    std::os::unix::fs::symlink(&file, &link).unwrap();
+
+    let mut index = VectorIndex::open(&link, DIMS as u32, options()).unwrap();
+    for key in 0..200 {
+        index.delete(key * 3 + 1).unwrap();
+    }
+    index.compact().unwrap();
+    drop(index);
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    let index = VectorIndex::open(&file, DIMS as u32, options()).unwrap();
+    assert_eq!(index.len(), 100);
+}
+
 #[test]
 fn test_compact_with_nothing_deleted_keeps_slot_ids() {
     let dir = tempdir().unwrap();

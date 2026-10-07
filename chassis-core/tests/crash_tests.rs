@@ -57,8 +57,8 @@ fn crash_writer() {
         batch += 1;
         println!("flushed {batch}");
         if compact && batch % 2 == 0 {
+            println!("compacting");
             index.compact().unwrap();
-            println!("compacted");
         }
     }
 }
@@ -103,7 +103,7 @@ fn kill_at_random_points(add_batch: bool, compact: bool) {
         for line in BufReader::new(child.stdout.take().unwrap()).lines() {
             let line = line.unwrap();
             batched |= line == "added with add_batch";
-            compacted |= line == "compacted";
+            compacted |= line == "compacting";
             if let Some(n) = line.strip_prefix("flushed ") {
                 flushed = n.parse().unwrap();
             }

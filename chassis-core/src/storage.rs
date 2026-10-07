@@ -1059,6 +1059,12 @@ impl Storage {
         self.commit_deleting(&[])
     }
 
+    /// Makes every later commit fail: this file is no longer the index.
+    #[cfg(windows)]
+    pub(crate) fn poison(&mut self) {
+        self.poisoned = true;
+    }
+
     /// Commits `state`, deleting `deletes` in the same commit (ADR-0008, decision 6).
     pub(crate) fn commit_deleting(&mut self, deletes: &[u64]) -> Result<()> {
         if !self.writable {
