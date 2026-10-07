@@ -29,9 +29,11 @@ What these numbers do and don't show:
 
 * **One thread is not how the others are used.** hnswlib and usearch build on every core; on this
   machine that would make them roughly 8× faster to build. Chassis builds on one thread.
-* **This is an ARM machine.** hnswlib's SIMD distance code only targets x86, so here it runs
+* **This is an ARM Mac.** hnswlib's SIMD distance code only targets x86, so here it runs
   compiler-vectorized loops (about 264 ns per 1,536-dim distance, against 149 ns for Chassis's NEON
-  code). On x86 the gap at 1,536 dims may close. usearch has ARM SIMD and was still slower here.
+  code). usearch has ARM SIMD and was still slower here. **On an x86 Linux runner, hnswlib was
+  faster than Chassis,** and on an ARM Linux runner the two were even: see
+  [On GitHub's runners](#on-githubs-runners).
 * **Chassis searches warm memory-mapped pages.** The harness runs an untimed pass after each open; a
   cold first pass after opening was about half as fast on SIFT at ef 16.
 * **These Chassis rows are file format 2.** Its files and memory were much larger (peak memory about
@@ -154,6 +156,27 @@ applications running, so build times are indicative):
 Peak memory includes the training vectors the harness holds (0.51 GB for SIFT, 0.61 GB for
 dbpedia). Format 2 peaked at about 4.2 GB on SIFT, and GloVe's format 2 build spent 568 s in the
 kernel.
+
+## On GitHub's runners
+
+From the Benchmark workflow on 2026-10-07: SIFT-1M on GitHub's `ubuntu-latest` (x86) and
+`ubuntu-24.04-arm` runners, 4 vCPUs each, one thread, run in the order Chassis, hnswlib, hnswlib,
+Chassis. hnswlib was compiled on each runner with `-march=native`. QPS is the median of five
+passes; ranges are the two runs of each engine.
+
+| Runner | Engine | Build | ef 64: recall / QPS | ef 128: recall / QPS |
+|--------|--------|-------|---------------------|----------------------|
+| x86 | Chassis | 614–622 s | 0.968 / 4,250–4,347 | 0.992 / 2,328–2,590 |
+| | hnswlib | 386–396 s | 0.960 / 6,751–6,871 | 0.989 / 3,763–3,771 |
+| ARM | Chassis | 714–790 s | 0.968 / 3,165–3,406 | 0.992 / 1,811–1,915 |
+| | hnswlib | 717–720 s | 0.960 / 3,247–3,322 | 0.989 / 1,827–1,870 |
+
+* **On x86, hnswlib builds about 1.6× faster and searches about 1.4× faster at equal recall.**
+  Chassis's lead on the M5 above comes largely from hnswlib's SIMD not targeting ARM. Not yet
+  measured: how much of the x86 gap is hnswlib's software prefetching (x86 only), its compiling
+  for the exact CPU, or Chassis's per-access address arithmetic.
+* **On ARM Linux, the two are about even:** builds within the runs' spread, and Chassis slightly
+  ahead in search at equal recall.
 
 ## Reproduce
 

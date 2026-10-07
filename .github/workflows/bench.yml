@@ -48,7 +48,7 @@ jobs:
             echo
             echo "SIMD: $(grep -owE 'avx2|avx512f|asimd|sve2?' /proc/cpuinfo | sort -u | tr '\n' ' ')"
             echo
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/cache@v4
         with:
@@ -77,7 +77,7 @@ jobs:
               esac
             done
           done
-          python bench/ann/summary.py results/*.tsv >> "$GITHUB_STEP_SUMMARY"
+          python bench/ann/summary.py results/*.tsv | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
