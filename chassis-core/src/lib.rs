@@ -143,7 +143,9 @@ impl VectorIndex {
     /// - The file was created with a different `max_connections`
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
         let params = hnsw_params(&options);
-        let path = path.as_ref().to_path_buf();
+        // Compaction and migration rename a new file over this one: through a symlink that would
+        // replace the link and leave the file it points to behind.
+        let path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.as_ref().to_path_buf());
         let storage = Storage::open_with(&path, dims, params.to_record_params(), options.metric)?;
         if storage.metric() != options.metric {
             anyhow::bail!(
@@ -502,6 +504,9 @@ impl VectorIndex {
     /// Returns an error, leaving the index as it was, if the copy can't be written or, on
     /// Windows, another process has the index open.
     pub fn compact(&mut self) -> Result<()> {
+        // Windows has to close this file before the rename and reopen it if the rename fails,
+        // which shows only what was flushed.
+        self.flush()?;
         let temp = storage::sibling(&self.path, "compacting");
         let swapped = self.compacted_copy(&temp).and_then(|fresh| {
             self.graph.storage.set_superseded(true)?;
@@ -564,13 +569,21 @@ impl VectorIndex {
     }
 
     /// Windows can't rename over a file with open handles, so this index moves to the copy before
-    /// the rename, and reopens the old file, which clears its superseded flag, if that fails.
+    /// the rename, and reopens the old file, which clears its superseded flag, if that fails. If
+    /// the old file can't be reopened either, this index is left on the copy, which the next open
+    /// of the path removes, so it refuses to flush anything more.
     #[cfg(windows)]
     fn swap_in(&mut self, fresh: Self, temp: &Path) -> Result<()> {
         let (path, dims, options) = (self.path.clone(), self.dims() as u32, self.options.clone());
         drop(std::mem::replace(self, fresh));
         if let Err(e) = storage::rename_over(temp, &path) {
-            *self = Self::open(&path, dims, options)?;
+            match Self::open(&path, dims, options) {
+                Ok(old) => *self = old,
+                Err(reopen) => {
+                    self.graph.storage.poison();
+                    return Err(e.context(format!("and the index couldn't be reopened: {reopen}")));
+                }
+            }
             return Err(e);
         }
         self.path = path;
