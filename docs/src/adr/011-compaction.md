@@ -23,8 +23,8 @@ itself, `rebuild_graph()`, unbuilt, and its third acceptance experiment waits on
 
 `VectorIndex::compact()` rewrites the index without its deleted vectors and with a newly built
 graph, and replaces the file. It is ADR-0008's `rebuild_graph()` and its vacuum in one, since both
-are the same copy; C gets `chassis_compact` and Python `compact()`. Like a flush, it makes every
-add and delete so far durable, flushed before or not.
+are the same copy; C gets `chassis_compact` and Python `compact()`. It flushes first, so every add
+and delete so far is durable whether or not the rest succeeds.
 
 ### 2. Build a new file beside the old one
 
@@ -63,8 +63,11 @@ happened yet or never will, it keeps its snapshot and looks again on its next se
 of the old file stays valid throughout, since an open file outlives its name.
 
 On Windows a file can't be renamed over while any process has it open. `compact()` there closes
-its own handles first, and fails, leaving the index unchanged, if another process has the index
-open.
+its own handles first, and fails if another process has the index open. It then reopens the old
+file, which shows what was flushed: the reason it flushes first. If the old file can't be reopened
+either, the index refuses to flush anything more until it is opened again.
+
+`open` resolves symlinks in the path, so the rename replaces the file and not a link to it.
 
 ## Measurements
 
