@@ -381,6 +381,7 @@ impl HnswGraph {
 
         let mut candidates = BinaryHeap::new();
         let mut results = BinaryHeap::new();
+        let mut fresh = Vec::with_capacity(self.record_params.max_neighbors(layer));
 
         // Zero-copy distance computation
         let entry_dist = self.compute_distance_zero_copy(query, entry)?;
@@ -399,38 +400,43 @@ impl HnswGraph {
                 break;
             }
 
-            // Zero-allocation neighbor iteration
-            // Uses mmap-based iteration (~100ns) instead of Vec allocation (~400ns)
+            // Start loading every unvisited neighbor's vector before computing any distance, so the
+            // cache misses overlap instead of each distance waiting on its own.
+            fresh.clear();
             for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
                 if visited.visit(neighbor_id) {
-                    if FILTERED {
-                        budget = match budget.checked_sub(1) {
-                            Some(left) => left,
-                            None => return Ok(None),
-                        };
-                    }
-                    // Zero-copy distance computation
-                    // Reads directly from mmap instead of allocating Vec<f32>
-                    let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
-
-                    let should_add = if results.len() < ef {
-                        true
-                    } else if let Some(worst) = results.peek() {
-                        dist.total_cmp(&worst.distance) == std::cmp::Ordering::Less
-                    } else {
-                        false
+                    self.storage.prefetch_vector(neighbor_id);
+                    fresh.push(neighbor_id);
+                }
+            }
+            for &neighbor_id in &fresh {
+                if FILTERED {
+                    budget = match budget.checked_sub(1) {
+                        Some(left) => left,
+                        None => return Ok(None),
                     };
+                }
+                // Zero-copy distance computation
+                // Reads directly from mmap instead of allocating Vec<f32>
+                let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
 
-                    if should_add {
-                        candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
-                        if excluded(neighbor_id)? {
-                            continue;
-                        }
-                        results.push(SearchResult { id: neighbor_id, distance: dist });
+                let should_add = if results.len() < ef {
+                    true
+                } else if let Some(worst) = results.peek() {
+                    dist.total_cmp(&worst.distance) == std::cmp::Ordering::Less
+                } else {
+                    false
+                };
 
-                        if results.len() > ef {
-                            results.pop();
-                        }
+                if should_add {
+                    candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
+                    if excluded(neighbor_id)? {
+                        continue;
+                    }
+                    results.push(SearchResult { id: neighbor_id, distance: dist });
+
+                    if results.len() > ef {
+                        results.pop();
                     }
                 }
             }
