@@ -115,6 +115,24 @@ fn test_compact_never_frees_an_id_for_add() {
     assert_eq!(index.search(&vector(42), 1).unwrap()[0].id, 42);
 }
 
+/// Adds lost to a crash leave the committed vectors with links to slots that are gone, in place of
+/// the links they had (ADR-0005 amendment). Compaction links every vector again.
+#[test]
+fn test_compaction_reconnects_vectors_a_crash_left_without_edges() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("thinned.chassis");
+    let (kept, lost) = (300, 3000);
+    build(&path, kept).flush().unwrap();
+    let mut index = VectorIndex::open(&path, DIMS as u32, options()).unwrap();
+    index.add_batch(&(kept..kept + lost).flat_map(vector).collect::<Vec<_>>()).unwrap();
+    drop(index);
+
+    let mut index = VectorIndex::open(&path, DIMS as u32, options()).unwrap();
+    assert_eq!(index.len(), kept);
+    index.compact().unwrap();
+    assert!(recall(&index, kept, |_| true) >= 0.98);
+}
+
 /// `u64::MAX` is reserved, so the id before it is the last `add` can give.
 #[test]
 fn test_add_fails_once_ids_run_out_and_compaction_keeps_it_so() {
