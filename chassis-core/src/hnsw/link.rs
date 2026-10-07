@@ -356,7 +356,7 @@ impl HnswGraph {
                 let distance = self
                     .storage
                     .get_vector_slice(id)
-                    .map(|v| crate::distance::squared_euclidean(base_vector, v))
+                    .map(|v| crate::distance::euclidean_distance(base_vector, v))
                     .unwrap_or(f32::MAX);
                 (id, distance)
             })
@@ -373,7 +373,7 @@ impl HnswGraph {
             let mut is_diverse = true;
             for &kept in &selected {
                 let kept_vector = self.storage.get_vector_slice(kept)?;
-                if crate::distance::squared_euclidean(vector, kept_vector) < distance {
+                if crate::distance::euclidean_distance(vector, kept_vector) < distance {
                     is_diverse = false;
                     break;
                 }
