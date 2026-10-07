@@ -480,6 +480,24 @@ class VectorIndex:
             error_msg = _ffi.get_last_error()
             raise ChassisError(f"Flush failed: {error_msg or 'unknown error'}")
 
+    def compact(self) -> None:
+        """Rewrite the index without its deleted vectors, with a newly built graph.
+
+        Reclaims the space of deleted vectors and replaces the index file with
+        the copy. Ids don't change. Like flush(), it makes every add and
+        delete so far durable. Takes as long as building the index, on every
+        core, and needs free disk for a second copy of the live vectors.
+        Readers in other processes keep searching and move to the new file by
+        themselves.
+
+        Raises:
+            ChassisError: If the copy can't be written or, on Windows, another
+                process has the index open. The index is left as it was.
+        """
+        self._check_closed()
+        if _ffi._lib.chassis_compact(self._ptr) != 0:
+            raise ChassisError(f"Compaction failed: {_ffi.get_last_error() or 'unknown error'}")
+
     def __len__(self) -> int:
         """Get the number of vectors in the index.
 

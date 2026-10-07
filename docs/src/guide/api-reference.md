@@ -79,7 +79,20 @@ let deleted = index.delete(42)?; // false if no live vector has id 42
 Search stops returning the vector immediately, and `len()` drops by one. The delete is durable
 after the next `flush()`; a crash before then rolls it back. A delete and an add in the same flush
 are all-or-nothing, so `delete(id)` followed by `add_with_id(id, new_vector)` replaces a vector
-safely. Deleted vectors keep their disk space until the index is rebuilt.
+safely. Deleted vectors keep their disk space until `compact()`.
+
+#### Compacting
+
+```rust
+index.compact()?;
+```
+
+Rewrites the index without its deleted vectors and with a newly built graph, then replaces the
+file with the copy ([ADR-0011](../adr/011-compaction.md)). Ids don't change, and `add` still never
+reuses one. Like `flush()`, it makes every add and delete so far durable. It takes as long as
+building the index, on every core, and needs free disk for a second copy of the live vectors.
+Readers in other processes keep searching and move to the new file by themselves. On Windows it
+fails, leaving the index as it was, while another process has the index open.
 
 #### Searching
 
