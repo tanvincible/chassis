@@ -31,11 +31,25 @@ fn live_after(batches: u64) -> u64 {
     batches * BATCH - batches.saturating_sub(1) * DELETES_PER_BATCH
 }
 
+/// Opens the index once its lock is free. A process another test forks holds a copy of every
+/// open handle until it execs, and with it the lock of an index this test has just closed.
+fn unlocked<T>(open: impl Fn() -> anyhow::Result<T>) -> T {
+    for _ in 0..400 {
+        match open() {
+            Err(e) if e.to_string().contains("already open") => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            opened => return opened.unwrap(),
+        }
+    }
+    panic!("the index stayed locked for two seconds")
+}
+
 /// The child half: only does work when the parent test spawns it with a path.
 #[test]
 fn crash_writer() {
     let Ok(path) = std::env::var("CHASSIS_CRASH_PATH") else { return };
-    let mut index = VectorIndex::open(&path, DIMS, options()).unwrap();
+    let mut index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
     let mut batch = (0..).find(|&b| live_after(b) == index.len()).unwrap();
     let add_batch = std::env::var("CHASSIS_CRASH_ADD_BATCH").is_ok();
     let compact = std::env::var("CHASSIS_CRASH_COMPACT").is_ok();
@@ -109,7 +123,7 @@ fn kill_at_random_points(add_batch: bool, compact: bool) {
             }
         }
 
-        let index = VectorIndex::open(&path, DIMS, options()).unwrap();
+        let index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
         let len = index.len();
         // A kill between flush() and the println leaves one batch more than was reported. Any
         // other count means a flush kept its adds but not its deletes, or the reverse.
@@ -132,7 +146,7 @@ fn kill_at_random_points(add_batch: bool, compact: bool) {
 
         // Compaction moves vectors to other slots, so check them through the index instead.
         if compact {
-            let index = VectorIndex::open(&path, DIMS, options()).unwrap();
+            let index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
             assert!(!dir.path().join("crash.chassis.compacting").exists(), "a killed copy remains");
             let deleted: Vec<u64> = (0..flushed).flat_map(deleted_by).collect();
             for id in (0..flushed * BATCH).step_by(7) {
@@ -141,7 +155,7 @@ fn kill_at_random_points(add_batch: bool, compact: bool) {
             }
             continue;
         }
-        let storage = Storage::open(&path, DIMS).unwrap();
+        let storage = unlocked(|| Storage::open(&path, DIMS));
         assert_eq!(storage.count(), flushed * BATCH);
         for id in 0..storage.count() {
             assert_eq!(storage.get_vector_slice(id).unwrap(), vector(id).as_slice(), "vector {id}");
