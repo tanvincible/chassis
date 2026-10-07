@@ -37,9 +37,17 @@ fn crash_writer() {
     let Ok(path) = std::env::var("CHASSIS_CRASH_PATH") else { return };
     let mut index = VectorIndex::open(&path, DIMS, options()).unwrap();
     let mut batch = (0..).find(|&b| live_after(b) == index.len()).unwrap();
+    let add_batch = std::env::var("CHASSIS_CRASH_ADD_BATCH").is_ok();
     loop {
-        for id in batch * BATCH..(batch + 1) * BATCH {
-            assert_eq!(index.add(&vector(id)).unwrap(), id);
+        let ids = batch * BATCH..(batch + 1) * BATCH;
+        if add_batch {
+            let vectors: Vec<f32> = ids.clone().flat_map(vector).collect();
+            assert_eq!(index.add_batch(&vectors).unwrap(), ids.collect::<Vec<_>>());
+            println!("added with add_batch");
+        } else {
+            for id in ids {
+                assert_eq!(index.add(&vector(id)).unwrap(), id);
+            }
         }
         for id in deleted_by(batch) {
             assert!(index.delete(id).unwrap());
@@ -52,23 +60,35 @@ fn crash_writer() {
 
 #[test]
 fn test_kill_at_random_points_keeps_flushed_data() {
+    kill_at_random_points(false);
+}
+
+/// The same, with each batch added by `add_batch`, so kills land while threads link it.
+#[test]
+fn test_kill_during_parallel_batches_keeps_flushed_data() {
+    kill_at_random_points(true);
+}
+
+fn kill_at_random_points(add_batch: bool) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("crash.chassis");
-    let mut flushed = 0;
+    let (mut flushed, mut batched) = (0, false);
 
     for _ in 0..ROUNDS {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["crash_writer", "--exact", "--nocapture"])
-            .env("CHASSIS_CRASH_PATH", &path)
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(["crash_writer", "--exact", "--nocapture"]).env("CHASSIS_CRASH_PATH", &path);
+        if add_batch {
+            command.env("CHASSIS_CRASH_ADD_BATCH", "1");
+        }
+        let mut child = command.stdout(Stdio::piped()).spawn().unwrap();
         std::thread::sleep(Duration::from_millis(rand::random_range(50..500)));
         assert!(child.try_wait().unwrap().is_none(), "writer exited before it was killed");
         child.kill().unwrap();
         child.wait().unwrap();
         for line in BufReader::new(child.stdout.take().unwrap()).lines() {
-            if let Some(n) = line.unwrap().strip_prefix("flushed ") {
+            let line = line.unwrap();
+            batched |= line == "added with add_batch";
+            if let Some(n) = line.strip_prefix("flushed ") {
                 flushed = n.parse().unwrap();
             }
         }
@@ -101,4 +121,5 @@ fn test_kill_at_random_points_keeps_flushed_data() {
         }
     }
     assert!(flushed > 0, "no round got as far as a flush");
+    assert_eq!(batched, add_batch, "the writer didn't add the way this test asked");
 }

@@ -973,7 +973,7 @@ impl Storage {
     }
 
     /// Replaces the list of an existing record at one of its layers.
-    pub(crate) fn write_neighbors(&mut self, slot: u64, layer: usize, ids: &[u64]) -> Result<()> {
+    pub(crate) fn write_neighbors(&self, slot: u64, layer: usize, ids: &[u64]) -> Result<()> {
         let list = self.neighbors(slot, layer)?;
         if list.is_empty() {
             bail!("Node {slot} is not on layer {layer}");

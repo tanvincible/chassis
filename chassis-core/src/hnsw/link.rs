@@ -20,7 +20,12 @@
 
 use crate::hnsw::graph::HnswGraph;
 use crate::hnsw::node::{INVALID_NODE_ID, NodeId, NodeRecord};
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+/// Locks guarding neighbor lists while a batch links on several threads, striped by slot.
+const LOCK_STRIPES: usize = 4096;
 
 impl HnswGraph {
     /// Write node record and update backward links (Step A + Step B).
@@ -180,7 +185,7 @@ impl HnswGraph {
 
     /// Add a backward link from neighbor to new_node with diversity pruning.
     pub fn add_backward_link_with_pruning(
-        &mut self,
+        &self,
         neighbor_id: NodeId,
         new_node: NodeId,
         layer: usize,
@@ -210,6 +215,115 @@ impl HnswGraph {
         )?;
 
         self.storage.write_neighbors(neighbor_id, layer, &selected)
+    }
+
+    /// Each layer's neighbors for `vector`, stored in `slot`, starting from `entry` at its top
+    /// layer: a greedy descent to `layer + 1`, then an `ef`-wide search and the diversity
+    /// heuristic on each layer from there down.
+    pub(crate) fn find_neighbors(
+        &self,
+        vector: &[f32],
+        slot: NodeId,
+        layer: usize,
+        (entry, max_layer): (NodeId, usize),
+        ef: usize,
+    ) -> Result<Vec<Vec<NodeId>>> {
+        let mut neighbors = vec![Vec::new(); layer + 1];
+        let mut current = entry;
+        for l in (layer + 1..=max_layer).rev() {
+            current = self.search_layer_greedy(vector, current, l)?;
+        }
+        for l in (0..=layer.min(max_layer)).rev() {
+            let candidates = self.search_layer_optimized(vector, current, ef, l)?;
+            let ids: Vec<NodeId> =
+                candidates.iter().map(|r| r.id).filter(|&id| id != slot).collect();
+            let max = self.record_params.max_neighbors(l);
+            neighbors[l] = self.select_neighbors_heuristic(slot, &ids, l, max, None)?;
+            if let Some(nearest) = candidates.first() {
+                current = nearest.id;
+            }
+        }
+        Ok(neighbors)
+    }
+
+    /// Links the nodes from `first` on, whose vectors and empty records are written, on `threads`
+    /// threads; `layers[i]` is the top layer of `first + i` (ADR-0010). A node is unreachable until
+    /// its own lists and its backlinks are written, so no other thread writes its lists before it
+    /// does, and every later change to a list holds that node's lock.
+    pub(crate) fn link_batch(
+        &mut self,
+        first: NodeId,
+        layers: &[usize],
+        ef: usize,
+        threads: usize,
+    ) -> Result<()> {
+        self.node_count = first + layers.len() as u64;
+        let entry = self.entry_point.context("Linking a batch needs an entry point")?;
+        let entry = Mutex::new((entry, self.max_layer));
+        let locks: Vec<Mutex<()>> = (0..LOCK_STRIPES).map(|_| Mutex::new(())).collect();
+        let (next, failed) = (AtomicUsize::new(0), AtomicBool::new(false));
+        let graph = &*self;
+        let link = || -> Result<()> {
+            loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= layers.len() || failed.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let linked = graph.link_one(first + i as u64, layers[i], &entry, &locks, ef);
+                if linked.is_err() {
+                    failed.store(true, Ordering::Relaxed);
+                    return linked;
+                }
+            }
+        };
+        let results: Vec<Result<()>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..threads.max(1)).map(|_| scope.spawn(link)).collect();
+            let join = |h: std::thread::ScopedJoinHandle<'_, Result<()>>| {
+                h.join().unwrap_or_else(|_| Err(anyhow!("A linking thread panicked")))
+            };
+            handles.into_iter().map(join).collect()
+        });
+        let (entry, max_layer) = entry.into_inner().unwrap_or_else(PoisonError::into_inner);
+        (self.entry_point, self.max_layer) = (Some(entry), max_layer);
+        results.into_iter().collect()
+    }
+
+    /// Links one node of a batch: its own lists under its lock, then each backlink under the
+    /// neighbor's. A node that raises the top layer keeps the entry lock meanwhile, so the new
+    /// top connects to the old; that is rare, and other threads wait for it.
+    fn link_one(
+        &self,
+        slot: NodeId,
+        layer: usize,
+        entry: &Mutex<(NodeId, usize)>,
+        locks: &[Mutex<()>],
+        ef: usize,
+    ) -> Result<()> {
+        let lock = |slot: NodeId| -> MutexGuard<'_, ()> {
+            locks[slot as usize % locks.len()].lock().unwrap_or_else(PoisonError::into_inner)
+        };
+        let top = entry.lock().unwrap_or_else(PoisonError::into_inner);
+        let start = *top;
+        let raises = (layer > start.1).then_some(top);
+
+        let vector = self.storage.get_vector_slice(slot)?;
+        let neighbors = self.find_neighbors(vector, slot, layer, start, ef)?;
+        {
+            let _own = lock(slot);
+            for (l, ids) in neighbors.iter().enumerate() {
+                self.storage.write_neighbors(slot, l, ids)?;
+            }
+        }
+        for (l, ids) in neighbors.iter().enumerate() {
+            for &neighbor in ids {
+                let _theirs = lock(neighbor);
+                self.add_backward_link_with_pruning(neighbor, slot, l)?;
+            }
+        }
+        if let Some(mut top) = raises {
+            *top = (slot, layer);
+        }
+        Ok(())
     }
 
     /// Select diverse neighbors using HNSW Heuristic 2.
