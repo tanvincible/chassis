@@ -34,7 +34,7 @@ jobs:
       DATASETS: ${{ inputs.datasets || 'sift-128' }}
       DATA: bench/ann/data
       # Experiment only: the base and each step of the perf commits, in one job on one CPU.
-      REFS: 349c655 4ff2f99 c45d6c0 7e32885
+      REFS: 349c655 7652e3c 0cd8ce6 7e32885
     steps:
       - uses: actions/checkout@v4
         with:
