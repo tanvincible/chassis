@@ -153,3 +153,28 @@ fn test_reader_searches_while_a_batch_links() {
     writer.flush().unwrap();
     assert_eq!(reader.search(&vector(5555), 1).unwrap()[0].id, 5555);
 }
+
+/// A batch lost to a crash leaves links to its slots in committed nodes, on every layer the lost
+/// nodes were on. A batch reusing a slot must not follow them to a node that hasn't linked yet,
+/// least of all to the node it is linking: it would find no neighbors but itself.
+#[test]
+fn test_a_batch_reusing_a_lost_batchs_slots_stays_connected() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.chassis");
+    let (kept, n) = (500, 800);
+    let mut index = VectorIndex::open(&path, DIMS as u32, options()).unwrap();
+    index.add_batch(&flat(0..kept)).unwrap();
+    index.flush().unwrap();
+    index.add_batch(&flat(kept..n)).unwrap();
+    drop(index);
+
+    let mut index = VectorIndex::open(&path, DIMS as u32, options()).unwrap();
+    assert_eq!(index.len(), kept);
+    let stranded: Vec<u64> = (kept..n)
+        .filter(|&id| {
+            index.add_batch(&vector(id)).unwrap();
+            index.search(&vector(id), 10).unwrap().len() < 10
+        })
+        .collect();
+    assert!(stranded.is_empty(), "added {stranded:?} with too few neighbors to search from");
+}

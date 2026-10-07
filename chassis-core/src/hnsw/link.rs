@@ -18,7 +18,7 @@
 //! This means `neighbors_per_layer` can only contain node IDs where `id < self.node_count`.
 //! Forward links to non-existent nodes are filtered out during linking.
 
-use crate::hnsw::graph::HnswGraph;
+use crate::hnsw::graph::{HnswGraph, Linking};
 use crate::hnsw::node::{INVALID_NODE_ID, NodeId, NodeRecord};
 use anyhow::{Context, Result, anyhow};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -247,9 +247,9 @@ impl HnswGraph {
     }
 
     /// Links the nodes from `first` on, whose vectors and empty records are written, on `threads`
-    /// threads; `layers[i]` is the top layer of `first + i` (ADR-0010). A node is unreachable until
-    /// its own lists and its backlinks are written, so no other thread writes its lists before it
-    /// does, and every later change to a list holds that node's lock.
+    /// threads; `layers[i]` is the top layer of `first + i` (ADR-0010). No search reaches a node
+    /// before it has written its own lists (`Linking`), and every later change to a list holds
+    /// that node's lock.
     pub(crate) fn link_batch(
         &mut self,
         first: NodeId,
@@ -259,6 +259,8 @@ impl HnswGraph {
     ) -> Result<()> {
         self.node_count = first + layers.len() as u64;
         let entry = self.entry_point.context("Linking a batch needs an entry point")?;
+        let linked = layers.iter().map(|_| AtomicBool::new(false)).collect();
+        self.linking = Some(Linking { first, linked });
         let entry = Mutex::new((entry, self.max_layer));
         let locks: Vec<Mutex<()>> = (0..LOCK_STRIPES).map(|_| Mutex::new(())).collect();
         let (next, failed) = (AtomicUsize::new(0), AtomicBool::new(false));
@@ -283,6 +285,7 @@ impl HnswGraph {
             };
             handles.into_iter().map(join).collect()
         });
+        self.linking = None;
         let (entry, max_layer) = entry.into_inner().unwrap_or_else(PoisonError::into_inner);
         (self.entry_point, self.max_layer) = (Some(entry), max_layer);
         results.into_iter().collect()
@@ -312,6 +315,9 @@ impl HnswGraph {
             let _own = lock(slot);
             for (l, ids) in neighbors.iter().enumerate() {
                 self.storage.write_neighbors(slot, l, ids)?;
+            }
+            if let Some(batch) = &self.linking {
+                batch.linked[(slot - batch.first) as usize].store(true, Ordering::Release);
             }
         }
         for (l, ids) in neighbors.iter().enumerate() {
