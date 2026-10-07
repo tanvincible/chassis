@@ -293,6 +293,62 @@ class VectorIndex:
 
         return int(vector_id)
 
+    def add_batch(
+        self,
+        vectors: Union[Sequence[Sequence[float]], npt.NDArray[np.float32]],
+        ids: Optional[Union[Iterable[int], npt.NDArray[np.uint64]]] = None,
+    ) -> npt.NDArray[np.uint64]:
+        """Add many vectors at once, linking them on every core.
+
+        Much faster than calling add() in a loop for large batches; the
+        graph then depends on thread timing. All or nothing: if any vector
+        or id is rejected, none of the batch is added.
+
+        Args:
+            vectors: A (count, dimensions) array, or a sequence of vectors
+            ids: Optional ids, one per vector, as for add(). Default: each
+                vector gets the id add() would give it.
+
+        Returns:
+            The vectors' ids
+
+        Raises:
+            DimensionMismatchError: If the rows don't match the index dimensions
+            ValueError: If ids are out of range or their count differs
+            ChassisError: If an id repeats or already exists, or for other errors
+        """
+        self._check_closed()
+        vectors = np.ascontiguousarray(vectors, dtype=np.float32)
+        if vectors.ndim != 2 or vectors.shape[1] != self._dimensions:
+            raise DimensionMismatchError(
+                f"Expected a (count, {self._dimensions}) array, got shape {vectors.shape}"
+            )
+        count = len(vectors)
+        vectors_ptr = vectors.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
+        if ids is None:
+            out_ids = np.zeros(count, dtype=np.uint64)
+            out_ptr = out_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            added = _ffi._lib.chassis_add_batch(
+                self._ptr, vectors_ptr, count, self._dimensions, out_ptr
+            )
+            if added != count:
+                raise ChassisError(_ffi.get_last_error() or "Failed to add batch")
+            return out_ids
+
+        ids = [int(i) for i in ids]
+        for i in ids:
+            _check_id(i)
+        if len(ids) != count:
+            raise ValueError(f"{len(ids)} ids for {count} vectors")
+        id_array = np.array(ids, dtype=np.uint64)
+        ids_ptr = id_array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+        if _ffi._lib.chassis_add_batch_with_ids(
+            self._ptr, ids_ptr, vectors_ptr, count, self._dimensions
+        ) != 0:
+            raise ChassisError(_ffi.get_last_error() or "Failed to add batch")
+        return id_array
+
     def delete(self, id: int) -> bool:
         """Delete the vector with this id.
 

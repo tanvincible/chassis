@@ -178,6 +178,37 @@ has `id`, `id` is `UINT64_MAX`, or the add fails.
 
 **Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
 
+#### `chassis_add_batch`
+```c
+size_t chassis_add_batch(
+    ChassisIndex* index,
+    const float* vectors,  // count * dim floats, row-major
+    size_t count,
+    size_t dim,
+    uint64_t* out_ids      // room for count ids
+);
+```
+Add many vectors at once, linking them on every core: a large batch builds many times faster than
+`chassis_add` in a loop ([ADR-0010](../adr/010-parallel-batch-builds.md)). Writes their ids, assigned
+as `chassis_add` assigns them, to `out_ids`. Returns `count`, or `0` if the batch fails, in which
+case none of it is added.
+
+#### `chassis_add_batch_with_ids`
+```c
+int chassis_add_batch_with_ids(
+    ChassisIndex* index,
+    const uint64_t* ids,   // count ids
+    const float* vectors,  // count * dim floats, row-major
+    size_t count,
+    size_t dim
+);
+```
+`chassis_add_with_id` for a whole batch, linked on every core. Returns `0`, or `-1` with none of the
+batch added if an id repeats, already exists or is `UINT64_MAX`.
+
+**Thread Safety** (both): a batch holds the write lock until it is linked, so searches on the same
+handle wait for the whole batch.
+
 #### `chassis_delete`
 ```c
 int chassis_delete(ChassisIndex* index, uint64_t id);

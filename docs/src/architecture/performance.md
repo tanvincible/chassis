@@ -27,8 +27,8 @@ every query), so it differs only in speed.
 
 What these numbers do and don't show:
 
-* **One thread is not how the others are used.** hnswlib and usearch build on every core; on this
-  machine that would make them roughly 8× faster to build. Chassis builds on one thread.
+* **One thread is not how builds usually run.** On every core (see [Parallel builds](#parallel-builds)),
+  Chassis and hnswlib build 2.4 to 5.2 times faster, and Chassis's lead on SIFT holds.
 * **This is an ARM machine.** hnswlib's SIMD distance code only targets x86, so here it runs
   compiler-vectorized loops (about 264 ns per 1,536-dim distance, against 149 ns for Chassis's NEON
   code). On x86 the gap at 1,536 dims may close. usearch has ARM SIMD and was still slower here.
@@ -155,6 +155,25 @@ Peak memory includes the training vectors the harness holds (0.51 GB for SIFT, 0
 dbpedia). Format 2 peaked at about 4.2 GB on SIFT, and GloVe's format 2 build spent 568 s in the
 kernel.
 
+## Parallel builds
+
+Measured on 2026-10-07 on the same M5, which has 4 performance and 6 efficiency cores and was in
+Low Power Mode, with other applications running. One build at a time, `M` 16, `ef_construction`
+200; "every core" is Chassis's `add_batch` and hnswlib's `num_threads=-1`. Search is one thread.
+
+| Dataset | Engine | One thread | Every core | Speedup | ef 64, every core: recall / QPS |
+|---------|--------|------------|------------|---------|---------------------------------|
+| SIFT-1M | Chassis | 545 s | 110 s | 5.0× | 0.968 / 4,111 |
+| | hnswlib | 682 s | 131 s | 5.2× | 0.959 / 2,878 |
+| dbpedia, 99k × 1536 | Chassis | 417 s | 176 s | 2.4× | 0.978 / 841 |
+| | hnswlib | 596 s | 163 s | 3.7× | 0.970 / 481 |
+
+Graphs built on every core reach the same recall as one-thread builds of either engine (within
+0.002 from `ef` 32 up, and 0.007 below). Their QPS varied by up to 40% either way between single
+passes, so these runs don't compare search speed. An earlier parallel dbpedia run the same day took 159 s for Chassis and 158 s
+for hnswlib, so builds vary by about 10% between runs. The 1,536-dimension build scales less for
+both engines; [ADR-0010](../adr/010-parallel-batch-builds.md) has the details.
+
 ## Reproduce
 
 ```bash
@@ -165,8 +184,8 @@ cargo bench --bench distance_bench
 # Against hnswlib and usearch (downloads about 1.9 GB of datasets)
 pip install numpy h5py pyarrow hnswlib usearch
 python bench/ann/prepare.py
-cargo run --release --example ann -- bench/ann/data sift-128
-python bench/ann/reference_bench.py hnswlib bench/ann/data sift-128
+cargo run --release --example ann -- bench/ann/data sift-128          # add `batch` for every core
+python bench/ann/reference_bench.py hnswlib bench/ann/data sift-128   # add `0` for every core
 python bench/ann/reference_bench.py usearch bench/ann/data sift-128
 ```
 

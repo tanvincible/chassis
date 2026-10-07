@@ -479,3 +479,31 @@ class TestFiltered:
             with pytest.raises((TypeError, ValueError)):
                 index.search([0.0, 0.0], k=4, allowed=bad)
         index.close()
+
+
+class TestAddBatch:
+    """Adding many vectors at once."""
+
+    def test_batch_ids_and_search(self, tmp_path):
+        index = VectorIndex(tmp_path / "b.chassis", dimensions=4)
+        rng = np.random.default_rng(7)
+        vectors = rng.random((500, 4), dtype=np.float32)
+        ids = index.add_batch(vectors)
+        assert list(ids) == list(range(500))
+        assert index.search(vectors[123], k=1)[0].id == 123
+        assert list(index.add_batch(vectors[:2] + 5)) == [500, 501]
+        assert len(index) == 502
+        index.close()
+
+    def test_batch_with_ids_is_all_or_nothing(self, tmp_path):
+        index = VectorIndex(tmp_path / "b.chassis", dimensions=2)
+        index.add_batch([[0.0, 0.0], [1.0, 1.0]], ids=[10, 20])
+        assert index.search([1.0, 1.0], k=1)[0].id == 20
+        with pytest.raises(ChassisError):
+            index.add_batch([[2.0, 2.0], [3.0, 3.0]], ids=[30, 20])
+        with pytest.raises(ValueError):
+            index.add_batch([[2.0, 2.0]], ids=[-1])
+        with pytest.raises(DimensionMismatchError):
+            index.add_batch([[2.0, 2.0, 2.0]])
+        assert len(index) == 2
+        index.close()

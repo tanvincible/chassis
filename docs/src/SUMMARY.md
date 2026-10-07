@@ -28,6 +28,7 @@
 - [ADR-0007: Caller Ids and Deletes](./adr/007-ids-and-deletes.md)
 - [ADR-0008: File Format v3 and Multi-Process Readers (Proposed)](./adr/008-format-v3-and-multi-process-readers.md)
 - [ADR-0009: Filtered Search (Proposed)](./adr/009-filtered-search.md)
+- [ADR-0010: Parallel Batch Builds (Proposed)](./adr/010-parallel-batch-builds.md)
 
 # Development
 
