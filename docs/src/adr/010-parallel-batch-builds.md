@@ -41,9 +41,15 @@ edge points at a written vector and record throughout, so ADR-0002's invariant h
 
 Every change to a node's lists, its own and each backlink with its pruning, holds that node's
 lock, one of 4,096 striped by slot. A thread holds one lock at a time, so threads can't deadlock.
-A node is unreachable until its own lists and backlinks are written, since searches only follow
-lists, so its own write rarely waits. Searches read lists without locks, as readers in other
-processes do, and may see a list mid-change; they tolerate that the same way.
+Searches read lists without locks, as readers in other processes do, and may see a list
+mid-change; they tolerate that the same way.
+
+No search reaches a node of the batch before it has written its own lists. Following lists
+doesn't ensure that: a batch lost to a crash leaves links to its slots in committed nodes (ADR-0005
+amendment), and the next batch reuses those slots. A node found through such a link while its
+lists were empty was a dead end, and a node that found itself that way linked to nothing. So each
+node of the batch has a flag, set once its lists are written, and reading a list skips the nodes
+whose flag isn't set.
 
 A node whose layer is above the current top holds the entry-point lock while it links, as in
 hnswlib, so the new top connects to the old one. That is rare (the top layer grows with the log of

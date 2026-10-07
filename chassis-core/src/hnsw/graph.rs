@@ -8,7 +8,7 @@ use crate::hnsw::node::{INVALID_NODE_ID, Node, NodeId, NodeRecord, NodeRecordPar
 use crate::storage::EMPTY;
 use anyhow::{Result, bail};
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// HNSW graph stored in an index file.
 #[derive(Debug)]
@@ -41,6 +41,18 @@ pub struct HnswGraph {
 
     /// In a reader, the snapshot searches return results from
     pub(crate) view: Option<View>,
+
+    /// The batch being linked, if one is
+    pub(crate) linking: Option<Linking>,
+}
+
+/// A batch being linked: its first slot, and for each of its slots whether the node has written
+/// its own lists. Until then no search may reach it, though links that a crash left in older
+/// nodes can already name its slot (ADR-0010).
+#[derive(Debug)]
+pub(crate) struct Linking {
+    pub first: NodeId,
+    pub linked: Vec<AtomicBool>,
 }
 
 /// A reader's snapshot: slots below `committed` that no flush up to `epoch` deleted.
@@ -92,6 +104,7 @@ impl HnswGraph {
             pending_deletes: HashSet::new(),
             custom_ids: state.flags & FLAG_CUSTOM_IDS != 0,
             view: None,
+            linking: None,
             storage,
         })
     }
@@ -182,7 +195,19 @@ impl HnswGraph {
     ) -> Result<impl Iterator<Item = NodeId> + '_> {
         let list = self.storage.neighbors(node_id, layer)?;
         let ids = list.iter().map(|id| id.load(Ordering::Relaxed));
-        Ok(ids.filter(|&id| id != EMPTY).map(NodeId::from))
+        Ok(ids.filter(|&id| id != EMPTY).map(NodeId::from).filter(|&id| self.is_linked(id)))
+    }
+
+    /// False only for a node of the batch being linked that hasn't written its own lists yet.
+    #[inline]
+    fn is_linked(&self, slot: NodeId) -> bool {
+        match &self.linking {
+            Some(batch) if slot >= batch.first => batch
+                .linked
+                .get((slot - batch.first) as usize)
+                .is_none_or(|linked| linked.load(Ordering::Acquire)),
+            _ => true,
+        }
     }
 
     /// Distance from `query` to a stored vector, read in place.
