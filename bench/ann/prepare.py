@@ -5,7 +5,9 @@ vectors (`<name>.train.f32`, `<name>.test.f32`) or the u32 ids of each query's t
 neighbors, nearest first (`<name>.gt.u32`).
 
     pip install numpy h5py pyarrow
-    python bench/ann/prepare.py [data_dir]
+    python bench/ann/prepare.py [data_dir [dataset ...]]
+
+Datasets: sift-128, glove-100, dbpedia-openai3-1536 (default: all). One already written is skipped.
 """
 
 import shutil
@@ -84,8 +86,10 @@ def main() -> None:
         "glove-100": lambda: ann_benchmarks("glove-100-angular", data_dir, angular=True),
         "dbpedia-openai3-1536": lambda: dbpedia(data_dir),
     }
-    for name, load in datasets.items():
-        train, test, gt = load()
+    for name in sys.argv[2:] or datasets:
+        if all((data_dir / f"{name}.{part}").exists() for part in ("train.f32", "test.f32", "gt.u32")):
+            continue
+        train, test, gt = datasets[name]()
         write(data_dir / f"{name}.train.f32", train, "<f4")
         write(data_dir / f"{name}.test.f32", test, "<f4")
         write(data_dir / f"{name}.gt.u32", gt, "<u4")
