@@ -1,14 +1,19 @@
 name: Benchmark
 
 # Chassis against hnswlib on bench/ann datasets, on an x86 and an ARM runner. Run it from the
-# Actions tab, or add the `benchmark` label to a pull request. Shared runners are noisy, so each
-# job runs Chassis, hnswlib, hnswlib, Chassis: compare engines within a job, not across runs.
+# Actions tab, or add the `benchmark` label to a pull request, which also runs the pull request's
+# base, to show whether it made Chassis faster. Shared runners are noisy, so each job runs every
+# engine forwards then backwards (Chassis, hnswlib, hnswlib, Chassis): compare engines within a
+# job, not across runs. Compared versions need this workflow's harness (median of five passes).
 on:
   workflow_dispatch:
     inputs:
       datasets:
         description: "Space-separated: sift-128, glove-100, dbpedia-openai3-1536"
         default: sift-128
+      refs:
+        description: "Chassis versions to compare, space-separated git refs (default: this one)"
+        default: ""
   pull_request:
     types: [labeled]
 
@@ -28,8 +33,14 @@ jobs:
     env:
       DATASETS: ${{ inputs.datasets || 'sift-128' }}
       DATA: bench/ann/data
+      REFS: >-
+        ${{ inputs.refs || (github.event_name == 'pull_request'
+        && format('{0} {1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha))
+        || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@v1
         with:
@@ -62,19 +73,30 @@ jobs:
           python bench/ann/prepare.py "$DATA" $DATASETS
           rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet
 
-      - name: Build Chassis
-        run: cargo build --release -p chassis-core --example ann
+      - name: Build each Chassis version
+        run: |
+          for ref in $REFS; do
+            name="chassis-$(git rev-parse --short "$ref")"
+            git worktree add "$RUNNER_TEMP/$name" "$ref"
+            (cd "$RUNNER_TEMP/$name" && cargo build --release -p chassis-core --example ann)
+            echo "$name $RUNNER_TEMP/$name/target/release/examples/ann" >> "$RUNNER_TEMP/engines"
+          done
 
       - name: Run
         run: |
+          names=($(cut -d' ' -f1 "$RUNNER_TEMP/engines") hnswlib)
+          order=("${names[@]}")
+          for ((i = ${#names[@]} - 1; i >= 0; i--)); do order+=("${names[i]}"); done
           mkdir results
           for dataset in $DATASETS; do
-            for run in chassis-1 hnswlib-1 hnswlib-2 chassis-2; do
-              out="results/$dataset-$run.tsv"
-              case $run in
-                chassis-*) target/release/examples/ann "$DATA" "$dataset" > "$out" ;;
-                hnswlib-*) python bench/ann/reference_bench.py hnswlib "$DATA" "$dataset" > "$out" ;;
-              esac
+            for name in "${order[@]}"; do
+              run=$(( $(find results -name "$dataset-$name-*" | wc -l) + 1 ))
+              out="results/$dataset-$name-$run.tsv"
+              if [ "$name" = hnswlib ]; then
+                python bench/ann/reference_bench.py hnswlib "$DATA" "$dataset" > "$out"
+              else
+                "$(awk -v n="$name" '$1 == n { print $2 }' "$RUNNER_TEMP/engines")" "$DATA" "$dataset" > "$out"
+              fi
             done
           done
           python bench/ann/summary.py results/*.tsv | tee -a "$GITHUB_STEP_SUMMARY"
