@@ -45,8 +45,11 @@ all of it.
 So a filtered search first runs the filter on about 1,024 slots, one per equal stretch of the
 index at a jittered position so a filter periodic in the id can't line up with them, to estimate
 how many vectors match, `m`, and gives the graph search a budget of the smaller of `m / 2` and
-`32 × ef / s` distance computations. If it finishes within the budget, its results stand.
-Otherwise it stops, and the search checks every slot and returns the exact nearest matches.
+`32 × ef / s` distance computations. If it finishes within the budget with `k` results, they
+stand. Otherwise the search checks every slot and returns the exact nearest matches. A graph
+search that finishes with fewer than `k` ran out of nodes, not budget, which a connected graph
+doesn't allow: it means a crash that lost adds left committed nodes too few links to reach each
+other (ADR-0005 amendment).
 
 * **`m / 2`.** Checking every slot computes `m` distances, but in order. A graph visit reads a
   vector and a neighbor list from random places and keeps two heaps: from the visit counts of the

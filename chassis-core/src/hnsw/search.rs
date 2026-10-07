@@ -213,8 +213,11 @@ impl HnswGraph {
             current = self.search_layer_greedy(query, current, layer)?;
         }
         let filter = Some((allow, budget as usize));
+        // Fewer than `k` within the budget means the graph ran out first: a crash that lost adds
+        // can leave committed nodes with too few links to reach each other, so check every slot.
         if let Some(mut found) =
             self.search_layer::<true>(query, current, ef, 0, self.skips(), filter)?
+            && found.len() >= k
         {
             found.truncate(k);
             return Ok((found, false));
