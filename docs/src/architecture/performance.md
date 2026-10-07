@@ -215,6 +215,7 @@ python bench/ann/reference_bench.py usearch bench/ann/data sift-128
 Criterion reports go to `target/criterion/`.
 
 The **Benchmark** workflow (`.github/workflows/bench.yml`) runs the Chassis and hnswlib comparison on
-GitHub's x86 and ARM Linux runners: start it from the Actions tab, or add the `benchmark` label to a
-pull request. Each job runs Chassis, hnswlib, hnswlib, Chassis and writes the tables to the run's
-summary. Shared runners are noisy, so compare engines within one job rather than across runs.
+GitHub's x86 and ARM Linux runners: start it from the Actions tab, optionally naming Chassis versions
+to compare, or add the `benchmark` label to a pull request, which compares its base and head too.
+Each job runs every engine forwards then backwards and writes the tables to the run's summary.
+Shared runners are noisy, so compare engines within one job rather than across runs.
