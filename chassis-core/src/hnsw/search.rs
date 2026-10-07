@@ -90,6 +90,27 @@ pub struct VisitedFilter {
     data: Vec<u64>,
     /// Capacity track to avoid checking len() bounds repeatedly
     capacity: usize,
+    /// Words with a bit set, so `reuse` clears only those.
+    touched: Vec<usize>,
+}
+
+thread_local! {
+    /// One filter per thread, reused by every search on it.
+    static VISITED: std::cell::RefCell<VisitedFilter> =
+        std::cell::RefCell::new(VisitedFilter::new(0));
+}
+
+/// Runs `f` with an empty filter for `node_count` nodes: this thread's, unless a filter callback
+/// is already searching on it, in which case a fresh one. Reusing it saves allocating and zeroing
+/// `node_count / 8` bytes per layer searched.
+fn with_visited<R>(node_count: usize, f: impl FnOnce(&mut VisitedFilter) -> R) -> R {
+    VISITED.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut visited) => {
+            visited.reuse(node_count);
+            f(&mut visited)
+        }
+        Err(_) => f(&mut VisitedFilter::new(node_count)),
+    })
 }
 
 impl VisitedFilter {
@@ -98,7 +119,20 @@ impl VisitedFilter {
     pub fn new(node_count: usize) -> Self {
         // Calculate number of u64s needed: ceil(N / 64)
         let num_u64s = node_count.div_ceil(64);
-        Self { data: vec![0; num_u64s], capacity: node_count }
+        Self { data: vec![0; num_u64s], capacity: node_count, touched: Vec::new() }
+    }
+
+    /// Empties the filter and sizes it for `node_count` nodes, clearing only the words in use.
+    fn reuse(&mut self, node_count: usize) {
+        for &word in &self.touched {
+            self.data[word] = 0;
+        }
+        self.touched.clear();
+        let words = node_count.div_ceil(64);
+        if self.data.len() < words {
+            self.data.resize(words, 0);
+        }
+        self.capacity = node_count;
     }
 
     /// Mark a node as visited.
@@ -123,6 +157,9 @@ impl VisitedFilter {
         if *word & mask != 0 {
             false // Already visited (Return false to match old API)
         } else {
+            if *word == 0 {
+                self.touched.push(word_idx);
+            }
             *word |= mask; // Mark as visited
             true // Newly visited (Success)
         }
@@ -282,27 +319,26 @@ impl HnswGraph {
         let mut best_id = entry;
         let mut best_dist = self.squared_distance(query, entry)?;
 
-        let mut visited = VisitedFilter::new(self.node_count as usize);
-        visited.visit(entry);
+        with_visited(self.node_count as usize, |visited| {
+            visited.visit(entry);
+            let mut changed = true;
+            while changed {
+                changed = false;
 
-        let mut changed = true;
-        while changed {
-            changed = false;
+                for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
+                    if visited.visit(neighbor_id) {
+                        let dist = self.squared_distance(query, neighbor_id)?;
 
-            for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
-                if visited.visit(neighbor_id) {
-                    let dist = self.squared_distance(query, neighbor_id)?;
-
-                    if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
-                        best_id = neighbor_id;
-                        best_dist = dist;
-                        changed = true;
+                        if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
+                            best_id = neighbor_id;
+                            best_dist = dist;
+                            changed = true;
+                        }
                     }
                 }
             }
-        }
-
-        Ok(best_id)
+            Ok(best_id)
+        })
     }
 
     /// Search within a single layer.
@@ -381,75 +417,75 @@ impl HnswGraph {
         };
         let mut budget = filter.map_or(usize::MAX, |(_, budget)| budget);
 
-        // Dense visited filter: O(n) space, O(1) time per check
-        let mut visited = VisitedFilter::new(self.node_count as usize);
+        // Dense visited filter: O(n) space, O(1) time per check, reused across searches
+        with_visited(self.node_count as usize, |visited| {
+            let mut candidates = BinaryHeap::new();
+            let mut results = BinaryHeap::new();
+            let mut fresh = Vec::with_capacity(self.record_params.max_neighbors(layer));
 
-        let mut candidates = BinaryHeap::new();
-        let mut results = BinaryHeap::new();
-        let mut fresh = Vec::with_capacity(self.record_params.max_neighbors(layer));
-
-        // Zero-copy distance computation
-        let entry_dist = self.squared_distance(query, entry)?;
-        candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
-        if !excluded(entry)? {
-            results.push(SearchResult { id: entry, distance: entry_dist });
-        }
-        visited.visit(entry);
-
-        while let Some(Reverse(current)) = candidates.pop() {
-            // Early termination: current is further than worst result
-            if results.len() >= ef
-                && let Some(worst) = results.peek()
-                && current.distance.total_cmp(&worst.distance) == std::cmp::Ordering::Greater
-            {
-                break;
+            // Zero-copy distance computation
+            let entry_dist = self.squared_distance(query, entry)?;
+            candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
+            if !excluded(entry)? {
+                results.push(SearchResult { id: entry, distance: entry_dist });
             }
+            visited.visit(entry);
 
-            // Start loading every unvisited neighbor's vector before computing any distance, so the
-            // cache misses overlap instead of each distance waiting on its own.
-            fresh.clear();
-            for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
-                if visited.visit(neighbor_id) {
-                    self.storage.prefetch_vector(neighbor_id);
-                    fresh.push(neighbor_id);
+            while let Some(Reverse(current)) = candidates.pop() {
+                // Early termination: current is further than worst result
+                if results.len() >= ef
+                    && let Some(worst) = results.peek()
+                    && current.distance.total_cmp(&worst.distance) == std::cmp::Ordering::Greater
+                {
+                    break;
                 }
-            }
-            for &neighbor_id in &fresh {
-                if FILTERED {
-                    budget = match budget.checked_sub(1) {
-                        Some(left) => left,
-                        None => return Ok(None),
+
+                // Start loading every unvisited neighbor's vector before computing any distance, so the
+                // cache misses overlap instead of each distance waiting on its own.
+                fresh.clear();
+                for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
+                    if visited.visit(neighbor_id) {
+                        self.storage.prefetch_vector(neighbor_id);
+                        fresh.push(neighbor_id);
+                    }
+                }
+                for &neighbor_id in &fresh {
+                    if FILTERED {
+                        budget = match budget.checked_sub(1) {
+                            Some(left) => left,
+                            None => return Ok(None),
+                        };
+                    }
+                    // Zero-copy distance computation
+                    // Reads directly from mmap instead of allocating Vec<f32>
+                    let dist = self.squared_distance(query, neighbor_id)?;
+
+                    let should_add = if results.len() < ef {
+                        true
+                    } else if let Some(worst) = results.peek() {
+                        dist.total_cmp(&worst.distance) == std::cmp::Ordering::Less
+                    } else {
+                        false
                     };
-                }
-                // Zero-copy distance computation
-                // Reads directly from mmap instead of allocating Vec<f32>
-                let dist = self.squared_distance(query, neighbor_id)?;
 
-                let should_add = if results.len() < ef {
-                    true
-                } else if let Some(worst) = results.peek() {
-                    dist.total_cmp(&worst.distance) == std::cmp::Ordering::Less
-                } else {
-                    false
-                };
+                    if should_add {
+                        candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
+                        if excluded(neighbor_id)? {
+                            continue;
+                        }
+                        results.push(SearchResult { id: neighbor_id, distance: dist });
 
-                if should_add {
-                    candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
-                    if excluded(neighbor_id)? {
-                        continue;
-                    }
-                    results.push(SearchResult { id: neighbor_id, distance: dist });
-
-                    if results.len() > ef {
-                        results.pop();
+                        if results.len() > ef {
+                            results.pop();
+                        }
                     }
                 }
             }
-        }
 
-        let mut sorted: Vec<_> = results.into_iter().collect();
-        sorted.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-        Ok(Some(sorted))
+            let mut sorted: Vec<_> = results.into_iter().collect();
+            sorted.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+            Ok(Some(sorted))
+        })
     }
 }
 
