@@ -1,6 +1,7 @@
 //! Runs Chassis on a dataset written by `bench/ann/prepare.py`: build time, file size, and
-//! recall@10 against queries per second on one thread, across `ef_search` values. `batch` builds
-//! with one `add_batch` on every core instead of an `add` per vector.
+//! recall@10 against queries per second on one thread, across `ef_search` values. Queries per
+//! second is the median of five passes over the queries. `batch` builds with one `add_batch` on
+//! every core instead of an `add` per vector.
 //! `bench/ann/reference_bench.py` runs hnswlib or usearch with the same settings.
 //!
 //! `cargo run --release --example ann -- <data_dir> <dataset> [batch]`
@@ -10,6 +11,7 @@ use std::path::Path;
 use std::time::Instant;
 
 const K: usize = 10;
+const PASSES: usize = 5;
 const EF_SEARCH: [usize; 7] = [10, 16, 32, 64, 128, 256, 512];
 
 /// Reads a `prepare.py` file: u32 rows, u32 columns, then little-endian 4-byte values.
@@ -67,10 +69,15 @@ fn main() -> anyhow::Result<()> {
         for query in &queries {
             index.search(query, K)?;
         }
-        let start = Instant::now();
-        let results: Vec<_> =
-            queries.iter().map(|q| index.search(q, K)).collect::<Result<_, _>>()?;
-        let qps = queries.len() as f64 / start.elapsed().as_secs_f64();
+        let mut passes = Vec::with_capacity(PASSES);
+        let mut results = Vec::new();
+        for _ in 0..PASSES {
+            let start = Instant::now();
+            results = queries.iter().map(|q| index.search(q, K)).collect::<Result<_, _>>()?;
+            passes.push(queries.len() as f64 / start.elapsed().as_secs_f64());
+        }
+        passes.sort_by(f64::total_cmp);
+        let qps = passes[PASSES / 2];
         let hits: usize = results
             .iter()
             .zip(&truth)

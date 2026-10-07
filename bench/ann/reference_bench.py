@@ -1,6 +1,7 @@
 """Runs hnswlib or usearch on a dataset written by prepare.py with the same settings as Chassis's
-examples/ann.rs: M 16, ef_construction 200, recall@10 against queries per second. The build uses
-`threads` threads (default 1; 0 for every core), as `ann ... batch` does; search uses one.
+examples/ann.rs: M 16, ef_construction 200, recall@10 against queries per second (the median of five
+passes over the queries). The build uses `threads` threads (default 1; 0 for every core), as
+`ann ... batch` does; search uses one.
 
     pip install numpy hnswlib usearch
     python bench/ann/reference_bench.py {hnswlib,usearch} <data_dir> <dataset> [threads]
@@ -14,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 K = 10
+PASSES = 5
 EF_SEARCH = [10, 16, 32, 64, 128, 256, 512]
 
 
@@ -74,9 +76,12 @@ def main() -> None:
 
     index.search(test, EF_SEARCH[0])
     for ef in EF_SEARCH:
-        start = time.perf_counter()
-        found = index.search(test, ef)
-        qps = len(test) / (time.perf_counter() - start)
+        passes = []
+        for _ in range(PASSES):
+            start = time.perf_counter()
+            found = index.search(test, ef)
+            passes.append(len(test) / (time.perf_counter() - start))
+        qps = sorted(passes)[PASSES // 2]
         recall = np.mean([len(set(f) & set(t)) for f, t in zip(found, truth)]) / K
         print(f"{engine}\t{name}\t{ef}\t{recall:.3f}\t{qps:.0f}", flush=True)
 

@@ -1,0 +1,86 @@
+name: Benchmark
+
+# Chassis against hnswlib on bench/ann datasets, on an x86 and an ARM runner. Run it from the
+# Actions tab, or add the `benchmark` label to a pull request. Shared runners are noisy, so each
+# job runs Chassis, hnswlib, hnswlib, Chassis: compare engines within a job, not across runs.
+on:
+  workflow_dispatch:
+    inputs:
+      datasets:
+        description: "Space-separated: sift-128, glove-100, dbpedia-openai3-1536"
+        default: sift-128
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'benchmark'
+    name: Benchmark (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    env:
+      DATASETS: ${{ inputs.datasets || 'sift-128' }}
+      DATA: bench/ann/data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        id: machine
+        run: |
+          echo "key=$(echo "$DATASETS" | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo
+            echo "SIMD: $(grep -owE 'avx2|avx512f|asimd|sve2?' /proc/cpuinfo | sort -u | tr '\n' ' ')"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: ann-data-${{ hashFiles('bench/ann/prepare.py') }}-${{ steps.machine.outputs.key }}
+
+      - name: Install hnswlib and prepare the data
+        run: |
+          # hnswlib builds from source with -march=native, so it gets this machine's SIMD.
+          pip install numpy h5py pyarrow hnswlib
+          python bench/ann/prepare.py "$DATA" $DATASETS
+          rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet
+
+      - name: Build Chassis
+        run: cargo build --release -p chassis-core --example ann
+
+      - name: Run
+        run: |
+          mkdir results
+          for dataset in $DATASETS; do
+            for run in chassis-1 hnswlib-1 hnswlib-2 chassis-2; do
+              out="results/$dataset-$run.tsv"
+              case $run in
+                chassis-*) target/release/examples/ann "$DATA" "$dataset" > "$out" ;;
+                hnswlib-*) python bench/ann/reference_bench.py hnswlib "$DATA" "$dataset" > "$out" ;;
+              esac
+            done
+          done
+          python bench/ann/summary.py results/*.tsv >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ matrix.runner }}
+          path: results/
