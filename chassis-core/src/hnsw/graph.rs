@@ -192,8 +192,14 @@ impl HnswGraph {
     /// Returns an error if `node_id` has no stored vector.
     #[inline]
     pub fn compute_distance_zero_copy(&self, query: &[f32], node_id: NodeId) -> Result<f32> {
+        Ok(self.squared_distance(query, node_id)?.sqrt())
+    }
+
+    /// The square of `compute_distance_zero_copy`, which searches compare.
+    #[inline]
+    pub(crate) fn squared_distance(&self, query: &[f32], node_id: NodeId) -> Result<f32> {
         let vector_slice = self.storage.get_vector_slice(node_id)?;
-        Ok(crate::distance::euclidean_distance(query, vector_slice))
+        Ok(crate::distance::squared_euclidean(query, vector_slice))
     }
 
     /// Makes every node and delete so far durable: the flush commit point (ADR-0008, decision 6).

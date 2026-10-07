@@ -50,27 +50,39 @@ pub(crate) fn unit(v: &[f32]) -> anyhow::Result<Vec<f32>> {
 /// - Fallback: Portable scalar implementation
 #[inline]
 pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
+    squared_euclidean(a, b).sqrt()
+}
+
+/// The square of `euclidean_distance`. It ranks vectors the same way without a square root, so
+/// searches compare it and take roots only of the distances they return.
+#[inline]
+pub(crate) fn squared_euclidean(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
 
     #[cfg(target_arch = "x86_64")]
     {
         // The kernel uses FMA instructions too; a CPU with AVX2 but not FMA must not run it.
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            return unsafe { euclidean_distance_avx2(a, b) };
+            return unsafe { squared_euclidean_avx2(a, b) };
         }
     }
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { euclidean_distance_neon(a, b) };
+        return unsafe { squared_euclidean_neon(a, b) };
     }
 
-    euclidean_distance_scalar(a, b)
+    squared_euclidean_scalar(a, b)
 }
 
 /// Scalar implementation (portable fallback)
 #[inline]
 pub fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {
+    squared_euclidean_scalar(a, b).sqrt()
+}
+
+#[inline]
+fn squared_euclidean_scalar(a: &[f32], b: &[f32]) -> f32 {
     let mut sum = 0.0_f32;
 
     for i in 0..a.len() {
@@ -78,7 +90,7 @@ pub fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {
         sum += diff * diff;
     }
 
-    sum.sqrt()
+    sum
 }
 
 /// AVX2 implementation with 4-way accumulator unrolling (x86_64 only)
@@ -100,7 +112,7 @@ pub fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {
 /// Scalar tail: Process final <8 elements
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
+unsafe fn squared_euclidean_avx2(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::*;
 
     let len = a.len();
@@ -173,7 +185,7 @@ unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
         i += 1;
     }
 
-    total.sqrt()
+    total
 }
 
 /// NEON implementation with 4-way accumulator unrolling (aarch64)
@@ -184,7 +196,7 @@ unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
 /// NEON processes 4 floats per vector (vs 8 for AVX2), so main loop processes 16 floats.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
+unsafe fn squared_euclidean_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::*;
 
     let len = a.len();
@@ -248,7 +260,7 @@ unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         i += 1;
     }
 
-    total.sqrt()
+    total
 }
 
 /// Compute cosine distance (1 - cosine similarity).
@@ -415,11 +427,11 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_avx2_specific() {
-        if is_x86_feature_detected!("avx2") {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             let a: Vec<f32> = (0..1024).map(|i| i as f32 * 0.01).collect();
             let b: Vec<f32> = (0..1024).map(|i| (i as f32) * 0.01 + 1.0).collect();
 
-            let avx2_result = unsafe { euclidean_distance_avx2(&a, &b) };
+            let avx2_result = unsafe { squared_euclidean_avx2(&a, &b) }.sqrt();
             let scalar_result = euclidean_distance_scalar(&a, &b);
 
             assert!(
@@ -437,7 +449,7 @@ mod tests {
         let a: Vec<f32> = (0..1024).map(|i| i as f32 * 0.01).collect();
         let b: Vec<f32> = (0..1024).map(|i| (i as f32) * 0.01 + 1.0).collect();
 
-        let neon_result = unsafe { euclidean_distance_neon(&a, &b) };
+        let neon_result = unsafe { squared_euclidean_neon(&a, &b) }.sqrt();
         let scalar_result = euclidean_distance_scalar(&a, &b);
 
         assert!(

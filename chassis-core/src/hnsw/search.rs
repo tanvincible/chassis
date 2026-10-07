@@ -20,6 +20,14 @@ use anyhow::Result;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+/// Results with true distances: search compares squared ones.
+fn rooted(mut results: Vec<SearchResult>) -> Vec<SearchResult> {
+    for result in &mut results {
+        result.distance = result.distance.sqrt();
+    }
+    results
+}
+
 /// Slots a filtered search samples to estimate how many match.
 const FILTER_SAMPLE: u64 = 1024;
 
@@ -182,7 +190,7 @@ impl HnswGraph {
 
         // Return top k
         candidates.truncate(k);
-        Ok(candidates)
+        Ok(rooted(candidates))
     }
 
     /// The `k` nearest live nodes that `allow` accepts (ADR-0009). HNSW visits about `1 / s` times
@@ -217,13 +225,13 @@ impl HnswGraph {
             self.search_layer::<true>(query, current, ef, 0, self.skips(), filter)?
         {
             found.truncate(k);
-            return Ok((found, false));
+            return Ok((rooted(found), false));
         }
 
         let mut nearest = BinaryHeap::new();
         for slot in 0..self.node_count {
             if self.is_live(slot)? && allow(slot)? {
-                let distance = self.compute_distance_zero_copy(query, slot)?;
+                let distance = self.squared_distance(query, slot)?;
                 let nearer = |w: &SearchResult| distance.total_cmp(&w.distance).is_lt();
                 if nearest.len() < k || nearest.peek().is_some_and(nearer) {
                     nearest.push(SearchResult { id: slot, distance });
@@ -233,7 +241,7 @@ impl HnswGraph {
                 }
             }
         }
-        Ok((nearest.into_sorted_vec(), true))
+        Ok((rooted(nearest.into_sorted_vec()), true))
     }
 
     /// Live slots `allow` accepts, estimated from about `FILTER_SAMPLE` of them, one per step,
@@ -272,7 +280,7 @@ impl HnswGraph {
         layer: usize,
     ) -> Result<NodeId> {
         let mut best_id = entry;
-        let mut best_dist = self.compute_distance_zero_copy(query, entry)?;
+        let mut best_dist = self.squared_distance(query, entry)?;
 
         let mut visited = VisitedFilter::new(self.node_count as usize);
         visited.visit(entry);
@@ -283,7 +291,7 @@ impl HnswGraph {
 
             for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
                 if visited.visit(neighbor_id) {
-                    let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
+                    let dist = self.squared_distance(query, neighbor_id)?;
 
                     if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
                         best_id = neighbor_id;
@@ -331,7 +339,7 @@ impl HnswGraph {
         ef: usize,
         layer: usize,
     ) -> Result<Vec<SearchResult>> {
-        self.search_layer_filtered(query, entry, ef, layer, false)
+        Ok(rooted(self.search_layer_filtered(query, entry, ef, layer, false)?))
     }
 
     /// Like `search_layer_optimized`; with `skip_deleted`, deleted nodes are still traversed
@@ -381,7 +389,7 @@ impl HnswGraph {
         let mut fresh = Vec::with_capacity(self.record_params.max_neighbors(layer));
 
         // Zero-copy distance computation
-        let entry_dist = self.compute_distance_zero_copy(query, entry)?;
+        let entry_dist = self.squared_distance(query, entry)?;
         candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
         if !excluded(entry)? {
             results.push(SearchResult { id: entry, distance: entry_dist });
@@ -415,7 +423,7 @@ impl HnswGraph {
                 }
                 // Zero-copy distance computation
                 // Reads directly from mmap instead of allocating Vec<f32>
-                let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
+                let dist = self.squared_distance(query, neighbor_id)?;
 
                 let should_add = if results.len() < ef {
                     true
