@@ -346,6 +346,10 @@ impl HnswGraph {
         }
 
         let base_vector = self.storage.get_vector_slice(base_node)?;
+        // Start loading every candidate's vector first, so the cache misses overlap.
+        for &id in candidates {
+            self.storage.prefetch_vector(id);
+        }
         let mut by_distance: Vec<(NodeId, f32)> = candidates
             .iter()
             .map(|&id| {
