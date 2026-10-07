@@ -74,6 +74,25 @@ fn test_filtered_search_returns_the_nearest_accepted_ids() {
 }
 
 #[test]
+fn test_a_filter_may_search_the_index_itself() {
+    let dir = tempdir().unwrap();
+    let index = build(&dir.path().join("f.chassis"), IndexOptions::default());
+    let (query, probe) = (vector(100_000), vector(100_001));
+    // Accept an id only if it isn't the probe's nearest neighbor, found by a search made from
+    // inside the filter, on the thread that is already searching.
+    let banned = index.search(&probe, 1).unwrap()[0].id;
+    let found = index
+        .search_filtered(&query, 10, |id| index.search(&probe, 1).unwrap()[0].id != id)
+        .unwrap();
+    let want = index.search_filtered(&query, 10, |id| id != banned).unwrap();
+    let ids =
+        |results: &[chassis_core::SearchResult]| results.iter().map(|r| r.id).collect::<Vec<_>>();
+    assert_eq!(ids(&found), ids(&want));
+    assert_eq!(found.len(), 10);
+    assert!(!ids(&found).contains(&banned));
+}
+
+#[test]
 fn test_filtered_search_skips_deleted_vectors() {
     let dir = tempdir().unwrap();
     let mut index = build(&dir.path().join("f.chassis"), IndexOptions::default());
