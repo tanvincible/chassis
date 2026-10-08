@@ -73,8 +73,53 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
     euclidean_distance_scalar(a, b)
 }
 
-/// The kernel `euclidean_distance` runs on this machine, for code that computes many distances
-/// to look up once instead of on every call.
+/// A distance kernel that a loop computing many distances is compiled around, so that the kernel
+/// is inlined into it and chosen once, not per call (ADR-0013).
+pub(crate) trait Kernel {
+    /// # Safety
+    ///
+    /// The slices must be the same length, and the CPU must have what the kernel uses.
+    unsafe fn distance(a: &[f32], b: &[f32]) -> f32;
+}
+
+/// What every CPU of the target has: NEON on aarch64, plain arithmetic elsewhere.
+pub(crate) struct Portable;
+
+impl Kernel for Portable {
+    #[inline(always)]
+    unsafe fn distance(a: &[f32], b: &[f32]) -> f32 {
+        #[cfg(target_arch = "aarch64")]
+        {
+            // SAFETY: every aarch64 CPU has NEON; the caller vouches for the lengths.
+            return unsafe { euclidean_distance_neon(a, b) };
+        }
+        #[allow(unreachable_code)]
+        euclidean_distance_scalar(a, b)
+    }
+}
+
+/// AVX2 and FMA. A loop that uses it has to be compiled for them too, or the call can't inline.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct Avx2;
+
+#[cfg(target_arch = "x86_64")]
+impl Kernel for Avx2 {
+    #[inline(always)]
+    unsafe fn distance(a: &[f32], b: &[f32]) -> f32 {
+        // SAFETY: the caller vouches for the CPU and the lengths.
+        unsafe { euclidean_distance_avx2(a, b) }
+    }
+}
+
+/// Whether this CPU can run `Avx2`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn has_avx2() -> bool {
+    is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
+}
+
+/// The kernel `euclidean_distance` runs on this machine, as a pointer: for code that computes
+/// many distances but isn't compiled per kernel.
 ///
 /// # Safety
 ///
@@ -82,7 +127,7 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 pub(crate) fn kernel() -> unsafe fn(&[f32], &[f32]) -> f32 {
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        if has_avx2() {
             return euclidean_distance_avx2;
         }
     }
@@ -125,6 +170,7 @@ pub fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {
 /// Tail loop: Process remaining 8-float chunks
 /// Scalar tail: Process final <8 elements
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[target_feature(enable = "avx2", enable = "fma")]
 unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::*;
@@ -209,6 +255,7 @@ unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
 /// Same strategy as AVX2: 4 independent accumulators to maximize throughput.
 /// NEON processes 4 floats per vector (vs 8 for AVX2), so main loop processes 16 floats.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[target_feature(enable = "neon")]
 unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::*;
