@@ -351,7 +351,7 @@ impl HnswGraph {
         // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
         // index's dimensions, and so does a query.
         let distance = |slot| -> Result<f32> {
-            Ok(unsafe { K::distance(query, self.storage.get_vector_slice(slot)?) })
+            Ok(unsafe { K::squared(query, self.storage.get_vector_slice(slot)?) })
         };
         let mut best_id = entry;
         let mut best_dist = distance(entry)?;
@@ -514,7 +514,7 @@ impl HnswGraph {
 
         // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
         // index's dimensions, and so does a query.
-        let entry_dist = unsafe { K::distance(query, self.storage.get_vector_slice(entry)?) };
+        let entry_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
         candidates.push(Reverse(pack(entry_dist, entry)));
         if !excluded(entry)? {
             results.push(pack(entry_dist, entry));
@@ -545,7 +545,7 @@ impl HnswGraph {
                         None => return Ok(None),
                     };
                 }
-                let dist = unsafe { K::distance(query, vector) };
+                let dist = unsafe { K::squared(query, vector) };
 
                 if u64::from(dist.to_bits()) < bound {
                     let found = pack(dist, neighbor_id);
@@ -576,19 +576,19 @@ impl HnswGraph {
 /// The slot of a packed node.
 const SLOT: u64 = 0xffff_ffff;
 
-/// A node and its distance in one integer that orders by distance, then slot: the distance's bits
-/// above the slot. A distance is never negative, so its bits order as its value does, and NaN
-/// lands past every distance. A heap of these is half the size of one of pairs, and each of its
-/// steps is one integer comparison.
+/// A node and its squared distance in one integer that orders by distance, then slot: the
+/// distance's bits above the slot. A sum of squares is never negative, so its bits order as its
+/// value does, and NaN lands past every distance. A heap of these is half the size of one of
+/// pairs, and each of its steps is one integer comparison.
 #[inline]
-fn pack(distance: f32, slot: NodeId) -> u64 {
-    debug_assert!(slot < SLOT && !distance.is_sign_negative());
-    (u64::from(distance.to_bits()) << 32) | slot
+fn pack(squared: f32, slot: NodeId) -> u64 {
+    debug_assert!(slot < SLOT);
+    (u64::from(squared.to_bits()) << 32) | slot
 }
 
 #[inline]
 fn unpack(packed: u64) -> SearchResult {
-    SearchResult { id: packed & SLOT, distance: f32::from_bits((packed >> 32) as u32) }
+    SearchResult { id: packed & SLOT, distance: f32::from_bits((packed >> 32) as u32).sqrt() }
 }
 
 /// What a distance's bits must be below for a search to take the node: the worst result's, once
@@ -644,6 +644,24 @@ mod tests {
         // NaN should be ordered deterministically (typically at the end)
         assert!(!results[0].distance.is_nan());
         assert!(!results[1].distance.is_nan());
+    }
+
+    #[test]
+    fn test_packed_nodes_order_by_distance_then_slot() {
+        let nearest_first = [
+            pack(0.0, 9),
+            pack(f32::MIN_POSITIVE, 3),
+            pack(0.5, 7),
+            pack(0.5, 8),
+            pack(1.0e30, 0),
+            pack(f32::INFINITY, 0),
+            pack(f32::NAN, 0),
+            pack(-f32::NAN, 0),
+        ];
+        assert!(nearest_first.is_sorted());
+        // What comes back is the distance, not its square.
+        let found = unpack(pack(6.25, 41));
+        assert_eq!((found.id, found.distance), (41, 2.5));
     }
 
     #[test]
