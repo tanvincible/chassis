@@ -1,0 +1,136 @@
+name: x86 lab
+
+# Experiment branch only: where the time goes in search and build on GitHub's x86 runners, against
+# hnswlib built with -march=native on the same machine. Three identical x86 jobs, since GitHub
+# hands out different CPUs.
+on:
+  push:
+    branches: [lab/x86]
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    name: lab (${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, shard: a }
+          - { runner: ubuntu-latest, shard: b }
+          - { runner: ubuntu-latest, shard: c }
+          - { runner: ubuntu-24.04-arm, shard: a }
+    env:
+      DATA: bench/ann/data
+      NAME: sift-128
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo
+            echo '```'
+            lscpu | grep -E "Model name|Thread|Core|Socket|L1d|L2|L3|MHz" || true
+            echo "SIMD: $(grep -owE 'avx2|fma|avx512f|avx512vl|avx512_vnni|asimd|sve2?' /proc/cpuinfo | sort -u | tr '\n' ' ')"
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: ann-data-${{ hashFiles('bench/ann/prepare.py') }}-sift-128
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install numpy h5py pyarrow
+          python bench/ann/prepare.py "$DATA" "$NAME"
+          rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build the Chassis variants
+        run: |
+          build() { # name, rustflags
+            RUSTFLAGS="--cfg lab $2" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t-$1"
+            cp "$RUNNER_TEMP/t-$1/release/examples/lab" "$RUNNER_TEMP/lab-$1"
+          }
+          build base ""
+          build count "--cfg lab_count"
+          build native "-C target-cpu=native"
+          if [ "$(uname -m)" = x86_64 ]; then build v3 "-C target-cpu=x86-64-v3"; fi
+
+      - name: Kernels
+        run: |
+          mkdir results
+          for v in "$RUNNER_TEMP"/lab-*; do
+            name=${v##*lab-}; [ "$name" = count ] && continue
+            "$v" kernel "$name" | tee -a results/lab.tsv
+          done
+          "$RUNNER_TEMP/hnsw_lab" kernel | tee -a results/lab.tsv
+
+      - name: One-thread builds of 100,000 vectors
+        run: |
+          for round in 1 2; do
+            for v in "$RUNNER_TEMP"/lab-*; do
+              name=${v##*lab-}; [ "$name" = count ] && continue
+              "$v" seq "$DATA" "$NAME" 100000 "$name" | tee -a results/lab.tsv
+            done
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" 100000 "$RUNNER_TEMP/h-seq.bin" 1 | tee -a results/lab.tsv
+          done
+
+      - name: Search, 20,000 vectors (in cache) and 1,000,000
+        run: |
+          L="$RUNNER_TEMP/lab-base"
+          for n in 20000 1000000; do
+            truth="$DATA/$NAME.gt.u32"
+            if [ "$n" != 1000000 ]; then truth="$RUNNER_TEMP/gt-$n.u32"; "$L" truth "$DATA" "$NAME" "$n" "$truth"; fi
+            "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
+            chassis() { # variant, LAB_PF
+              LAB_PF="$2" "$RUNNER_TEMP/lab-$1" search "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$truth" "$1/$2" | tee -a results/lab.tsv
+            }
+            hnsw() {
+              "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" native | tee -a results/lab.tsv
+            }
+            variants="base native"; [ "$(uname -m)" = x86_64 ] && variants="base v3 native"
+            chassis count 0,8,0,0
+            for round in 1 2; do
+              hnsw
+              for v in $variants; do chassis "$v" 0,8,0,0; done
+              # No prefetch; batch with fewer lines; rolling like hnswlib (one line, one ahead) and wider; list prefetch.
+              for pf in 2,0,0,0 0,1,0,0 0,2,0,0 0,4,0,0 1,1,1,0 1,2,1,0 1,8,1,0 1,2,2,0 1,8,2,0 1,8,4,0 0,8,0,1 1,2,2,1 1,8,2,1; do
+                chassis base "$pf"
+              done
+              for pf in 1,1,1,1 1,8,2,1; do chassis native "$pf"; done
+              hnsw
+            done
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '```'
+            cat results/lab.tsv
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lab-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/

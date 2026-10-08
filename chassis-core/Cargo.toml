@@ -56,3 +56,6 @@ criterion = { workspace = true }
 tempfile = { workspace = true }
 trybuild = { workspace = true }
 chassis-core = { path = ".", features = ["internals"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(lab)', 'cfg(lab_count)'] }

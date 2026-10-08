@@ -56,6 +56,32 @@ mod storage;
 #[cfg(test)]
 mod power_loss;
 
+/// Experiment switches for the x86 lab; compiled only with `--cfg lab`.
+#[cfg(lab)]
+pub mod lab {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub static DISTANCES: AtomicU64 = AtomicU64::new(0);
+
+    /// Distance computations so far (counted only with `--cfg lab_count`).
+    pub fn distances() -> u64 {
+        DISTANCES.load(Ordering::Relaxed)
+    }
+
+    /// `LAB_PF=mode,lines,ahead,list`: mode 0 prefetches every unvisited neighbor before any
+    /// distance, 1 prefetches the neighbor `ahead` places on while computing one, 2 none;
+    /// `lines` cache lines per vector; `list` 1 prefetches the next candidate's neighbor list.
+    pub fn pf() -> (u8, usize, usize, bool) {
+        static PF: OnceLock<(u8, usize, usize, bool)> = OnceLock::new();
+        *PF.get_or_init(|| {
+            let spec = std::env::var("LAB_PF").unwrap_or_else(|_| "0,8,0,0".into());
+            let p: Vec<usize> = spec.split(',').map(|x| x.parse().expect("LAB_PF")).collect();
+            (p[0] as u8, p[1], p[2], p[3] != 0)
+        })
+    }
+}
+
 #[cfg(feature = "internals")]
 pub use hnsw::*;
 

@@ -217,6 +217,8 @@ impl HnswGraph {
     /// Returns an error if `node_id` has no stored vector.
     #[inline]
     pub fn compute_distance_zero_copy(&self, query: &[f32], node_id: NodeId) -> Result<f32> {
+        #[cfg(lab_count)]
+        crate::lab::DISTANCES.fetch_add(1, Ordering::Relaxed);
         let vector_slice = self.storage.get_vector_slice(node_id)?;
         Ok(crate::distance::euclidean_distance(query, vector_slice))
     }

@@ -911,6 +911,60 @@ impl Storage {
     /// Asks the CPU to start loading the vector in `slot`, if there is one: up to its first
     /// 512 bytes, after which the hardware prefetcher follows the stream.
     #[inline]
+    /// The first `lines` cache lines of a node's level-0 record.
+    #[cfg(lab)]
+    pub(crate) fn prefetch_record(&self, slot: u64, lines: usize) {
+        if let Ok((segment, i)) = self.segment(slot) {
+            let at = segment.level0 + i * self.geometry.level0_bytes();
+            let bytes = segment.region.bytes(at, self.geometry.level0_bytes());
+            for offset in (0..bytes.len().min(lines * 64)).step_by(64) {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+                    _mm_prefetch::<_MM_HINT_T0>(bytes.as_ptr().add(offset).cast());
+                }
+                #[cfg(target_arch = "aarch64")]
+                unsafe {
+                    std::arch::asm!(
+                        "prfm pldl1keep, [{0}]",
+                        in(reg) bytes.as_ptr().add(offset),
+                        options(nostack, preserves_flags, readonly)
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(lab)]
+    pub(crate) fn prefetch_vector(&self, slot: u64) {
+        self.prefetch_lines(slot, 8);
+    }
+
+    #[cfg_attr(not(lab), allow(dead_code))]
+    #[cfg(lab)]
+    pub(crate) fn prefetch_lines(&self, slot: u64, lines: usize) {
+        if let Ok(vector) = self.get_vector_slice(slot) {
+            let start = vector.as_ptr().cast::<u8>();
+            for offset in (0..(vector.len() * 4).min(lines * 64)).step_by(64) {
+                let line = unsafe { start.add(offset) };
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+                    _mm_prefetch::<_MM_HINT_T0>(line.cast());
+                }
+                #[cfg(target_arch = "aarch64")]
+                unsafe {
+                    std::arch::asm!(
+                        "prfm pldl1keep, [{0}]",
+                        in(reg) line,
+                        options(nostack, preserves_flags, readonly)
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(lab))]
     pub(crate) fn prefetch_vector(&self, slot: u64) {
         if let Ok(vector) = self.get_vector_slice(slot) {
             let start = vector.as_ptr().cast::<u8>();

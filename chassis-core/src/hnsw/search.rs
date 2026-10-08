@@ -437,13 +437,37 @@ impl HnswGraph {
                 // Start loading every unvisited neighbor's vector before computing any distance, so the
                 // cache misses overlap instead of each distance waiting on its own.
                 fresh.clear();
+                #[cfg(lab)]
+                let (pf_mode, pf_lines, pf_ahead, pf_list) = crate::lab::pf();
                 for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
                     if visited.visit(neighbor_id) {
+                        #[cfg(not(lab))]
                         self.storage.prefetch_vector(neighbor_id);
+                        #[cfg(lab)]
+                        if pf_mode == 0 {
+                            self.storage.prefetch_lines(neighbor_id, pf_lines);
+                        }
                         fresh.push(neighbor_id);
                     }
                 }
+                #[cfg(lab)]
+                let mut lab_i = 0;
                 for &neighbor_id in &fresh {
+                    #[cfg(lab)]
+                    {
+                        if pf_mode == 1 {
+                            // The first neighbors too, before the first distance.
+                            if lab_i == 0 {
+                                for &early in fresh.iter().take(pf_ahead) {
+                                    self.storage.prefetch_lines(early, pf_lines);
+                                }
+                            }
+                            if let Some(&next) = fresh.get(lab_i + pf_ahead) {
+                                self.storage.prefetch_lines(next, pf_lines);
+                            }
+                        }
+                        lab_i += 1;
+                    }
                     if FILTERED {
                         budget = match budget.checked_sub(1) {
                             Some(left) => left,
@@ -464,6 +488,10 @@ impl HnswGraph {
 
                     if should_add {
                         candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
+                        #[cfg(lab)]
+                        if pf_list && let Some(Reverse(next)) = candidates.peek() {
+                            self.storage.prefetch_record(next.id, 3);
+                        }
                         if excluded(neighbor_id)? {
                             continue;
                         }
