@@ -2,9 +2,8 @@
 //! hold: adds, batches, deletes, flushes, compactions and reopens without a flush, with a reader
 //! following along. `CHASSIS_MODEL_SEEDS=2000 cargo test --release --test model_tests` runs more.
 //!
-//! A reopen that loses adds thins the graph: committed nodes keep links to the lost slots in place
-//! of older ones (ADR-0005 amendment). Until the next compaction a search may then reach too few
-//! vectors, so the checks that need a connected graph wait for one.
+//! A reopen that loses adds must leave the committed graph as the last flush left it (ADR-0012),
+//! so every check holds after one too.
 
 use chassis_core::{
     DistanceMetric, IndexOptions, IndexReader, SearchResult, VectorIndex, cosine_distance,
@@ -142,11 +141,9 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
     // durable, which is all a reopen or a reader may show.
     let (mut now, mut committed) = (State::default(), State::default());
     let (mut found_self, mut self_searches) = (0, 0);
-    let (mut unflushed_adds, mut thinned) = (false, false);
 
     for step in 0..150 {
         run.step = step;
-        let before = now.live.len();
         match rng.below(100) {
             0..=24 => {
                 run.op = "add";
@@ -207,7 +204,6 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
                 run.op = "flush";
                 index.flush().unwrap();
                 committed = now.clone();
-                unflushed_adds = false;
             }
             76..=79 => {
                 run.op = "compact";
@@ -217,7 +213,6 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
                 }
                 index.compact().unwrap();
                 committed = now.clone();
-                (unflushed_adds, thinned) = (false, false);
             }
             80..=83 => {
                 run.op = "reopen";
@@ -225,13 +220,12 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
                 drop(index);
                 index = open(&path, &run);
                 now = committed.clone();
-                thinned |= std::mem::take(&mut unflushed_adds);
             }
             84..=91 => {
                 run.op = "search";
                 let (query, k) = (rng.vector(), 1 + rng.below(12) as usize);
                 run.check_results(&index.search(&query, k).unwrap(), &query, &now, k);
-                if let Some(id) = now.pick(&mut rng).filter(|_| !thinned) {
+                if let Some(id) = now.pick(&mut rng) {
                     self_searches += 1;
                     let nearest = index.search(&now.live[&id], 1).unwrap();
                     found_self += u64::from(nearest.first().is_some_and(|r| r.id == id));
@@ -255,7 +249,7 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
                 let found = index.search_filtered(&query, k, |id| few.contains(&id)).unwrap();
                 let ids: Vec<u64> = found.iter().map(|r| r.id).collect();
                 let exact = run.exact(&query, &now, k, |id| few.contains(&id));
-                assert!(thinned || ids == exact, "{}: {ids:?} not {exact:?}", run.at());
+                assert_eq!(ids, exact, "{}", run.at());
             }
             _ => {
                 run.op = "reader";
@@ -269,11 +263,10 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
             }
         }
         assert_eq!(index.len(), now.live.len() as u64, "{}: len", run.at());
-        unflushed_adds |= now.live.len() > before;
         // A search that returns fewer than it could has lost its way through the graph.
         let reachable = index.search(&rng.vector(), 10).unwrap().len();
         let all = now.live.len().min(10);
-        assert!(thinned || reachable == all, "{}: {reachable} of {all} reached", run.at());
+        assert_eq!(reachable, all, "{}: a search lost its way", run.at());
     }
 
     // The end state survives a commit and a reopen, vector for vector, and a compaction after

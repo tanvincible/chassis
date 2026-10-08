@@ -155,8 +155,10 @@ fn test_reader_searches_while_a_batch_links() {
 }
 
 /// A batch lost to a crash leaves links to its slots in committed nodes, on every layer the lost
-/// nodes were on. A batch reusing a slot must not follow them to a node that hasn't linked yet,
-/// least of all to the node it is linking: it would find no neighbors but itself.
+/// nodes were on, unless the undo file takes them out again (ADR-0012): a power loss can take the
+/// file, and older releases wrote none. A batch reusing a slot must not follow such a link to a
+/// node that hasn't linked yet, least of all to the node it is linking: it would find no
+/// neighbors but itself.
 #[test]
 fn test_a_batch_reusing_a_lost_batchs_slots_stays_connected() {
     let dir = tempdir().unwrap();
@@ -167,6 +169,7 @@ fn test_a_batch_reusing_a_lost_batchs_slots_stays_connected() {
     index.flush().unwrap();
     index.add_batch(&flat(kept..n)).unwrap();
     drop(index);
+    std::fs::remove_file(dir.path().join("index.chassis.undo")).unwrap();
 
     let mut index = VectorIndex::open(&path, DIMS as u32, options()).unwrap();
     assert_eq!(index.len(), kept);

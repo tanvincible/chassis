@@ -146,8 +146,8 @@ fn test_reader_survives_a_writer_crash_and_restart() {
     for id in 5000..5600 {
         assert_eq!(writer.add(&vector(id)).unwrap(), id - 4500);
     }
-    // Edges the crashed writer pruned stay lost (ADR-0005), so a few committed vectors are hard to
-    // reach; the reader must do no worse than the writer on the same graph.
+    // Reopening wrote back the lists the crashed writer had changed (ADR-0012). HNSW may still
+    // miss a vector now and then; the reader must do no worse than the writer on the same graph.
     let (mut reader_misses, mut writer_misses) = (0, 0);
     for id in 0..500 {
         reader_misses += usize::from(top(&mut reader, id) != id);

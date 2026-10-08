@@ -194,6 +194,24 @@ impl FileHeader {
     }
 
     /// The current header and which copy holds it.
+    /// Names the graph this header commits. A header written for a flag or for an intent to
+    /// delete names the same graph as the one before it.
+    pub(crate) fn graph_hash(&self) -> u64 {
+        let mut b = [0u8; 56];
+        b[0..4].copy_from_slice(&self.dims.to_le_bytes());
+        b[4..6].copy_from_slice(&self.m.to_le_bytes());
+        b[6..8].copy_from_slice(&self.m0.to_le_bytes());
+        b[8] = self.max_layers;
+        b[9] = self.metric;
+        b[12..16].copy_from_slice(&self.max_layer.to_le_bytes());
+        b[16..24].copy_from_slice(&self.count.to_le_bytes());
+        b[24..32].copy_from_slice(&self.entry_point.to_le_bytes());
+        b[32..40].copy_from_slice(&self.epoch.to_le_bytes());
+        b[40..48].copy_from_slice(&self.deleted_count.to_le_bytes());
+        b[48..56].copy_from_slice(&self.next_id.to_le_bytes());
+        xxh3_64(&b)
+    }
+
     pub fn newest(a: Option<Self>, b: Option<Self>) -> Result<(usize, Self)> {
         match (a, b) {
             (Some(a), Some(b)) if a.sequence == b.sequence => {

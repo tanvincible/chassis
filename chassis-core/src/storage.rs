@@ -9,6 +9,10 @@
 //! A flush makes data durable, then writes the header copy that does not hold the newest header.
 //! Readers in other processes map the file read-only and take a snapshot per query; a writer
 //! publishes what it adds since its last commit in the live page (ADR-0008, decision 5).
+//!
+//! Adds change the lists of committed nodes in place before they are committed themselves. The
+//! lists as committed are saved in `<name>.undo` first, and a writer opening the file after a
+//! crash writes them back (ADR-0012).
 
 use crate::distance::DistanceMetric;
 use crate::header::{FLAG_SUPERSEDED, FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES, REGIONS_START};
@@ -17,8 +21,11 @@ use crate::legacy::{LegacyIndex, is_legacy};
 use anyhow::{Context, Result, bail};
 use memmap2::{MmapOptions, MmapRaw};
 use std::fs::{File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::{Mutex, PoisonError};
+use xxhash_rust::xxh3::xxh3_64_with_seed;
 
 #[cfg(target_endian = "big")]
 compile_error!("Chassis files are little-endian and read in place");
@@ -296,6 +303,52 @@ const LIVE_COUNTS: usize = LIVE + 8;
 /// Segment table page offsets, then heap table page offsets.
 const LIVE_PAGES: usize = LIVE + 64;
 
+const UNDO_MAGIC: &[u8; 8] = b"CHSUNDO1";
+
+/// The undo file, `<name>.undo` (ADR-0012): the lists of each committed node as the last commit
+/// left them, saved before they first change. After `UNDO_MAGIC`, each entry is a slot (u32), its
+/// layer count (u8), per layer a count (u16) and that many neighbors (u32), then an xxh3-64 of the
+/// entry seeded with the hash of the graph it was saved from, so no other commit's entries pass.
+#[derive(Debug)]
+struct Undo {
+    path: PathBuf,
+    /// `FileHeader::graph_hash` of the commit the saved lists belong to.
+    graph: u64,
+    /// Created by the first save after a commit and removed by the next commit, with its length.
+    file: Mutex<Option<(File, u64)>>,
+    /// One bit per committed slot, set once its lists are saved.
+    saved: Vec<AtomicU64>,
+}
+
+impl Undo {
+    /// An empty undo file at `path`, not yet created, for changes to the graph `committed` names.
+    fn new(path: PathBuf, committed: &FileHeader) -> Self {
+        let saved = (0..committed.count.div_ceil(64)).map(|_| AtomicU64::new(0)).collect();
+        Self { path, graph: committed.graph_hash(), file: Mutex::new(None), saved }
+    }
+
+    fn append(&self, entry: &[u8]) -> Result<()> {
+        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut bytes = Vec::with_capacity(16 + entry.len());
+        if file.is_none() {
+            let created = File::create(&self.path)
+                .with_context(|| format!("Failed to create {}", self.path.display()))?;
+            *file = Some((created, 0));
+            bytes.extend_from_slice(UNDO_MAGIC);
+        }
+        bytes.extend_from_slice(entry);
+        let (file, len) = file.as_mut().expect("created above");
+        if let Err(e) = file.write_all(&bytes) {
+            // Whatever part was written would hide every entry after it.
+            let _ = file.set_len(*len);
+            let _ = file.seek(SeekFrom::Start(*len));
+            return Err(e).with_context(|| format!("Failed to write {}", self.path.display()));
+        }
+        *len += bytes.len() as u64;
+        Ok(())
+    }
+}
+
 /// Storage engine for one index file.
 #[derive(Debug)]
 pub struct Storage {
@@ -326,6 +379,8 @@ pub struct Storage {
     poisoned: bool,
     /// The file a migration replaced, kept locked while this one is open (Unix).
     _replaced: Option<File>,
+    /// In a writer, where committed nodes' lists are saved before they change.
+    undo: Option<Undo>,
 }
 
 impl Storage {
@@ -382,7 +437,7 @@ impl Storage {
             drop(headers);
             return Self::initialize(file, path, dimensions, params, metric);
         }
-        Self::load(file, headers, dimensions)
+        Self::load(file, headers, dimensions, path)
     }
 
     /// Opens a file for reading while a `VectorIndex` in another process may be writing it: no
@@ -431,6 +486,7 @@ impl Storage {
         headers.store_words(0, &FileHeader { sequence: 1, ..header.clone() }.to_bytes());
         headers.store_words(HEADER_STRIDE, &header.to_bytes());
         let mut storage = Self::new(file, true, headers, FileHeader { sequence: 1, ..header }, 0)?;
+        storage.undo = Some(Undo::new(sibling(path, "undo"), &storage.committed));
         storage.publish_regions();
         storage.publish_routing(0);
         storage.sync()?;
@@ -463,11 +519,12 @@ impl Storage {
             committed: header,
             poisoned: false,
             _replaced: None,
+            undo: None,
         })
     }
 
     /// Opens an existing v3 file for writing.
-    fn load(file: File, headers: Region, dims: u32) -> Result<Self> {
+    fn load(file: File, headers: Region, dims: u32, path: &Path) -> Result<Self> {
         let a = FileHeader::from_bytes(headers.bytes(0, HEADER_STRIDE))?;
         let b = FileHeader::from_bytes(headers.bytes(HEADER_STRIDE, HEADER_STRIDE))?;
         let (copy, header) = FileHeader::newest(a, b)?;
@@ -486,6 +543,8 @@ impl Storage {
         }
         let mut storage = Self::new(file, true, headers, header, copy)?;
         storage.map_regions(None)?;
+        storage.undo = Some(Undo::new(sibling(path, "undo"), &storage.committed));
+        storage.roll_back()?;
         if storage.state.pending_epoch != 0 {
             storage.recover()?;
         }
@@ -754,6 +813,7 @@ impl Storage {
         drop(legacy);
 
         replace(&temp, path, original, &mut storage)?;
+        storage.moved_to(path);
         Ok(storage)
     }
 
@@ -1039,14 +1099,171 @@ impl Storage {
         Ok(())
     }
 
-    /// Replaces the list of an existing record at one of its layers.
+    /// Replaces the list of an existing record at one of its layers. Two threads must not call
+    /// this for the same slot at once.
     pub(crate) fn write_neighbors(&self, slot: u64, layer: usize, ids: &[u64]) -> Result<()> {
         let list = self.neighbors(slot, layer)?;
         if list.is_empty() {
             bail!("Node {slot} is not on layer {layer}");
         }
+        self.save_lists(&[slot])?;
         store_list(list, ids);
         Ok(())
+    }
+
+    /// Saves the lists of those of `slots` that are committed and not saved since the commit, in
+    /// one write to the undo file, before any of them changes. Callers pass every node they are
+    /// about to relink at once, as a write per node costs many times more.
+    ///
+    /// No lock is needed: a list only changes once an entry for it is written, so the first entry
+    /// written for a slot always holds its committed lists, and `roll_back` uses that one.
+    pub(crate) fn save_lists(&self, slots: &[u64]) -> Result<()> {
+        let committed = self.committed.count;
+        let Some(undo) = &self.undo else { return Ok(()) };
+        let saved = |slot: u64| (&undo.saved[(slot / 64) as usize], 1u64 << (slot % 64));
+        let (mut entries, mut saving) = (Vec::new(), Vec::new());
+        for &slot in slots {
+            if slot >= committed || saving.contains(&slot) {
+                continue;
+            }
+            let (word, bit) = saved(slot);
+            if word.load(Ordering::Acquire) & bit != 0 {
+                continue;
+            }
+            let start = entries.len();
+            let layers = self.layer_count(slot)?;
+            entries.extend_from_slice(&(slot as u32).to_le_bytes());
+            entries.push(layers as u8);
+            for layer in 0..layers {
+                // Links to slots past the commit, which an older crash left, aren't kept.
+                let ids = self.neighbors(slot, layer)?.iter().map(|id| id.load(Ordering::Relaxed));
+                let ids: Vec<u32> = ids.filter(|&id| u64::from(id) < committed).collect();
+                entries.extend_from_slice(&(ids.len() as u16).to_le_bytes());
+                entries.extend(ids.iter().flat_map(|id| id.to_le_bytes()));
+            }
+            let sum = xxh3_64_with_seed(&entries[start..], undo.graph);
+            entries.extend_from_slice(&sum.to_le_bytes());
+            saving.push(slot);
+        }
+        if saving.is_empty() {
+            return Ok(());
+        }
+        undo.append(&entries)?;
+        for slot in saving {
+            let (word, bit) = saved(slot);
+            word.fetch_or(bit, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    /// Writes back the lists the undo file saved, if it saved them from the commit this file is
+    /// at: the adds made since are gone, and now their links in committed nodes are too. Then
+    /// removes the file.
+    fn roll_back(&mut self) -> Result<()> {
+        let Some(undo) = &self.undo else { return Ok(()) };
+        let path = undo.path.clone();
+        // ponytail: reads the whole file, at most about 150 bytes per committed vector; read it
+        // in pieces if indexes outgrow that.
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e).with_context(|| format!("Failed to read {}", path.display())),
+        };
+        // Two threads can each save a slot; only the first entry is sure to predate any change.
+        let mut restored = std::collections::HashSet::new();
+        for (slot, lists) in self.undo_entries(&bytes, undo.graph) {
+            if restored.insert(slot) {
+                for (layer, ids) in lists.iter().enumerate() {
+                    store_list(self.neighbors(slot, layer)?, ids);
+                }
+            }
+        }
+        if !restored.is_empty() {
+            // Before the file goes: a power loss must not take the saved lists and keep the links.
+            self.sync()?;
+        }
+        // If it can't be removed it is applied again, to no effect, or no longer matches.
+        let _ = std::fs::remove_file(&path);
+        Ok(())
+    }
+
+    /// The entries of an undo file saved from the commit `graph` names, up to the first that is
+    /// torn or doesn't fit this file: a slot and its list on each layer.
+    fn undo_entries<'a>(
+        &'a self,
+        bytes: &'a [u8],
+        graph: u64,
+    ) -> impl Iterator<Item = (u64, Vec<Vec<u64>>)> + 'a {
+        fn take<'b>(rest: &mut &'b [u8], n: usize) -> Option<&'b [u8]> {
+            let (head, tail) = rest.split_at_checked(n)?;
+            *rest = tail;
+            Some(head)
+        }
+        let mut rest = bytes.strip_prefix(UNDO_MAGIC.as_slice()).unwrap_or_default();
+        std::iter::from_fn(move || {
+            let start = rest;
+            let entry = (|| {
+                let slot = u64::from(u32::from_le_bytes(take(&mut rest, 4)?.try_into().ok()?));
+                let layers = usize::from(take(&mut rest, 1)?[0]);
+                if slot >= self.committed.count || self.layer_count(slot).ok()? != layers {
+                    return None;
+                }
+                let mut lists = Vec::with_capacity(layers);
+                for layer in 0..layers {
+                    let count = u16::from_le_bytes(take(&mut rest, 2)?.try_into().ok()?);
+                    if usize::from(count) > self.neighbors(slot, layer).ok()?.len() {
+                        return None;
+                    }
+                    let ids = take(&mut rest, 4 * usize::from(count))?.as_chunks::<4>().0;
+                    let ids: Vec<u64> =
+                        ids.iter().map(|&id| u32::from_le_bytes(id).into()).collect();
+                    if ids.iter().any(|&id| id >= self.committed.count) {
+                        return None;
+                    }
+                    lists.push(ids);
+                }
+                let body = &start[..start.len() - rest.len()];
+                let sum = take(&mut rest, 8)?;
+                (sum == xxh3_64_with_seed(body, graph).to_le_bytes()).then_some((slot, lists))
+            })();
+            if entry.is_none() {
+                rest = &[];
+            }
+            entry
+        })
+    }
+
+    /// Before a commit forces changed lists to disk, makes the lists saved for them durable.
+    fn sync_undo(&mut self) -> Result<()> {
+        #[cfg(test)]
+        if crate::power_loss::simulating() {
+            return Ok(());
+        }
+        let Some(undo) = &mut self.undo else { return Ok(()) };
+        match undo.file.get_mut().unwrap_or_else(PoisonError::into_inner) {
+            Some((file, _)) => file.sync_data().context("Failed to sync the undo file"),
+            None => Ok(()),
+        }
+    }
+
+    /// Once a commit has changed the graph, the lists saved from the one before are obsolete:
+    /// removes the undo file and starts over.
+    fn restart_undo(&mut self) {
+        let Some(undo) = &mut self.undo else { return };
+        if self.committed.graph_hash() == undo.graph {
+            return;
+        }
+        if undo.file.get_mut().unwrap_or_else(PoisonError::into_inner).take().is_some() {
+            let _ = std::fs::remove_file(&undo.path);
+        }
+        *undo = Undo::new(std::mem::take(&mut undo.path), &self.committed);
+    }
+
+    /// This file has been renamed to `path`.
+    pub(crate) fn moved_to(&mut self, path: &Path) {
+        if let Some(undo) = &mut self.undo {
+            undo.path = sibling(path, "undo");
+        }
     }
 
     /// Commits all written slots (the graph's own commit counts only the slots it linked).
@@ -1079,6 +1296,7 @@ impl Storage {
     }
 
     fn commit_inner(&mut self, deletes: &[u64]) -> Result<()> {
+        self.sync_undo()?;
         if !deletes.is_empty() {
             // An intent header first: the previous commit, plus the epoch recovery rolls back.
             let epoch = self.state.epoch.checked_add(1).context("Delete epoch overflow")?;
@@ -1095,6 +1313,7 @@ impl Storage {
         self.write_header(&state);
         self.sync()?;
         self.committed = state;
+        self.restart_undo();
         Ok(())
     }
 
@@ -1453,6 +1672,31 @@ mod tests {
         }
         storage.commit().unwrap();
         assert_eq!(storage.get_vector(100).unwrap(), vec![3.0; 4]);
+    }
+
+    #[test]
+    fn test_roll_back_keeps_the_first_entry_saved_for_a_slot() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let list = |storage: &Storage| -> Vec<u32> {
+            let list = storage.neighbors(0, 0).unwrap();
+            list.iter().map(|id| id.load(Ordering::Relaxed)).filter(|&id| id != EMPTY).collect()
+        };
+        let mut storage = Storage::open(&path, 4).unwrap();
+        for slot in 0..4 {
+            storage.insert(&[slot as f32; 4]).unwrap();
+            storage.write_record(slot, &[vec![(slot + 1) % 4]]).unwrap();
+        }
+        storage.commit().unwrap();
+        // Changing a committed list saves it first, whoever calls.
+        storage.write_neighbors(0, 0, &[2]).unwrap();
+        // A second thread that read the list after that change, having missed that it was saved.
+        storage.undo.as_ref().unwrap().saved[0].store(0, Ordering::Relaxed);
+        storage.save_lists(&[0]).unwrap();
+        assert_eq!(list(&storage), [2]);
+        drop(storage);
+
+        assert_eq!(list(&Storage::open(&path, 4).unwrap()), [1]);
     }
 
     #[test]

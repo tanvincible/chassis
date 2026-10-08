@@ -485,6 +485,10 @@ fn test_stale_upper_layer_link_to_a_reused_slot_is_skipped() {
         // Linked into node 0's layer-1 list, then lost to a crash before publishing.
         graph.write_node_and_backlinks(1, 2, &[vec![0], vec![0]]).unwrap();
     }
+    // The undo file would take the link out again (ADR-0012); a power loss can take the file.
+    let mut undo = temp.path().as_os_str().to_owned();
+    undo.push(".undo");
+    std::fs::remove_file(undo).unwrap();
 
     let mut storage = Storage::open(temp.path(), 4).unwrap();
     storage.insert(&[1.0; 4]).unwrap();
