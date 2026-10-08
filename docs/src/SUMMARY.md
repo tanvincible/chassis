@@ -32,6 +32,7 @@
 - [ADR-0011: Compaction (Proposed)](./adr/011-compaction.md)
 - [ADR-0012: Rolling Back Lost Adds (Proposed)](./adr/012-rolling-back-lost-adds.md)
 - [ADR-0013: Prefetching into L2, a Leaner Search Loop, and a Smaller Fill (Proposed)](./adr/013-prefetching-and-a-leaner-search-loop.md)
+- [ADR-0014: Packed Heap Entries, Squared Distances, and a Search Loop That Inlines (Proposed)](./adr/014-packed-heap-entries-and-squared-distances.md)
 
 # Development
 

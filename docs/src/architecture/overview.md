@@ -116,7 +116,7 @@ Measured numbers, the machine they came from and how to reproduce them are in
 ### Search (`hnsw/search.rs`)
 - **Dense visited filter**: O(1) array access instead of HashSet hashing
 - **Allocations**: Every layer search allocates a `node_count`-bit visited set; layer 0 also allocates two heaps and the result `Vec`
-- **NaN-safe ordering**: `f32::total_cmp` for deterministic behavior
+- **NaN-safe ordering**: a node and its squared distance packed into one integer, NaN past every distance (ADR-0014)
 
 ## Key Invariants
 
