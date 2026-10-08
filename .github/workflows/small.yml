@@ -1,0 +1,124 @@
+name: x86 small
+
+# Experiment branch only: why Chassis trails hnswlib on x86 when the index fits in cache.
+# Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/small.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+
+jobs:
+  small:
+    name: small (${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, shard: a }
+          - { runner: ubuntu-latest, shard: b }
+          - { runner: ubuntu-latest, shard: c }
+          - { runner: ubuntu-latest, shard: d }
+          - { runner: ubuntu-latest, shard: e }
+          - { runner: ubuntu-24.04-arm, shard: a }
+    env:
+      DATA: bench/ann/data
+      NAME: sift-128
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: ann-data-${{ hashFiles('bench/ann/prepare.py') }}-sift-128
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install numpy h5py pyarrow
+          python bench/ann/prepare.py "$DATA" "$NAME"
+          rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build Chassis as shipped, with counting, and for x86-64-v3
+        run: |
+          git fetch -q origin lab/exp-count
+          git worktree add "$RUNNER_TEMP/src" FETCH_HEAD
+          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+          build() { # name, rustflags
+            (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab $2" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t-$1")
+            cp "$RUNNER_TEMP/t-$1/release/examples/lab" "$RUNNER_TEMP/lab-$1"
+          }
+          build base ""
+          build count "--cfg lab_count"
+          if [ "$(uname -m)" = x86_64 ]; then build v3 "-C target-cpu=x86-64-v3"; fi
+
+      - name: Search small indexes
+        run: |
+          mkdir results
+          L="$RUNNER_TEMP/lab-base"
+          "$L" kernel base | tee -a results/lab.tsv
+          "$RUNNER_TEMP/hnsw_lab" kernel | tee -a results/lab.tsv
+          for n in 2000 20000 100000; do
+            truth="$RUNNER_TEMP/gt-$n.u32"
+            "$L" truth "$DATA" "$NAME" "$n" "$truth"
+            "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
+            chassis() { # variant, tag, [extra env]
+              env $3 "$RUNNER_TEMP/lab-$1" search "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$truth" "$2" 2>> results/pages.txt | tee -a results/lab.tsv
+            }
+            hnsw() { # tag, [extra env]
+              env $2 "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" "$1" 2>> results/pages.txt | tee -a results/lab.tsv
+            }
+            chassis count count
+            for round in 1 2 3; do
+              hnsw native
+              hnsw nothp LAB_NO_THP=1
+              chassis base shipped
+              if [ "$(uname -m)" = x86_64 ]; then chassis v3 v3; fi
+            done
+            # The file read back from disk with huge pages asked for (ext4 large folios).
+            sync; echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
+            best=base; [ "$(uname -m)" = x86_64 ] && best=v3
+            chassis "$best" warmup-huge LAB_MADV=1 > /dev/null
+            for round in 1 2 3; do chassis "$best" huge LAB_MADV=1; done
+          done
+          {
+            echo '```'
+            cat results/lab.tsv
+            sort -u results/pages.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: small-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/
