@@ -1,21 +1,23 @@
-name: x86 sweep
+name: x86 steps
 
-# Experiment branch only: prefetch policies on indexes that fit in cache, Chassis beside hnswlib.
-# Runs when this file changes; edit RUN to rerun.
+# Experiment branch only: each commit of perf/small-index beside the one before and hnswlib, on
+# indexes that fit in cache and on one that doesn't. Runs when this file changes; edit RUN to rerun.
 on:
   push:
     branches: [lab/x86]
-    paths: [.github/workflows/sweep.yml]
+    paths: [.github/workflows/steps.yml]
 
 permissions:
   contents: read
 
 env:
-  RUN: 2
+  RUN: 1
+  # name=commit, oldest first.
+  STEPS: "base=c46fb1c inline=315601b lookup=f282f71 keys=db55a2f sq=ff84bd6 visit=e7b899c pf=1f9fb25"
 
 jobs:
-  sweep:
-    name: sweep (${{ matrix.runner }} ${{ matrix.shard }})
+  steps:
+    name: steps (${{ matrix.runner }} ${{ matrix.shard }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -69,27 +71,33 @@ jobs:
           git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
           g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
 
-      - name: Build Chassis with the policy knob
+      - name: Build Chassis at each step
         run: |
-          git fetch -q origin lab/exp-pf2
-          git worktree add "$RUNNER_TEMP/src" FETCH_HEAD
-          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
-          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_pf" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
-          cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
+          git fetch -q origin perf/small-index
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          for step in $STEPS; do
+            (cd "$RUNNER_TEMP/src" && git checkout -q --detach "${step#*=}" \
+              && cp "$GITHUB_WORKSPACE/chassis-core/examples/lab.rs" chassis-core/examples/lab.rs \
+              && cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t" \
+              && rm chassis-core/examples/lab.rs)
+            cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab-${step%%=*}"
+          done
 
-      - name: Sweep
+      - name: Search at each step
         run: |
-          L="$RUNNER_TEMP/lab"
-          for n in 2000 20000 100000; do
+          L="$RUNNER_TEMP/lab-base"
+          for n in 2000 20000 100000 1000000; do
             truth="$RUNNER_TEMP/gt-$n.u32"
             "$L" truth "$DATA" "$NAME" "$n" "$truth"
             "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
             "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
+            names=$(for step in $STEPS; do echo "${step%%=*}"; done)
+            # The big index only has to show that nothing got slower.
+            [ "$n" = 1000000 ] && names="base keys pf"
             for round in 1 2 3; do
               LAB_PASSES=3 "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" native 2>/dev/null | tee -a results/lab.tsv
-              for pf in default 0,0 0,1 1,1 2,2 4,4 8,8 0,8 2,8; do
-                spec=$pf; [ "$pf" = default ] && spec=
-                LAB_PF=$spec LAB_PASSES=3 "$L" search "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$truth" "pf$pf" 2>/dev/null | tee -a results/lab.tsv
+              for name in $names; do
+                LAB_PASSES=3 "$RUNNER_TEMP/lab-$name" search "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$truth" "$name" 2>/dev/null | tee -a results/lab.tsv
               done
             done
           done
@@ -102,5 +110,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sweep-${{ matrix.runner }}-${{ matrix.shard }}
+          name: steps-${{ matrix.runner }}-${{ matrix.shard }}
           path: results/
