@@ -351,6 +351,8 @@ impl HnswGraph {
         // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
         // index's dimensions, and so does a query.
         let distance = |slot| -> Result<f32> {
+            #[cfg(lab_count)]
+            crate::lab::DISTANCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(unsafe { K::distance(query, self.storage.get_vector_slice(slot)?) })
         };
         let mut best_id = entry;
@@ -531,7 +533,11 @@ impl HnswGraph {
             // Start loading every unvisited neighbor's vector before computing any distance, so the
             // cache misses overlap instead of each distance waiting on its own.
             fresh.clear();
+            #[cfg(lab_count)]
+            crate::lab::HOPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
+                #[cfg(lab_count)]
+                crate::lab::SCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if visited.0.visit(neighbor_id) {
                     let vector = self.storage.get_vector_slice(neighbor_id)?;
                     prefetch.vector(vector);
@@ -545,6 +551,8 @@ impl HnswGraph {
                         None => return Ok(None),
                     };
                 }
+                #[cfg(lab_count)]
+                crate::lab::DISTANCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let dist = unsafe { K::distance(query, vector) };
 
                 if results.len() < ef || dist.total_cmp(&bound).is_lt() {
