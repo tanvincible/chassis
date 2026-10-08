@@ -85,8 +85,10 @@ pub struct VisitedFilter {
     data: Vec<u64>,
     /// Capacity track to avoid checking len() bounds repeatedly
     capacity: usize,
-    /// Words with a bit set, so `reuse` clears only those.
+    /// The words with a bit set are `touched[..used]`, so `reuse` clears only those. One longer
+    /// than `data`: `visit` writes at `used` whether or not the word is new.
     touched: Vec<usize>,
+    used: usize,
 }
 
 thread_local! {
@@ -121,18 +123,26 @@ impl VisitedFilter {
     pub fn new(node_count: usize) -> Self {
         // Calculate number of u64s needed: ceil(N / 64)
         let num_u64s = node_count.div_ceil(64);
-        Self { data: vec![0; num_u64s], capacity: node_count, touched: Vec::new() }
+        Self {
+            data: vec![0; num_u64s],
+            capacity: node_count,
+            touched: vec![0; num_u64s + 1],
+            used: 0,
+        }
     }
 
     /// Empties the filter and sizes it for `node_count` nodes, clearing only the words in use.
     fn reuse(&mut self, node_count: usize) {
-        for &word in &self.touched {
+        for &word in &self.touched[..self.used] {
             self.data[word] = 0;
         }
-        self.touched.clear();
+        self.used = 0;
         let words = node_count.div_ceil(64);
         if self.data.len() < words {
             self.data.resize(words, 0);
+        }
+        if self.touched.len() <= self.data.len() {
+            self.touched.resize(self.data.len() + 1, 0);
         }
         self.capacity = node_count;
     }
@@ -151,20 +161,17 @@ impl VisitedFilter {
         }
 
         let word_idx = idx >> 6;
-        let bit_idx = idx & 63;
-        let mask = 1u64 << bit_idx;
+        let mask = 1u64 << (idx & 63);
 
         let word = unsafe { self.data.get_unchecked_mut(word_idx) };
-
-        if *word & mask != 0 {
-            false // Already visited (Return false to match old API)
-        } else {
-            if *word == 0 {
-                self.touched.push(word_idx);
-            }
-            *word |= mask; // Mark as visited
-            true // Newly visited (Success)
-        }
+        let before = *word;
+        *word = before | mask;
+        // A word joins the list when its first bit is set. Without a branch: on an index of
+        // thousands to hundreds of thousands of nodes a word is as likely empty as not, and the
+        // CPU would guess wrong half the time.
+        self.touched[self.used] = word_idx;
+        self.used += usize::from(before == 0);
+        before & mask == 0
     }
     /// Check if a node is visited without modifying state.
     #[inline]
@@ -696,6 +703,11 @@ mod tests {
                 assert_eq!(visited.0.visit(id), (id as usize) < nodes, "{id} of {nodes}");
                 assert!(!visited.0.visit(id));
             }
+        }
+        // Every node of a word, so most visits find it already listed; then none left behind.
+        for _ in 0..2 {
+            let mut visited = Visited::take(130);
+            assert!((0..130).all(|id| visited.0.visit(id)));
         }
         // A search started inside another on this thread gets its own filter.
         let mut outer = Visited::take(100);
