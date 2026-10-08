@@ -73,6 +73,23 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
     euclidean_distance_scalar(a, b)
 }
 
+/// The kernel `euclidean_distance` dispatches to, resolved once by the caller.
+#[cfg(lab)]
+pub(crate) fn kernel() -> unsafe fn(&[f32], &[f32]) -> f32 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            return euclidean_distance_avx2;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        return euclidean_distance_neon;
+    }
+    #[allow(unreachable_code)]
+    euclidean_distance_scalar
+}
+
 /// Scalar implementation (portable fallback)
 #[inline]
 pub fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {

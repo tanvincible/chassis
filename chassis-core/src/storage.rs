@@ -940,6 +940,71 @@ impl Storage {
         self.prefetch_lines(slot, 8);
     }
 
+    /// Prefetches the first `lines` lines of `vector` into L1 (`near`) or L2, or with `reads`
+    /// reads that many of them instead.
+    #[cfg(lab)]
+    #[inline(always)]
+    pub(crate) fn hint(vector: &[f32], lines: usize, near: bool, reads: usize) -> u8 {
+        let start = vector.as_ptr().cast::<u8>();
+        let mut sum = 0u8;
+        for (i, offset) in (0..(vector.len() * 4).min(lines * 64)).step_by(64).enumerate() {
+            let line = unsafe { start.add(offset) };
+            if i < reads {
+                sum = sum.wrapping_add(unsafe { std::ptr::read_volatile(line) });
+                continue;
+            }
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                use std::arch::x86_64::{_MM_HINT_T0, _MM_HINT_T1, _mm_prefetch};
+                if near {
+                    _mm_prefetch::<_MM_HINT_T0>(line.cast());
+                } else {
+                    _mm_prefetch::<_MM_HINT_T1>(line.cast());
+                }
+            }
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                if near {
+                    std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) line, options(nostack, preserves_flags, readonly));
+                } else {
+                    std::arch::asm!("prfm pldl2keep, [{0}]", in(reg) line, options(nostack, preserves_flags, readonly));
+                }
+            }
+        }
+        sum
+    }
+
+    /// Reads the first `reads` lines of a vector and prefetches the rest of the first `lines`.
+    #[cfg(lab)]
+    pub(crate) fn touch_lines(&self, slot: u64, lines: usize, reads: usize) -> u8 {
+        let mut sum = 0u8;
+        if let Ok(vector) = self.get_vector_slice(slot) {
+            let start = vector.as_ptr().cast::<u8>();
+            let bytes = vector.len() * 4;
+            for (i, offset) in (0..bytes.min(lines * 64)).step_by(64).enumerate() {
+                let line = unsafe { start.add(offset) };
+                if i < reads {
+                    sum = sum.wrapping_add(unsafe { std::ptr::read_volatile(line) });
+                    continue;
+                }
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+                    _mm_prefetch::<_MM_HINT_T0>(line.cast());
+                }
+                #[cfg(target_arch = "aarch64")]
+                unsafe {
+                    std::arch::asm!(
+                        "prfm pldl1keep, [{0}]",
+                        in(reg) line,
+                        options(nostack, preserves_flags, readonly)
+                    );
+                }
+            }
+        }
+        sum
+    }
+
     #[cfg_attr(not(lab), allow(dead_code))]
     #[cfg(lab)]
     pub(crate) fn prefetch_lines(&self, slot: u64, lines: usize) {

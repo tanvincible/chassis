@@ -69,15 +69,35 @@ pub mod lab {
         DISTANCES.load(Ordering::Relaxed)
     }
 
+    /// `LAB_FAST=1` runs unfiltered layer searches through `search_layer_lean`.
+    pub fn fast() -> bool {
+        static FAST: OnceLock<bool> = OnceLock::new();
+        *FAST.get_or_init(|| std::env::var("LAB_FAST").is_ok_and(|v| v == "1"))
+    }
+
+    /// `LAB_BUILD=own,fill`: `own` caps the neighbors a new node selects on layer 0 (the list
+    /// still holds M0; hnswlib and the paper select M), `fill` 0 turns off filling a selection
+    /// that kept fewer than half.
+    pub fn build() -> (usize, bool) {
+        static BUILD: OnceLock<(usize, bool)> = OnceLock::new();
+        *BUILD.get_or_init(|| {
+            let spec = std::env::var("LAB_BUILD").unwrap_or_else(|_| "9999,1".into());
+            let p: Vec<usize> = spec.split(',').map(|x| x.parse().expect("LAB_BUILD")).collect();
+            (p[0], p[1] != 0)
+        })
+    }
+
     /// `LAB_PF=mode,lines,ahead,list`: mode 0 prefetches every unvisited neighbor before any
-    /// distance, 1 prefetches the neighbor `ahead` places on while computing one, 2 none;
-    /// `lines` cache lines per vector; `list` 1 prefetches the next candidate's neighbor list.
-    pub fn pf() -> (u8, usize, usize, bool) {
-        static PF: OnceLock<(u8, usize, usize, bool)> = OnceLock::new();
+    /// distance, 1 prefetches the neighbor `ahead` places on while computing one, 2 none, 3 like
+    /// 0 but reads the first line instead of prefetching it (a read can't be dropped on a TLB
+    /// miss), 4 like 0 but reads every line; `lines` cache lines per vector; `list` 1 prefetches
+    /// the next candidate's neighbor list, 2 the list of every candidate as it is queued.
+    pub fn pf() -> (u8, usize, usize, u8) {
+        static PF: OnceLock<(u8, usize, usize, u8)> = OnceLock::new();
         *PF.get_or_init(|| {
             let spec = std::env::var("LAB_PF").unwrap_or_else(|_| "0,8,0,0".into());
             let p: Vec<usize> = spec.split(',').map(|x| x.parse().expect("LAB_PF")).collect();
-            (p[0] as u8, p[1], p[2], p[3] != 0)
+            (p[0] as u8, p[1], p[2], p[3] as u8)
         })
     }
 }

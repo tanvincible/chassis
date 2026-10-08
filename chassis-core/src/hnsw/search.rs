@@ -387,6 +387,104 @@ impl HnswGraph {
             .unwrap_or_default())
     }
 
+    /// Lab: the unfiltered loop with each neighbor's vector located once, the kernel resolved
+    /// once, the worst result's distance kept in a local, and the prefetch policy of `LAB_PF`:
+    /// modes 0 to 4 as in `lab::pf`, 5 like 0 with L2 hints, 6 like 1 plus L2 hints four times
+    /// as far ahead.
+    #[cfg(lab)]
+    fn search_layer_lean(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+    ) -> Result<Vec<SearchResult>> {
+        use crate::storage::Storage;
+        let (mode, lines, ahead, list) = crate::lab::pf();
+        let kernel = crate::distance::kernel();
+        with_visited(self.node_count as usize, |visited| {
+            let mut candidates = BinaryHeap::new();
+            let mut results = BinaryHeap::new();
+            let mut fresh: Vec<(NodeId, &[f32])> =
+                Vec::with_capacity(self.record_params.max_neighbors(layer));
+            // SAFETY: the kernel's features were detected, and both slices have the index's length.
+            let distance = unsafe { kernel(query, self.storage.get_vector_slice(entry)?) };
+            candidates.push(Reverse(SearchResult { id: entry, distance }));
+            results.push(SearchResult { id: entry, distance });
+            visited.visit(entry);
+            // The worst result's distance once there are `ef` of them.
+            let mut bound = if ef <= 1 { distance } else { f32::INFINITY };
+            let mut sum = 0u8;
+            while let Some(Reverse(current)) = candidates.pop() {
+                if current.distance > bound {
+                    break;
+                }
+                fresh.clear();
+                for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
+                    if visited.visit(neighbor_id) {
+                        let vector = self.storage.get_vector_slice(neighbor_id)?;
+                        match mode {
+                            0 => sum += Storage::hint(vector, lines, true, 0),
+                            3 => sum += Storage::hint(vector, lines, true, 1),
+                            4 => sum += Storage::hint(vector, lines, true, lines),
+                            5 => sum += Storage::hint(vector, lines, false, 0),
+                            _ => {}
+                        }
+                        fresh.push((neighbor_id, vector));
+                    }
+                }
+                if mode == 1 || mode == 6 {
+                    for &(_, early) in fresh.iter().take(ahead) {
+                        Storage::hint(early, lines, true, 0);
+                    }
+                    if mode == 6 {
+                        for &(_, early) in fresh.iter().take(4 * ahead).skip(ahead) {
+                            Storage::hint(early, lines, false, 0);
+                        }
+                    }
+                }
+                for (i, &(neighbor_id, vector)) in fresh.iter().enumerate() {
+                    if mode == 1 || mode == 6 {
+                        if let Some(&(_, next)) = fresh.get(i + ahead) {
+                            Storage::hint(next, lines, true, 0);
+                        }
+                        if mode == 6
+                            && let Some(&(_, far)) = fresh.get(i + 4 * ahead)
+                        {
+                            Storage::hint(far, lines, false, 0);
+                        }
+                    }
+                    #[cfg(lab_count)]
+                    crate::lab::DISTANCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let distance = unsafe { kernel(query, vector) };
+                    if distance < bound {
+                        candidates.push(Reverse(SearchResult { id: neighbor_id, distance }));
+                        match list {
+                            1 => {
+                                if let Some(Reverse(next)) = candidates.peek() {
+                                    self.storage.prefetch_record(next.id, 3);
+                                }
+                            }
+                            2 => self.storage.prefetch_record(neighbor_id, 3),
+                            _ => {}
+                        }
+                        results.push(SearchResult { id: neighbor_id, distance });
+                        if results.len() > ef {
+                            results.pop();
+                        }
+                        if results.len() >= ef {
+                            bound = results.peek().map_or(bound, |worst| worst.distance);
+                        }
+                    }
+                }
+            }
+            std::hint::black_box(sum);
+            let mut sorted: Vec<_> = results.into_iter().collect();
+            sorted.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+            Ok(sorted)
+        })
+    }
+
     /// The search loop. A filter's nodes are traversed like deleted ones but never returned; it
     /// returns `None` once it has computed the filter's budget of distances. `FILTERED` compiles
     /// the filter out of unfiltered searches.
@@ -411,6 +509,10 @@ impl HnswGraph {
         };
         let mut budget = filter.map_or(usize::MAX, |(_, budget)| budget);
 
+        #[cfg(lab)]
+        if !FILTERED && !skip_deleted && crate::lab::fast() {
+            return self.search_layer_lean(query, entry, ef, layer).map(Some);
+        }
         // Dense visited filter: O(n) space, O(1) time per check, reused across searches
         with_visited(self.node_count as usize, |visited| {
             let mut candidates = BinaryHeap::new();
@@ -439,19 +541,26 @@ impl HnswGraph {
                 fresh.clear();
                 #[cfg(lab)]
                 let (pf_mode, pf_lines, pf_ahead, pf_list) = crate::lab::pf();
+                #[cfg(lab)]
+                let mut lab_sum = 0u8;
                 for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
                     if visited.visit(neighbor_id) {
                         #[cfg(not(lab))]
                         self.storage.prefetch_vector(neighbor_id);
                         #[cfg(lab)]
-                        if pf_mode == 0 {
-                            self.storage.prefetch_lines(neighbor_id, pf_lines);
+                        match pf_mode {
+                            0 => self.storage.prefetch_lines(neighbor_id, pf_lines),
+                            3 => lab_sum += self.storage.touch_lines(neighbor_id, pf_lines, 1),
+                            4 => lab_sum += self.storage.touch_lines(neighbor_id, pf_lines, 8),
+                            _ => {}
                         }
                         fresh.push(neighbor_id);
                     }
                 }
                 #[cfg(lab)]
                 let mut lab_i = 0;
+                #[cfg(lab)]
+                std::hint::black_box(lab_sum);
                 for &neighbor_id in &fresh {
                     #[cfg(lab)]
                     {
@@ -489,8 +598,14 @@ impl HnswGraph {
                     if should_add {
                         candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
                         #[cfg(lab)]
-                        if pf_list && let Some(Reverse(next)) = candidates.peek() {
-                            self.storage.prefetch_record(next.id, 3);
+                        match pf_list {
+                            1 => {
+                                if let Some(Reverse(next)) = candidates.peek() {
+                                    self.storage.prefetch_record(next.id, 3);
+                                }
+                            }
+                            2 => self.storage.prefetch_record(neighbor_id, 3),
+                            _ => {}
                         }
                         if excluded(neighbor_id)? {
                             continue;

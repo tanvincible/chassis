@@ -238,6 +238,8 @@ impl HnswGraph {
             let ids: Vec<NodeId> =
                 candidates.iter().map(|r| r.id).filter(|&id| id != slot).collect();
             let max = self.record_params.max_neighbors(l);
+            #[cfg(lab)]
+            let max = if l == 0 { max.min(crate::lab::build().0) } else { max };
             neighbors[l] = self.select_neighbors_heuristic(slot, &ids, l, max, None)?;
             if let Some(nearest) = candidates.first() {
                 current = nearest.id;
@@ -389,7 +391,11 @@ impl HnswGraph {
             }
         }
 
-        if selected.len() < max_count / 2 {
+        #[cfg(lab)]
+        let fill = crate::lab::build().1;
+        #[cfg(not(lab))]
+        let fill = true;
+        if fill && selected.len() < max_count / 2 {
             for &(candidate, _) in &by_distance {
                 if selected.len() >= max_count {
                     break;
