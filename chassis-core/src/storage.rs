@@ -247,6 +247,7 @@ impl Region {
         self.map.len()
     }
 
+    #[inline]
     fn bytes(&self, at: usize, len: usize) -> &[u8] {
         assert!(at + len <= self.len(), "read past the end of a region");
         // SAFETY: in bounds, and the map lives as long as `self`.
@@ -259,12 +260,14 @@ impl Region {
         unsafe { std::slice::from_raw_parts_mut(self.map.as_mut_ptr().add(at), len) }
     }
 
+    #[inline]
     fn u32s(&self, at: usize, len: usize) -> &[AtomicU32] {
         assert!(at + 4 * len <= self.len() && at.is_multiple_of(4), "bad neighbor list");
         // SAFETY: in bounds and aligned (maps are page aligned); atomics allow concurrent writes.
         unsafe { std::slice::from_raw_parts(self.map.as_ptr().add(at).cast::<AtomicU32>(), len) }
     }
 
+    #[inline]
     fn u64_at(&self, at: usize) -> &AtomicU64 {
         assert!(at + 8 <= self.len() && at.is_multiple_of(8), "bad word");
         // SAFETY: as for `u32s`.
@@ -947,10 +950,23 @@ impl Storage {
     #[inline]
     fn segment(&self, slot: u64) -> Result<(&Segment, usize)> {
         if slot >= self.count {
-            bail!("Index out of bounds: {slot} (count is {})", self.count);
+            return Err(self.out_of_bounds(slot));
         }
         let (k, i) = self.geometry.locate(slot);
         Ok((&self.segments[k], i))
+    }
+
+    /// Built out of line, so that the lookups a search makes per neighbor stay small enough to
+    /// inline into its loop.
+    #[cold]
+    fn out_of_bounds(&self, slot: u64) -> anyhow::Error {
+        anyhow::anyhow!("Index out of bounds: {slot} (count is {})", self.count)
+    }
+
+    /// Likewise out of line, for `record`.
+    #[cold]
+    fn invalid_record(slot: u64, layers: usize) -> anyhow::Error {
+        anyhow::anyhow!("Invalid graph record for slot {slot}: {layers} layers")
     }
 
     /// Retrieves a zero-copy view of the vector in `index`.
@@ -970,7 +986,7 @@ impl Storage {
 
     /// Asks the CPU to start loading the level-0 neighbor list of `slot`, which a search is about
     /// to queue for expanding. Only a hint: a slot that isn't mapped is skipped.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn prefetch_record(&self, slot: u64) {
         if let Ok((segment, i)) = self.segment(slot) {
             let bytes = self.geometry.level0_bytes();
@@ -1007,13 +1023,14 @@ impl Storage {
     }
 
     /// The level-0 record of `slot`, and its head word.
+    #[inline]
     fn record(&self, slot: u64) -> Result<(&Region, usize, u64)> {
         let (segment, i) = self.segment(slot)?;
         let at = segment.level0 + i * self.geometry.level0_bytes();
         let head = segment.region.u64_at(at).load(Ordering::Acquire);
         let layers = (head & 0xff) as usize;
         if layers == 0 || layers > usize::from(self.geometry.params.max_layers) {
-            bail!("Invalid graph record for slot {slot}: {layers} layers");
+            return Err(Self::invalid_record(slot, layers));
         }
         Ok((&segment.region, at, head))
     }
