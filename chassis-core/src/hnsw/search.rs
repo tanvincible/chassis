@@ -453,7 +453,11 @@ impl HnswGraph {
                 // Start loading every unvisited neighbor's vector before computing any distance, so the
                 // cache misses overlap instead of each distance waiting on its own.
                 fresh.clear();
+                #[cfg(lab_count)]
+                crate::lab::HOPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
+                    #[cfg(lab_count)]
+                    crate::lab::SCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if visited.visit(neighbor_id) {
                         let vector = self.storage.get_vector_slice(neighbor_id)?;
                         prefetch.vector(vector);

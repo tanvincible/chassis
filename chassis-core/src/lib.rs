@@ -63,6 +63,13 @@ pub mod lab {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     pub static DISTANCES: AtomicU64 = AtomicU64::new(0);
+    pub static HOPS: AtomicU64 = AtomicU64::new(0);
+    pub static SCANS: AtomicU64 = AtomicU64::new(0);
+
+    /// Level-0 nodes expanded and neighbors looked at (counted only with `--cfg lab_count`).
+    pub fn hops_scans() -> (u64, u64) {
+        (HOPS.load(Ordering::Relaxed), SCANS.load(Ordering::Relaxed))
+    }
 
     /// Distance computations so far (counted only with `--cfg lab_count`).
     pub fn distances() -> u64 {
