@@ -314,6 +314,8 @@ impl HnswGraph {
         let kernel = crate::distance::kernel();
         // SAFETY (here and below): a stored vector has the index's dimensions, and so does a query.
         let distance = |slot| -> Result<f32> {
+            #[cfg(lab_count)]
+            crate::lab::DISTANCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(unsafe { kernel(query, self.storage.get_vector_slice(slot)?) })
         };
         let mut best_id = entry;
@@ -465,6 +467,8 @@ impl HnswGraph {
                             None => return Ok(None),
                         };
                     }
+                    #[cfg(lab_count)]
+                    crate::lab::DISTANCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let dist = unsafe { kernel(query, vector) };
 
                     if results.len() < ef || dist.total_cmp(&bound).is_lt() {

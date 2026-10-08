@@ -57,6 +57,19 @@ mod storage;
 #[cfg(test)]
 mod power_loss;
 
+/// Experiment hooks for the lab harness; compiled only with `--cfg lab`.
+#[cfg(lab)]
+pub mod lab {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub static DISTANCES: AtomicU64 = AtomicU64::new(0);
+
+    /// Distance computations so far (counted only with `--cfg lab_count`).
+    pub fn distances() -> u64 {
+        DISTANCES.load(Ordering::Relaxed)
+    }
+}
+
 #[cfg(feature = "internals")]
 pub use hnsw::*;
 
@@ -594,6 +607,12 @@ impl VectorIndex {
         self.graph.storage.moved_to(&path);
         self.path = path;
         Ok(())
+    }
+
+    /// Lab: `MADV_HUGEPAGE` on every region.
+    #[cfg(all(lab, target_os = "linux"))]
+    pub fn lab_huge(&self) -> usize {
+        self.graph.storage.lab_huge()
     }
 
     /// Get the number of live (not deleted) vectors in the index

@@ -968,6 +968,13 @@ impl Storage {
         Ok(unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<f32>(), dims) })
     }
 
+    /// Lab: asks for huge pages on every mapped region; returns how many accepted.
+    #[cfg(all(lab, target_os = "linux"))]
+    pub(crate) fn lab_huge(&self) -> usize {
+        let regions = self.segments.iter().map(|s| &s.region).chain(&self.chunks);
+        regions.filter(|r| r.map.advise(memmap2::Advice::HugePage).is_ok()).count()
+    }
+
     /// Asks the CPU to start loading the level-0 neighbor list of `slot`, which a search is about
     /// to queue for expanding. Only a hint: a slot that isn't mapped is skipped.
     #[inline]
