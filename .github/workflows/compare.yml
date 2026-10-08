@@ -1,0 +1,127 @@
+name: x86 compare
+
+# Experiment branch only: Chassis before and after a change, and hnswlib built with -march=native,
+# searching the same index on the same machine. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/compare.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  OLD: origin/fix/lost-adds
+  NEW: origin/perf/hot-path
+
+jobs:
+  compare:
+    name: compare (${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, shard: a }
+          - { runner: ubuntu-latest, shard: b }
+          - { runner: ubuntu-latest, shard: c }
+          - { runner: ubuntu-latest, shard: d }
+          - { runner: ubuntu-latest, shard: e }
+          - { runner: ubuntu-24.04-arm, shard: a }
+          - { runner: ubuntu-24.04-arm, shard: b }
+    env:
+      DATA: bench/ann/data
+      NAME: sift-128
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo "old $(git rev-parse --short "$OLD"), new $(git rev-parse --short "$NEW")"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: ann-data-${{ hashFiles('bench/ann/prepare.py') }}-sift-128
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install numpy h5py pyarrow
+          python bench/ann/prepare.py "$DATA" "$NAME"
+          rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build both Chassis versions
+        run: |
+          for which in old new; do
+            ref=$OLD; [ $which = new ] && ref=$NEW
+            git worktree add "$RUNNER_TEMP/$which" "$ref"
+            cp chassis-core/examples/lab.rs "$RUNNER_TEMP/$which/chassis-core/examples/lab.rs"
+            (cd "$RUNNER_TEMP/$which" && cargo build --release -p chassis-core --example lab)
+            cp "$RUNNER_TEMP/$which/target/release/examples/lab" "$RUNNER_TEMP/lab-$which"
+          done
+
+      - name: Builds
+        run: |
+          mkdir results
+          for round in 1 2; do
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" 100000 "$RUNNER_TEMP/h-seq.bin" 1 | tee -a results/lab.tsv
+            for which in old new; do
+              "$RUNNER_TEMP/lab-$which" seq "$DATA" "$NAME" 100000 "$which" | tee -a results/lab.tsv
+            done
+          done
+          "$RUNNER_TEMP/lab-new" build "$DATA" "$NAME" "$RUNNER_TEMP/new-1000000.chassis" 1000000 | sed "s/\tbase\t/\tnew\t/" | tee -a results/lab.tsv
+          "$RUNNER_TEMP/lab-old" build "$DATA" "$NAME" "$RUNNER_TEMP/c-1000000.chassis" 1000000 | sed "s/\tbase\t/\told\t/" | tee -a results/lab.tsv
+          "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" 1000000 "$RUNNER_TEMP/h-1000000.bin" "$(nproc)" | tee -a results/lab.tsv
+
+      - name: Search
+        run: |
+          for n in 1000000 20000; do
+            truth="$DATA/$NAME.gt.u32"
+            if [ "$n" != 1000000 ]; then
+              truth="$RUNNER_TEMP/gt-$n.u32"
+              "$RUNNER_TEMP/lab-old" truth "$DATA" "$NAME" "$n" "$truth"
+              "$RUNNER_TEMP/lab-old" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" > /dev/null
+              "$RUNNER_TEMP/lab-new" build "$DATA" "$NAME" "$RUNNER_TEMP/new-$n.chassis" "$n" > /dev/null
+              "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" > /dev/null
+            fi
+            for round in 1 2 3; do
+              "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" native 2> /dev/null | tee -a results/lab.tsv
+              # Both on the index the old version built, then the new one on its own.
+              for which in old new; do
+                "$RUNNER_TEMP/lab-$which" search "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$truth" "$which" 2> /dev/null | tee -a results/lab.tsv
+              done
+              "$RUNNER_TEMP/lab-new" search "$DATA" "$NAME" "$RUNNER_TEMP/new-$n.chassis" "$truth" new-own 2> /dev/null | tee -a results/lab.tsv
+            done
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '```'
+            cat results/lab.tsv
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compare-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/

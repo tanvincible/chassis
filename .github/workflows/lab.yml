@@ -6,6 +6,7 @@ name: x86 lab
 on:
   push:
     branches: [lab/x86]
+    paths-ignore: [.github/workflows/compare.yml]
 
 permissions:
   contents: read
