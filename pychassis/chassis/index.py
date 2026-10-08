@@ -17,6 +17,9 @@ from chassis.exceptions import (
 )
 
 
+_METRICS = {"euclidean": 0, "cosine": 1}
+
+
 @dataclass
 class IndexOptions:
     """Configuration options for HNSW index.
@@ -28,11 +31,15 @@ class IndexOptions:
             Higher = better index quality, slower build. Default: 200
         ef_search: Search quality parameter.
             Higher = better search quality, slower search. Default: 50
+        metric: "euclidean" (L2) or "cosine" (1 - cosine similarity; vectors
+            are stored at unit length and zero vectors are rejected). Fixed
+            when the index is created. Default: "euclidean"
     """
 
     max_connections: int = 16
     ef_construction: int = 200
     ef_search: int = 50
+    metric: str = "euclidean"
 
     def validate(self) -> None:
         """Validate configuration parameters.
@@ -50,6 +57,8 @@ class IndexOptions:
             )
         if self.ef_search < 1:
             raise ValueError(f"ef_search must be >= 1, got {self.ef_search}")
+        if self.metric not in _METRICS:
+            raise ValueError(f"metric must be one of {list(_METRICS)}, got {self.metric!r}")
 
 
 @dataclass
@@ -115,19 +124,21 @@ class VectorIndex:
             options: Optional HNSW configuration. If None, uses defaults.
             read_only: Open an existing index to search it while another
                 process writes it. Takes no lock; add(), delete() and
-                flush() raise ChassisError.
+                flush() raise ChassisError. The index keeps the metric it
+                was created with; explicit options naming another raise.
 
         Raises:
             InvalidPathError: If path is invalid or inaccessible
             NullPointerError: If index creation fails
             ChassisError: For other errors
         """
+        # Set before anything can raise: __del__ calls close(), which reads them.
+        self._ptr: Optional[_ffi.ChassisIndexPtr] = None
+        self._closed = False
         self._path = Path(path)
         self._dimensions = dimensions
         self._options = options or IndexOptions()
         self._options.validate()
-        self._ptr: Optional[_ffi.ChassisIndexPtr] = None
-        self._closed = False
 
         # Encode path to UTF-8 bytes
         path_bytes = str(self._path).encode("utf-8")
@@ -145,12 +156,13 @@ class VectorIndex:
             ptr = _ffi._lib.chassis_open(path_bytes, dimensions)
         else:
             # Use custom options
-            ptr = _ffi._lib.chassis_open_with_options(
+            ptr = _ffi._lib.chassis_open_with_metric(
                 path_bytes,
                 dimensions,
                 options.max_connections,
                 options.ef_construction,
                 options.ef_search,
+                _METRICS[options.metric],
             )
 
         if not ptr:
@@ -170,6 +182,16 @@ class VectorIndex:
                 )
 
         self._ptr = ptr
+        # A reader takes the file's metric; say so rather than search by another.
+        if options is not None and options.metric != (metric := self.metric):
+            self.close()
+            raise ChassisError(f"Index was created with {metric} distance, not {options.metric}")
+
+    @property
+    def metric(self) -> str:
+        """The distance metric the index was created with: "euclidean" or "cosine"."""
+        self._check_closed()
+        return {v: k for k, v in _METRICS.items()}[_ffi._lib.chassis_metric(self._ptr)]
 
     def __del__(self):
         """Clean up resources when index is garbage collected."""

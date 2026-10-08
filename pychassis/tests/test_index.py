@@ -424,3 +424,39 @@ class TestReadOnly:
         with pytest.raises(ChassisError):
             VectorIndex(tmp_path / "missing.chassis", dimensions=3, read_only=True)
         assert not (tmp_path / "missing.chassis").exists()
+
+
+class TestCosine:
+    """Cosine distance."""
+
+    def test_cosine_distances_ignore_length(self, tmp_path):
+        index = VectorIndex(tmp_path / "cos.chassis", dimensions=2, options=IndexOptions(metric="cosine"))
+        index.add([3.0, 0.0], id=1)
+        index.add([0.0, 0.5], id=2)
+        results = index.search([1.0, 1.0], k=2)
+        assert {r.id for r in results} == {1, 2}
+        assert all(abs(r.distance - (1 - 0.5**0.5)) < 1e-5 for r in results)
+        with pytest.raises(ChassisError):
+            index.add([0.0, 0.0])
+        index.close()
+
+    def test_unknown_metric_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError):
+            VectorIndex(tmp_path / "x.chassis", dimensions=2, options=IndexOptions(metric="dot"))
+
+
+class TestMetric:
+    """Which metric an index uses, and refusing another."""
+
+    def test_metric_is_reported_and_enforced(self, tmp_path):
+        path = tmp_path / "m.chassis"
+        writer = VectorIndex(path, dimensions=2, options=IndexOptions(metric="cosine"))
+        writer.add([1.0, 0.0])
+        writer.flush()
+        assert writer.metric == "cosine"
+        reader = VectorIndex(path, dimensions=2, read_only=True)
+        assert reader.metric == "cosine"
+        reader.close()
+        with pytest.raises(ChassisError):
+            VectorIndex(path, dimensions=2, options=IndexOptions(), read_only=True)
+        writer.close()

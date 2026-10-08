@@ -80,11 +80,19 @@ pub struct IndexOptions {
 
     /// Search quality parameter (efSearch)
     pub ef_search: usize,
+
+    /// How vectors are compared. Set when the index is created; reopening needs the same one.
+    pub metric: DistanceMetric,
 }
 
 impl Default for IndexOptions {
     fn default() -> Self {
-        Self { max_connections: 16, ef_construction: 200, ef_search: 50 }
+        Self {
+            max_connections: 16,
+            ef_construction: 200,
+            ef_search: 50,
+            metric: DistanceMetric::Euclidean,
+        }
     }
 }
 
@@ -132,7 +140,14 @@ impl VectorIndex {
     /// - The file was created with a different `max_connections`
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
         let params = hnsw_params(&options);
-        let storage = Storage::open_with(path, dims, params.to_record_params())?;
+        let storage = Storage::open_with(path, dims, params.to_record_params(), options.metric)?;
+        if storage.metric() != options.metric {
+            anyhow::bail!(
+                "Index was created with {:?} distance but opened with {:?}",
+                storage.metric(),
+                options.metric
+            );
+        }
         let graph = HnswGraph::open_no_reset(storage, params)?;
         Ok(Self { graph, ml: params.ml, options, ids: None, next_id: 0 })
     }
@@ -240,6 +255,15 @@ impl VectorIndex {
             anyhow::bail!("Vector dimension mismatch: expected {}, got {}", dims, vector.len());
         }
 
+        let unit;
+        let vector = match self.graph.storage.metric() {
+            DistanceMetric::Euclidean => vector,
+            DistanceMetric::Cosine => {
+                unit = distance::unit(vector)?;
+                &unit[..]
+            }
+        };
+
         // STEP 1: Persist vector and id, reusing the slot of an add that failed part way
         let slot = self.graph.node_count();
         self.graph.storage.truncate_logical(slot);
@@ -287,19 +311,7 @@ impl VectorIndex {
     ///
     /// Returns an error if query dimensions don't match index dimensions
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        // Validate dimensions
-        let dims = self.graph.storage.dimensions() as usize;
-        if query.len() != dims {
-            anyhow::bail!("Query dimension mismatch: expected {}, got {}", dims, query.len());
-        }
-
-        let mut results = self.graph.search(query, k, self.options.ef_search)?;
-        if self.graph.custom_ids {
-            for result in &mut results {
-                result.id = self.graph.id_of(result.id)?;
-            }
-        }
-        Ok(results)
+        search_graph(&self.graph, query, k, self.options.ef_search)
     }
 
     /// Flush all changes to disk
@@ -333,6 +345,11 @@ impl VectorIndex {
     /// Get the dimensionality of vectors in this index
     pub fn dimensions(&self) -> u32 {
         self.graph.storage.dimensions()
+    }
+
+    /// The distance metric the index was created with
+    pub fn metric(&self) -> DistanceMetric {
+        self.graph.storage.metric()
     }
 
     // Private helper methods
@@ -443,6 +460,38 @@ impl std::hash::Hasher for IdHasher {
     }
 }
 
+/// Searches as the file's metric defines, reporting the caller's ids. A cosine index stores unit
+/// vectors, so the query is scaled too, and for unit vectors 1 − cos = L2² / 2.
+fn search_graph(
+    graph: &HnswGraph,
+    query: &[f32],
+    k: usize,
+    ef: usize,
+) -> Result<Vec<SearchResult>> {
+    let dims = graph.storage.dimensions() as usize;
+    if query.len() != dims {
+        anyhow::bail!("Query dimension mismatch: expected {}, got {}", dims, query.len());
+    }
+    let mut results = match graph.storage.metric() {
+        DistanceMetric::Euclidean => graph.search(query, k, ef)?,
+        DistanceMetric::Cosine => {
+            let query = distance::unit(query)?;
+            let mut results = graph.search(&query, k, ef)?;
+            for result in &mut results {
+                // Rounding can take antipodal vectors a hair past 2.
+                result.distance = (result.distance * result.distance / 2.0).min(2.0);
+            }
+            results
+        }
+    };
+    if graph.custom_ids {
+        for result in &mut results {
+            result.id = graph.id_of(result.id)?;
+        }
+    }
+    Ok(results)
+}
+
 fn hnsw_params(options: &IndexOptions) -> HnswParams {
     HnswParams {
         max_connections: options.max_connections,
@@ -485,23 +534,18 @@ impl IndexReader {
     ///
     /// Returns an error if the query has other dimensions or the file is corrupt.
     pub fn search(&mut self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        let dims = self.graph.storage.dimensions() as usize;
-        if query.len() != dims {
-            anyhow::bail!("Query dimension mismatch: expected {}, got {}", dims, query.len());
-        }
         self.graph.refresh()?;
-        let mut results = self.graph.search(query, k, self.ef_search)?;
-        if self.graph.custom_ids {
-            for result in &mut results {
-                result.id = self.graph.id_of(result.id)?;
-            }
-        }
-        Ok(results)
+        search_graph(&self.graph, query, k, self.ef_search)
     }
 
     /// Get the dimensionality of vectors in this index
     pub fn dimensions(&self) -> u32 {
         self.graph.storage.dimensions()
+    }
+
+    /// The distance metric the index was created with
+    pub fn metric(&self) -> DistanceMetric {
+        self.graph.storage.metric()
     }
 
     /// Take a new snapshot without searching, so `len` reflects the writer's latest flush.

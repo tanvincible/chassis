@@ -10,12 +10,29 @@
 //!
 //! Expected speedup: 4-6x on high-dimensional vectors (768-1536D)
 
-/// Distance metric for vector comparison
-#[derive(Debug, Clone, Copy)]
+/// How an index compares vectors; fixed when the index is created.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DistanceMetric {
+    /// L2 distance.
+    #[default]
     Euclidean,
+    /// 1 − cosine similarity. Vectors are stored scaled to unit length, so search runs on L2,
+    /// which ranks unit vectors the same way.
     Cosine,
-    DotProduct,
+}
+
+/// `v` scaled to unit length, for a cosine index. The norm is taken in f64, where no f32 can
+/// overflow or underflow when squared.
+pub(crate) fn unit(v: &[f32]) -> anyhow::Result<Vec<f32>> {
+    if v.iter().any(|x| !x.is_finite()) {
+        anyhow::bail!("A cosine index can't use a vector with NaN or infinite components");
+    }
+    let norm = v.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
+    if norm == 0.0 {
+        anyhow::bail!("A cosine index can't use a zero vector");
+    }
+    Ok(v.iter().map(|&x| (f64::from(x) / norm) as f32).collect())
 }
 
 /// Compute L2 (Euclidean) distance between two vectors with SIMD acceleration.

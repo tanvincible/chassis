@@ -307,7 +307,7 @@ fn test_node_record_with_partial_neighbors() {
     };
 
     let params = NodeRecordParams::new(4, 8, 3); // Matches custom_params
-    let mut storage = Storage::open_with(path, 128, params).unwrap();
+    let mut storage = Storage::open_with(path, 128, params, Default::default()).unwrap();
     for _ in 0..11 {
         storage.insert(&[0.0; 128]).unwrap();
     }

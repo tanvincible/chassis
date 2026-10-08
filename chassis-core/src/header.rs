@@ -36,6 +36,8 @@ pub(crate) struct FileHeader {
     pub m: u16,
     pub m0: u16,
     pub max_layers: u8,
+    /// 0: Euclidean; 1: cosine, over vectors stored at unit length.
+    pub metric: u8,
     pub flags: u8,
     /// log2 of the first segment's slot count.
     pub segment_base_log2: u8,
@@ -83,7 +85,7 @@ impl FileHeader {
         b[40..42].copy_from_slice(&self.m.to_le_bytes());
         b[42..44].copy_from_slice(&self.m0.to_le_bytes());
         b[44] = self.max_layers;
-        b[45] = 0; // metric: euclidean
+        b[45] = self.metric;
         b[46] = self.flags;
         b[47] = self.table_page_log2;
         b[48] = self.segment_base_log2;
@@ -155,7 +157,7 @@ impl FileHeader {
             bail!("Corrupt file header: table page counts don't match its length");
         }
         let table = |start: usize, n: usize| (0..n).map(|i| u64_at(start + 8 * i)).collect();
-        if copy[45] != 0 {
+        if copy[45] > 1 {
             bail!("Unknown distance metric {} in file header", copy[45]);
         }
         Ok(Some(Self {
@@ -164,6 +166,7 @@ impl FileHeader {
             m: u16_at(40),
             m0: u16_at(42),
             max_layers: copy[44],
+            metric: copy[45],
             flags: copy[46],
             table_page_log2: copy[47],
             segment_base_log2: copy[48],
@@ -210,6 +213,7 @@ mod tests {
             m: 16,
             m0: 32,
             max_layers: 16,
+            metric: 1,
             flags: FLAG_CUSTOM_IDS,
             segment_base_log2: 10,
             doubling_segments: 6,
@@ -245,6 +249,16 @@ mod tests {
             torn[i] ^= 0x10;
             assert_eq!(FileHeader::from_bytes(&torn).unwrap(), None, "byte {i}");
         }
+    }
+
+    #[test]
+    fn test_unknown_metric_is_an_error() {
+        let mut bytes = sample().to_bytes();
+        bytes[45] = 2;
+        bytes[CHECKSUM].fill(0);
+        let checksum = xxh3_64(&bytes);
+        bytes[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
+        assert!(FileHeader::from_bytes(&bytes).is_err());
     }
 
     #[test]

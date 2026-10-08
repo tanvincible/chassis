@@ -28,7 +28,7 @@
 //! - `chassis_free` must not race with any other call on the same handle.
 //! - Each thread has its own error message storage
 
-use chassis_core::{IndexOptions, IndexReader, SearchResult, VectorIndex};
+use chassis_core::{DistanceMetric, IndexOptions, IndexReader, SearchResult, VectorIndex};
 use libc::{c_char, c_float, c_int, size_t};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -54,6 +54,7 @@ trait Readable {
     fn search(&mut self, query: &[f32], k: usize) -> anyhow::Result<Vec<SearchResult>>;
     fn len(&mut self) -> u64;
     fn dimensions(&self) -> u32;
+    fn metric(&self) -> DistanceMetric;
 }
 
 impl Readable for &VectorIndex {
@@ -65,6 +66,9 @@ impl Readable for &VectorIndex {
     }
     fn dimensions(&self) -> u32 {
         VectorIndex::dimensions(self)
+    }
+    fn metric(&self) -> DistanceMetric {
+        VectorIndex::metric(self)
     }
 }
 
@@ -81,6 +85,9 @@ impl Readable for IndexReader {
     }
     fn dimensions(&self) -> u32 {
         IndexReader::dimensions(self)
+    }
+    fn metric(&self) -> DistanceMetric {
+        IndexReader::metric(self)
     }
 }
 
@@ -340,6 +347,53 @@ pub unsafe extern "C" fn chassis_open_with_options(
             max_connections,
             ef_construction: ef_construction as usize,
             ef_search: ef_search as usize,
+            ..Default::default()
+        };
+        unsafe { open_handle(path, dimensions, options, false) }
+    })
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Open or create a Chassis vector index with custom options and a distance metric
+///
+/// # Arguments
+///
+/// - `metric`: `0` for Euclidean (L2) distance, `1` for cosine distance (1 - cosine similarity).
+///   A cosine index stores vectors scaled to unit length, rejects zero vectors, and reports
+///   distances from 0 to 2. The metric is fixed when the index is created; reopening an existing
+///   index with another one fails.
+/// - The other arguments are as for `chassis_open_with_options()`.
+///
+/// # Safety
+///
+/// Same safety requirements as `chassis_open()`
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_open_with_metric(
+    path: *const c_char,
+    dimensions: u32,
+    max_connections: u32,
+    ef_construction: u32,
+    ef_search: u32,
+    metric: u32,
+) -> *mut ChassisIndex {
+    ffi_guard(|| {
+        let Ok(max_connections) = u16::try_from(max_connections) else {
+            set_last_error(format!("max_connections must be <= {}", u16::MAX));
+            return ptr::null_mut();
+        };
+        let metric = match metric {
+            0 => DistanceMetric::Euclidean,
+            1 => DistanceMetric::Cosine,
+            other => {
+                set_last_error(format!("Unknown metric {other}: use 0 (Euclidean) or 1 (cosine)"));
+                return ptr::null_mut();
+            }
+        };
+        let options = IndexOptions {
+            max_connections,
+            ef_construction: ef_construction as usize,
+            ef_search: ef_search as usize,
+            metric,
         };
         unsafe { open_handle(path, dimensions, options, false) }
     })
@@ -927,6 +981,25 @@ pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
     ffi_guard(|| unsafe { read(ptr, |index| index.dimensions()) }.unwrap_or(0)).unwrap_or(0)
 }
 
+/// Get the distance metric the index was created with
+///
+/// # Returns
+///
+/// - `0` for Euclidean, `1` for cosine, as for `chassis_open_with_metric()`
+/// - `-1` if `ptr` is NULL
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_metric(ptr: *const ChassisIndex) -> c_int {
+    let metric = |index: &mut dyn Readable| match index.metric() {
+        DistanceMetric::Cosine => 1,
+        _ => 0,
+    };
+    ffi_guard(|| unsafe { read(ptr, metric) }.unwrap_or(-1)).unwrap_or(-1)
+}
+
 //
 //  ERROR HANDLING
 //
@@ -1065,6 +1138,33 @@ mod tests {
         assert_eq!(unsafe { chassis_len(ptr) }, 0);
 
         unsafe { chassis_free(ptr) };
+    }
+
+    #[test]
+    fn test_ffi_cosine_metric() {
+        let (_dir, path) = temp_index_path();
+        assert!(unsafe { chassis_open_with_metric(path.as_ptr(), 2, 16, 200, 50, 2) }.is_null());
+        let ptr = unsafe { chassis_open_with_metric(path.as_ptr(), 2, 16, 200, 50, 1) };
+        assert!(!ptr.is_null());
+        assert_ne!(unsafe { chassis_add(ptr, [3.0f32, 0.0].as_ptr(), 2) }, u64::MAX);
+        assert_ne!(unsafe { chassis_add(ptr, [0.0f32, 0.5].as_ptr(), 2) }, u64::MAX);
+        assert_eq!(unsafe { chassis_add(ptr, [0.0f32, 0.0].as_ptr(), 2) }, u64::MAX);
+        let (mut ids, mut dists) = ([0u64; 2], [0.0f32; 2]);
+        let n = unsafe {
+            chassis_search(ptr, [1.0f32, 1.0].as_ptr(), 2, 2, ids.as_mut_ptr(), dists.as_mut_ptr())
+        };
+        // Both are 45 degrees from the query: 1 - cos 45° = 0.29, whatever their lengths.
+        assert_eq!(n, 2);
+        assert!(dists.iter().all(|d| (d - (1.0 - 0.5f32.sqrt())).abs() < 1e-5), "{dists:?}");
+        assert_eq!(unsafe { chassis_metric(ptr) }, 1);
+        unsafe { chassis_free(ptr) };
+        assert!(
+            unsafe { chassis_open(path.as_ptr(), 2) }.is_null(),
+            "reopened with another metric"
+        );
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+        assert_eq!(unsafe { chassis_metric(reader) }, 1);
+        unsafe { chassis_free(reader) };
     }
 
     #[test]

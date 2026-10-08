@@ -1,6 +1,8 @@
 //! Opening a format v1 or v2 file migrates it to v3 (ADR-0008, decision 8).
 
-use chassis_core::{IndexOptions, MAGIC, NodeRecord, NodeRecordParams, VectorIndex};
+use chassis_core::{
+    DistanceMetric, IndexOptions, MAGIC, NodeRecord, NodeRecordParams, VectorIndex,
+};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use tempfile::tempdir;
@@ -192,6 +194,11 @@ fn test_migration_keeps_the_original_parameters() {
 
     let other = IndexOptions { max_connections: 8, ..IndexOptions::default() };
     assert!(VectorIndex::open(&path, DIMS, other).is_err());
+    // Old files hold raw vectors, so they stay Euclidean.
+    let cosine = IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() };
+    let error = VectorIndex::open(&path, DIMS, cosine).unwrap_err().to_string();
+    assert!(error.contains("Euclidean"), "{error}");
     let index = VectorIndex::open(&path, DIMS, IndexOptions::default()).unwrap();
     assert_eq!(index.len(), 6);
+    assert_eq!(index.metric(), DistanceMetric::Euclidean);
 }

@@ -98,6 +98,7 @@ index.flush()?;
 ```rust
 let len = index.len();           // Live vectors (deleted ones excluded)
 let dim = index.dimensions();    // Vector size
+let metric = index.metric();     // DistanceMetric::Euclidean or ::Cosine
 let empty = index.is_empty();    // True if count == 0
 ```
 
@@ -140,8 +141,16 @@ pub struct IndexOptions {
     /// Size of the dynamic candidate list during search. Default: 50
     /// Higher = Better recall, slower search.
     pub ef_search: usize,
+
+    /// `DistanceMetric::Euclidean` (default) or `DistanceMetric::Cosine`.
+    pub metric: DistanceMetric,
 }
 ```
+
+The metric is fixed when the index is created: reopening with another one is an error, an
+`IndexReader` uses the file's, and `metric()` on either reports it. A cosine index stores vectors
+scaled to unit length, rejects zero vectors and vectors with NaN or infinite components, and
+reports `1 - cosine similarity`, from 0 to 2. Search speed is the same for both.
 
 **Tuning Guide**:
 
@@ -158,7 +167,7 @@ pub struct SearchResult {
     /// The internal sequential ID of the vector
     pub id: u64,
     
-    /// Euclidean distance from the query vector
+    /// Distance from the query by the index's metric
     pub distance: f32,
 }
 
