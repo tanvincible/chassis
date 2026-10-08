@@ -1098,6 +1098,29 @@ mod tests {
     }
 
     #[test]
+    fn test_the_descent_stops_where_no_neighbor_is_nearer() {
+        let file = NamedTempFile::new().unwrap();
+        let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+        let vectors: Vec<f32> = (0..3000).flat_map(random_vector).collect();
+        index.add_batch(&vectors).unwrap();
+        let graph = &index.graph;
+        let entry = graph.entry_point.unwrap();
+        let to = |query: &[f32], slot| {
+            euclidean_distance(query, graph.storage.get_vector_slice(slot).unwrap())
+        };
+        assert!(graph.max_layer > 0);
+        for query in (5000..5020).map(random_vector) {
+            for layer in 1..=graph.max_layer {
+                let found = graph.search_layer_greedy(&query, entry, layer).unwrap();
+                let nearest = to(&query, found);
+                assert!(nearest <= to(&query, entry));
+                let mut neighbors = graph.neighbors_iter_from_mmap(found, layer).unwrap();
+                assert!(neighbors.all(|n| to(&query, n) >= nearest), "layer {layer}");
+            }
+        }
+    }
+
+    #[test]
     fn test_batch_entry_point_is_on_the_top_layer() {
         for existing in [0, 50] {
             let file = NamedTempFile::new().unwrap();
