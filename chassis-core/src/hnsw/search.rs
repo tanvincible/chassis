@@ -507,7 +507,7 @@ impl HnswGraph {
 
         // An `ef` of 0 would leave no worst result to compare with; callers truncate anyway.
         let ef = ef.max(1);
-        let prefetch = Prefetch::detect();
+        let prefetch = Prefetch::detect().for_dims(query.len());
 
         // Dense visited filter: O(n) space, O(1) time per check, reused across searches
         let mut visited = Visited::take(self.node_count as usize);
