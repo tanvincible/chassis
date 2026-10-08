@@ -20,6 +20,7 @@
 
 use crate::hnsw::graph::{HnswGraph, Linking};
 use crate::hnsw::node::{INVALID_NODE_ID, NodeId, NodeRecord};
+use crate::prefetch::Prefetch;
 use anyhow::{Context, Result, anyhow};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -236,10 +237,11 @@ impl HnswGraph {
         }
         for l in (0..=layer.min(max_layer)).rev() {
             let candidates = self.search_layer_optimized(vector, current, ef, l)?;
-            let ids: Vec<NodeId> =
-                candidates.iter().map(|r| r.id).filter(|&id| id != slot).collect();
+            // Nearest first, each with its distance to `vector`, which selecting would recompute.
+            let near: Vec<(NodeId, f32)> =
+                candidates.iter().filter(|r| r.id != slot).map(|r| (r.id, r.distance)).collect();
             let max = self.record_params.max_neighbors(l);
-            neighbors[l] = self.select_neighbors_heuristic(slot, &ids, l, max, None)?;
+            neighbors[l] = self.select_diverse(&near, max, None)?;
             if let Some(nearest) = candidates.first() {
                 current = nearest.id;
             }
@@ -336,11 +338,11 @@ impl HnswGraph {
 
     /// Select diverse neighbors using HNSW Heuristic 2.
     ///
-    /// Used for a new node's own neighbors (no priority) and when a backlink overfills a neighbor's
-    /// list (`priority_node` is the new node). Candidates are taken nearest first, and one is kept
-    /// only if it is closer to `base_node` than to every neighbor already kept. If that keeps fewer
-    /// than `max_count / 2`, the nearest remaining candidates fill up to `max_count`. `priority_node`
-    /// is kept if it ranks within the nearest `max_count`.
+    /// Used when a backlink overfills a neighbor's list (`priority_node` is the new node).
+    /// Candidates are taken nearest first, and one is kept only if it is closer to `base_node`
+    /// than to every neighbor already kept. If that keeps fewer than `max_count / 2`, the nearest
+    /// remaining candidates fill up to `max_count`. `priority_node` is kept if it ranks within the
+    /// nearest `max_count`.
     pub(crate) fn select_neighbors_heuristic(
         &self,
         base_node: NodeId,
@@ -354,45 +356,53 @@ impl HnswGraph {
         }
 
         let base_vector = self.storage.get_vector_slice(base_node)?;
+        let (kernel, prefetch) = (crate::distance::kernel(), Prefetch::detect());
         // Start loading every candidate's vector first, so the cache misses overlap.
-        for &id in candidates {
-            self.storage.prefetch_vector(id);
-        }
+        let vectors: Vec<Option<&[f32]>> = candidates
+            .iter()
+            .map(|&id| self.storage.get_vector_slice(id).ok().inspect(|v| prefetch.vector(v)))
+            .collect();
         let mut by_distance: Vec<(NodeId, f32)> = candidates
             .iter()
-            .map(|&id| {
-                let distance = self
-                    .storage
-                    .get_vector_slice(id)
-                    .map(|v| crate::distance::euclidean_distance(base_vector, v))
-                    .unwrap_or(f32::MAX);
-                (id, distance)
-            })
+            .zip(vectors)
+            // SAFETY: stored vectors all have the index's dimensions.
+            .map(|(&id, v)| (id, v.map_or(f32::MAX, |v| unsafe { kernel(base_vector, v) })))
             .collect();
         by_distance.sort_by(|a, b| a.1.total_cmp(&b.1));
+        self.select_diverse(&by_distance, max_count, priority_node)
+    }
+
+    /// `select_neighbors_heuristic` for candidates whose distances to the base node are known,
+    /// nearest first: a search for a new node's neighbors has just computed them.
+    pub(crate) fn select_diverse(
+        &self,
+        by_distance: &[(NodeId, f32)],
+        max_count: usize,
+        priority_node: Option<NodeId>,
+    ) -> Result<Vec<NodeId>> {
+        if by_distance.len() <= max_count {
+            return Ok(by_distance.iter().map(|&(id, _)| id).collect());
+        }
+        let kernel = crate::distance::kernel();
 
         // Each (candidate, kept) pair is compared at most once, so there is nothing to cache.
-        let mut selected: Vec<NodeId> = Vec::with_capacity(max_count);
-        for &(candidate, distance) in &by_distance {
+        let mut selected: Vec<(NodeId, &[f32])> = Vec::with_capacity(max_count);
+        for &(candidate, distance) in by_distance {
             if selected.len() >= max_count {
                 break;
             }
             let vector = self.storage.get_vector_slice(candidate)?;
-            let mut is_diverse = true;
-            for &kept in &selected {
-                let kept_vector = self.storage.get_vector_slice(kept)?;
-                if crate::distance::euclidean_distance(vector, kept_vector) < distance {
-                    is_diverse = false;
-                    break;
-                }
-            }
-            if is_diverse {
-                selected.push(candidate);
+            // SAFETY: stored vectors all have the index's dimensions.
+            let near_a_kept =
+                |&(_, kept): &(NodeId, &[f32])| unsafe { kernel(vector, kept) } < distance;
+            if !selected.iter().any(near_a_kept) {
+                selected.push((candidate, vector));
             }
         }
+        let mut selected: Vec<NodeId> = selected.into_iter().map(|(id, _)| id).collect();
 
         if selected.len() < max_count / 2 {
-            for &(candidate, _) in &by_distance {
+            for &(candidate, _) in by_distance {
                 if selected.len() >= max_count {
                     break;
                 }

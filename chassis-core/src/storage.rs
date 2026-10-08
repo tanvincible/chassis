@@ -968,31 +968,14 @@ impl Storage {
         Ok(unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<f32>(), dims) })
     }
 
-    /// Asks the CPU to start loading the vector in `slot`, if there is one: up to its first
-    /// 512 bytes, after which the hardware prefetcher follows the stream.
+    /// Asks the CPU to start loading the level-0 neighbor list of `slot`, which a search is about
+    /// to queue for expanding. Only a hint: a slot that isn't mapped is skipped.
     #[inline]
-    pub(crate) fn prefetch_vector(&self, slot: u64) {
-        if let Ok(vector) = self.get_vector_slice(slot) {
-            let start = vector.as_ptr().cast::<u8>();
-            for offset in (0..(vector.len() * 4).min(512)).step_by(64) {
-                // SAFETY: in bounds of the vector; a prefetch is only a hint and never faults.
-                let line = unsafe { start.add(offset) };
-                #[cfg(target_arch = "x86_64")]
-                unsafe {
-                    use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
-                    _mm_prefetch::<_MM_HINT_T0>(line.cast());
-                }
-                #[cfg(target_arch = "aarch64")]
-                unsafe {
-                    std::arch::asm!(
-                        "prfm pldl1keep, [{0}]",
-                        in(reg) line,
-                        options(nostack, preserves_flags, readonly)
-                    );
-                }
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                let _ = line;
-            }
+    pub(crate) fn prefetch_record(&self, slot: u64) {
+        if let Ok((segment, i)) = self.segment(slot) {
+            let bytes = self.geometry.level0_bytes();
+            let record = segment.region.bytes(segment.level0 + i * bytes, bytes);
+            crate::prefetch::list(record.as_ptr(), bytes);
         }
     }
 
