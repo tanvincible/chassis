@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 env:
-  RUN: 3
+  RUN: 4
   # name=commit, oldest first.
-  STEPS: "base=c46fb1c pf=1e84b02 greedy=4186e22"
+  STEPS: "base=c46fb1c pf=1e84b02 inl=5908f8b greedy=4186e22"
 
 jobs:
   steps:
@@ -73,7 +73,7 @@ jobs:
 
       - name: Build Chassis at each step
         run: |
-          git fetch -q origin perf/small-index
+          git fetch -q origin perf/small-index lab/exp-inl
           git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
           for step in $STEPS; do
             (cd "$RUNNER_TEMP/src" && git checkout -q --detach "${step#*=}" \
