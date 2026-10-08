@@ -340,9 +340,9 @@ impl HnswGraph {
     ///
     /// Used when a backlink overfills a neighbor's list (`priority_node` is the new node).
     /// Candidates are taken nearest first, and one is kept only if it is closer to `base_node`
-    /// than to every neighbor already kept. If that keeps fewer than `max_count / 2`, the nearest
-    /// remaining candidates fill up to `max_count`. `priority_node` is kept if it ranks within the
-    /// nearest `max_count`.
+    /// than to every neighbor already kept. If that keeps fewer than a quarter of `max_count`,
+    /// the nearest of the rest make up the quarter (ADR-0013). `priority_node` is kept if it ranks
+    /// within the nearest `max_count`.
     pub(crate) fn select_neighbors_heuristic(
         &self,
         base_node: NodeId,
@@ -401,14 +401,15 @@ impl HnswGraph {
         }
         let mut selected: Vec<NodeId> = selected.into_iter().map(|(id, _)| id).collect();
 
-        if selected.len() < max_count / 2 {
-            for &(candidate, _) in by_distance {
-                if selected.len() >= max_count {
-                    break;
-                }
-                if !selected.contains(&candidate) {
-                    selected.push(candidate);
-                }
+        // Vectors that lie along a line leave two diverse neighbors, and a chain breaks at its
+        // first lost link, so a selection keeps at least a quarter of the list.
+        let floor = max_count / 4;
+        for &(candidate, _) in by_distance {
+            if selected.len() >= floor {
+                break;
+            }
+            if !selected.contains(&candidate) {
+                selected.push(candidate);
             }
         }
 
