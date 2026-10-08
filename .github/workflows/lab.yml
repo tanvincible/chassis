@@ -73,7 +73,7 @@ jobs:
           cp "$RUNNER_TEMP/t-base/release/examples/lab" "$RUNNER_TEMP/lab-base"
           # The loop as shipped on perf/hot-path, and that loop with one thing changed at a time,
           # to check them against this branch's lean loop.
-          for ref in perf/hot-path lab/exp-pol3 lab/exp-pol8 lab/exp-l2 lab/exp-cmp lab/exp-plain; do
+          for ref in perf/hot-path lab/exp-pol3 lab/exp-pol8 lab/exp-lean3 lab/exp-lean8; do
             name=${ref##*/}
             git fetch -q origin "$ref"
             git worktree add "$RUNNER_TEMP/w-$name" FETCH_HEAD
