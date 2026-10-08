@@ -1,0 +1,1 @@
+{"rustc":17356518491003051113,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[329292521594406337,"build_script_build",false,3024083063820513465]],"local":[{"RerunIfChanged":{"output":"release/build/target-triple-b3ac38f7134035e7/output","paths":["build.rs"]}}],"rustflags":["--cfg","lab","--cfg","lab_count"],"config":0,"compile_kind":0}

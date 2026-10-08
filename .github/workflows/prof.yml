@@ -1,0 +1,143 @@
+name: x86 profile
+
+# Experiment branch only: where a search spends its time when the index fits in cache, Chassis
+# beside hnswlib, by sampling. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/prof.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+
+jobs:
+  prof:
+    name: prof (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [a, b, c, d]
+    env:
+      DATA: bench/ann/data
+      NAME: sift-128
+      CARGO_PROFILE_RELEASE_DEBUG: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+
+      - name: Install perf
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" \
+            || sudo apt-get install -y -qq linux-tools-common linux-tools-azure \
+            || sudo apt-get install -y -qq linux-tools-common linux-tools-generic
+          PERF=$(find /usr/lib -type f -name perf -path '*linux-tools*' | sort | tail -1)
+          echo "PERF=$PERF" >> "$GITHUB_ENV"
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+          "$PERF" --version
+          "$PERF" record -e cpu-clock -F 1000 -o "$RUNNER_TEMP/smoke.data" -- sh -c 'i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done'
+          "$PERF" report -i "$RUNNER_TEMP/smoke.data" --stdio 2>/dev/null | head -20
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: ann-data-${{ hashFiles('bench/ann/prepare.py') }}-sift-128
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install numpy h5py pyarrow
+          python bench/ann/prepare.py "$DATA" "$NAME"
+          rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -g -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+          # The same, counting hops and neighbor scans in the base layer too.
+          cp -r "$RUNNER_TEMP/hnswlib" "$RUNNER_TEMP/hnswlib-count"
+          sed -i 's/bool collect_metrics = false/bool collect_metrics = true/' "$RUNNER_TEMP/hnswlib-count/hnswlib/hnswalg.h"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab_count" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib-count" -lpthread
+
+      - name: Build Chassis as shipped and each variant
+        run: |
+          build() { # name, ref, rustflags
+            if [ ! -d "$RUNNER_TEMP/src-$2" ]; then
+              git fetch -q origin "lab/$2"
+              git worktree add "$RUNNER_TEMP/src-$2" FETCH_HEAD
+              cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src-$2/chassis-core/examples/lab.rs"
+            fi
+            (cd "$RUNNER_TEMP/src-$2" && RUSTFLAGS="--cfg lab $3" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t-$1")
+            cp "$RUNNER_TEMP/t-$1/release/examples/lab" "$RUNNER_TEMP/lab-$1"
+          }
+          build base exp-count ""
+          build inline exp-inline ""
+          build count exp-inline "--cfg lab_count"
+
+      - name: Time and profile small indexes
+        run: |
+          L="$RUNNER_TEMP/lab-base"
+          "$L" kernel base | tee -a results/lab.tsv
+          "$RUNNER_TEMP/hnsw_lab" kernel | tee -a results/lab.tsv
+          for n in 2000 20000; do
+            truth="$RUNNER_TEMP/gt-$n.u32"
+            "$L" truth "$DATA" "$NAME" "$n" "$truth"
+            "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
+            C="search $DATA $NAME $RUNNER_TEMP/c-$n.chassis $truth"
+            H="search $RUNNER_TEMP/h-$n.bin $DATA/$NAME.train.f32 $DATA/$NAME.test.f32 $truth"
+            "$RUNNER_TEMP/lab-count" $C count 2>/dev/null | tee -a results/lab.tsv
+            "$RUNNER_TEMP/hnsw_lab_count" $H count 2>/dev/null | tee -a results/lab.tsv
+            for round in 1 2 3; do
+              "$RUNNER_TEMP/hnsw_lab" $H native 2>/dev/null | tee -a results/lab.tsv
+              "$RUNNER_TEMP/lab-base" $C shipped 2>/dev/null | tee -a results/lab.tsv
+              "$RUNNER_TEMP/lab-inline" $C inline 2>/dev/null | tee -a results/lab.tsv
+            done
+            for ef in 32 256; do
+              profile() { # name, command...
+                name="$1-$n-$ef"; shift
+                LAB_EF=$ef LAB_PASSES=40 "$PERF" record -q -e cpu-clock -F 12000 -o "$RUNNER_TEMP/$name.data" -- "$@" profile > /dev/null 2>&1
+                "$PERF" report -i "$RUNNER_TEMP/$name.data" --stdio --sort sym -F overhead,sym 2>/dev/null | grep -v '^#' | grep -v '^$' | head -30 > "results/$name.sym.txt"
+                timeout 900 "$PERF" report -i "$RUNNER_TEMP/$name.data" --stdio --sort sym,srcline -F overhead,sym,srcline 2>/dev/null | grep -v '^#' | grep -v '^$' | head -150 > "results/$name.lines.txt" || true
+                "$PERF" script -i "$RUNNER_TEMP/$name.data" --no-demangle -F ip,sym,symoff 2>/dev/null | sed 's/^ *[0-9a-f]* //' | sort | uniq -c | sort -rn | head -4000 > "results/$name.offsets.txt"
+                echo "### $name"; head -12 "results/$name.sym.txt"
+              }
+              profile hnswlib "$RUNNER_TEMP/hnsw_lab" $H
+              profile base "$RUNNER_TEMP/lab-base" $C
+              profile inline "$RUNNER_TEMP/lab-inline" $C
+            done
+          done
+          cp "$RUNNER_TEMP/lab-base" "$RUNNER_TEMP/lab-inline" "$RUNNER_TEMP/hnsw_lab" results/
+          {
+            echo '```'
+            cat results/lab.tsv
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prof-${{ matrix.shard }}
+          path: results/

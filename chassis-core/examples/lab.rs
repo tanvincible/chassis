@@ -132,7 +132,11 @@ fn main() -> anyhow::Result<()> {
             let (depth, gt) = read(Path::new(&arg(4)), u32::from_le_bytes)?;
             let truth: Vec<&[u32]> = gt.chunks_exact(depth).map(|row| &row[..K]).collect();
             let tag = arg(5);
-            for ef_search in EF_SEARCH {
+            // LAB_EF=<ef> searches at one ef only; LAB_PASSES=<n> times more passes (profiling).
+            let only: Option<usize> = std::env::var("LAB_EF").ok().and_then(|v| v.parse().ok());
+            let passes_wanted: usize =
+                std::env::var("LAB_PASSES").ok().and_then(|v| v.parse().ok()).unwrap_or(PASSES);
+            for ef_search in EF_SEARCH.into_iter().filter(|&ef| only.is_none_or(|o| o == ef)) {
                 let index = VectorIndex::open(arg(3), dims as u32, options(ef_search))?;
                 let n = index.len();
                 #[cfg(all(lab, target_os = "linux"))]
@@ -144,19 +148,28 @@ fn main() -> anyhow::Result<()> {
                 }
                 #[cfg(lab)]
                 let counted = chassis_core::lab::distances();
-                let mut passes = Vec::with_capacity(PASSES);
+                #[cfg(lab)]
+                let (hops, scans) = chassis_core::lab::hops_scans();
+                let mut passes = Vec::with_capacity(passes_wanted);
                 let mut results = Vec::new();
-                for _ in 0..PASSES {
+                for _ in 0..passes_wanted {
                     let start = Instant::now();
                     results =
                         queries.iter().map(|q| index.search(q, K)).collect::<Result<_, _>>()?;
                     passes.push(queries.len() as f64 / start.elapsed().as_secs_f64());
                 }
+                let searches = (passes_wanted * queries.len()) as f64;
                 #[cfg(lab)]
-                let per_query = (chassis_core::lab::distances() - counted) as f64
-                    / (PASSES * queries.len()) as f64;
+                let (per_query, hops, scans) = {
+                    let (h, s) = chassis_core::lab::hops_scans();
+                    (
+                        (chassis_core::lab::distances() - counted) as f64 / searches,
+                        (h - hops) as f64 / searches,
+                        (s - scans) as f64 / searches,
+                    )
+                };
                 #[cfg(not(lab))]
-                let per_query = 0.0;
+                let (per_query, hops, scans) = (0.0, 0.0, 0.0);
                 passes.sort_by(f64::total_cmp);
                 let hits: usize = results
                     .iter()
@@ -167,8 +180,8 @@ fn main() -> anyhow::Result<()> {
                     .sum();
                 let recall = hits as f64 / (queries.len() * K) as f64;
                 println!(
-                    "chassis\t{tag}\t{n}\tsearch\t{ef_search}\t{recall:.4}\t{:.0}\t{per_query:.0}",
-                    passes[PASSES / 2]
+                    "chassis\t{tag}\t{n}\tsearch\t{ef_search}\t{recall:.4}\t{:.0}\t{per_query:.0}\t{hops:.0}\t{scans:.0}",
+                    passes[passes_wanted / 2]
                 );
                 if ef_search == 256 {
                     huge_pages(&tag);

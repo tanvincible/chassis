@@ -91,13 +91,16 @@ int main(int argc, char **argv) {
         { std::ifstream in(argv[3], std::ios::binary); in.read((char *)&rows, 4); in.read((char *)&dims, 4); }
         auto test = load<float>(argv[4], qn, qd);
         auto gt = load<uint32_t>(argv[5], gn, depth);
+        size_t only = getenv("LAB_EF") ? std::stoul(getenv("LAB_EF")) : 0;
+        int passes_wanted = getenv("LAB_PASSES") ? std::stoi(getenv("LAB_PASSES")) : PASSES;
         for (size_t ef : EFS) {
+            if (only && only != ef) continue;
             hnswlib::L2Space space(dims);
             hnswlib::HierarchicalNSW<float> index(&space, argv[2]);
             index.setEf(ef);
             for (uint32_t q = 0; q < qn; q++) index.searchKnn(test.data() + (size_t)q * dims, K);
             std::vector<double> passes; size_t hits = 0;
-            for (int pass = 0; pass < PASSES; pass++) {
+            for (int pass = 0; pass < passes_wanted; pass++) {
                 double t = now(); hits = 0;
                 for (uint32_t q = 0; q < qn; q++) {
                     auto found = index.searchKnn(test.data() + (size_t)q * dims, K);
@@ -113,8 +116,11 @@ int main(int argc, char **argv) {
             hnswlib::HierarchicalNSW<float> again(&counting, argv[2]);
             again.setEf(ef); g_count = 0;
             for (uint32_t q = 0; q < qn; q++) again.searchKnn(test.data() + (size_t)q * dims, K);
-            printf("hnswlib\t%s\t%zu\tsearch\t%zu\t%.4f\t%.0f\t%.0f\n", argv[6], (size_t)index.cur_element_count, ef,
-                   hits / double(qn * K), passes[PASSES / 2], g_count / double(qn));
+            // Hops and scans include the upper layers, and the base layer only when hnswalg.h is
+            // patched to collect metrics.
+            printf("hnswlib\t%s\t%zu\tsearch\t%zu\t%.4f\t%.0f\t%.0f\t%.0f\t%.0f\n", argv[6], (size_t)index.cur_element_count, ef,
+                   hits / double(qn * K), passes[passes_wanted / 2], g_count / double(qn),
+                   again.metric_hops / double(qn), again.metric_distance_computations / double(qn));
             if (ef == 256) huge_pages(argv[6]);
         }
         return 0;
