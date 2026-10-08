@@ -71,12 +71,16 @@ jobs:
         run: |
           RUSTFLAGS="--cfg lab" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t-base"
           cp "$RUNNER_TEMP/t-base/release/examples/lab" "$RUNNER_TEMP/lab-base"
-          # The loop as shipped on perf/hot-path, to check it against this branch's lean loop.
-          git fetch -q origin perf/hot-path
-          git worktree add "$RUNNER_TEMP/product" FETCH_HEAD
-          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/product/chassis-core/examples/lab.rs"
-          (cd "$RUNNER_TEMP/product" && cargo build --release -p chassis-core --example lab)
-          cp "$RUNNER_TEMP/product/target/release/examples/lab" "$RUNNER_TEMP/lab-product"
+          # The loop as shipped on perf/hot-path, and that loop with one thing changed at a time,
+          # to check them against this branch's lean loop.
+          for ref in perf/hot-path lab/exp-pol3 lab/exp-pol8 lab/exp-l2 lab/exp-cmp lab/exp-plain; do
+            name=${ref##*/}
+            git fetch -q origin "$ref"
+            git worktree add "$RUNNER_TEMP/w-$name" FETCH_HEAD
+            cp chassis-core/examples/lab.rs "$RUNNER_TEMP/w-$name/chassis-core/examples/lab.rs"
+            (cd "$RUNNER_TEMP/w-$name" && cargo build --release -p chassis-core --example lab)
+            cp "$RUNNER_TEMP/w-$name/target/release/examples/lab" "$RUNNER_TEMP/ref-$name"
+          done
 
       - name: Search 1,000,000 vectors
         run: |
@@ -94,7 +98,9 @@ jobs:
             "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" native 2> /dev/null | tee -a results/lab.tsv
             lean 0 0,8,0,0
             for pf in 0,3,0,2 0,8,0,2 5,8,0,2; do lean 1 "$pf"; done
-            "$RUNNER_TEMP/lab-product" search "$DATA" "$NAME" "$index" "$truth" product 2> /dev/null | tee -a results/lab.tsv
+            for ref in "$RUNNER_TEMP"/ref-*; do
+              "$ref" search "$DATA" "$NAME" "$index" "$truth" "${ref##*ref-}" 2> /dev/null | tee -a results/lab.tsv
+            done
           done
 
       - name: Summary
