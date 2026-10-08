@@ -31,6 +31,8 @@ jobs:
       NAME: sift-128
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@v1
         with:
@@ -46,7 +48,7 @@ jobs:
             echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
             echo
             echo '```'
-            lscpu | grep -E "Model name|Thread|Core|Socket|L1d|L2|L3|MHz" || true
+            lscpu | grep -E "Model name|CPU family|Model:|Thread|Core|Socket|L1d|L2|L3|MHz" || true
             echo "SIMD: $(grep -owE 'avx2|fma|avx512f|avx512vl|avx512_vnni|asimd|sve2?' /proc/cpuinfo | sort -u | tr '\n' ' ')"
             echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  kernel $(uname -r)"
             echo '```'
@@ -67,82 +69,33 @@ jobs:
 
       - name: Build the Chassis variants
         run: |
-          build() { # name, rustflags
-            RUSTFLAGS="--cfg lab $2" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t-$1"
-            cp "$RUNNER_TEMP/t-$1/release/examples/lab" "$RUNNER_TEMP/lab-$1"
-          }
-          build base ""
-          build count "--cfg lab_count"
-          if [ "$(uname -m)" = x86_64 ]; then build v3 "-C target-cpu=x86-64-v3"; fi
-
-      - name: One-thread builds of 100,000 vectors
-        run: |
-          mkdir results
-          seq() { # variant, LAB_FAST, LAB_BUILD
-            LAB_FAST="$2" LAB_PF=0,8,0,2 LAB_BUILD="$3" "$RUNNER_TEMP/lab-$1" seq "$DATA" "$NAME" 100000 "$1/fast$2/build$3" | tee -a results/lab.tsv
-          }
-          for round in 1 2; do
-            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" 100000 "$RUNNER_TEMP/h-seq.bin" 1 | tee -a results/lab.tsv
-            seq base 0 9999,1
-            for rule in 9999,1 16,1 32,0 16,0; do seq base 1 "$rule"; done
-          done
+          RUSTFLAGS="--cfg lab" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t-base"
+          cp "$RUNNER_TEMP/t-base/release/examples/lab" "$RUNNER_TEMP/lab-base"
+          # The loop as shipped on perf/hot-path, to check it against this branch's lean loop.
+          git fetch -q origin perf/hot-path
+          git worktree add "$RUNNER_TEMP/product" FETCH_HEAD
+          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/product/chassis-core/examples/lab.rs"
+          (cd "$RUNNER_TEMP/product" && cargo build --release -p chassis-core --example lab)
+          cp "$RUNNER_TEMP/product/target/release/examples/lab" "$RUNNER_TEMP/lab-product"
 
       - name: Search 1,000,000 vectors
         run: |
+          mkdir results
           L="$RUNNER_TEMP/lab-base"
           n=1000000
           truth="$DATA/$NAME.gt.u32"
-          best=base; [ "$(uname -m)" = x86_64 ] && best=v3
-          chassis() { # variant, LAB_FAST, LAB_PF, index, [extra env]
-            env $5 LAB_FAST="$2" LAB_PF="$3" "$RUNNER_TEMP/lab-$1" search "$DATA" "$NAME" "$4" "$truth" "$1/fast$2/$3/$(basename "$4" .chassis)${5:+/$5}" 2>> results/pages.txt | tee -a results/lab.tsv
-          }
-          hnsw() { # tag, [extra env]
-            env $2 "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" "$1" 2>> results/pages.txt | tee -a results/lab.tsv
-          }
-          # One index per graph rule: Chassis's (a new node selects up to M0 and fills), each half
-          # of it changed, and hnswlib's (selects M, no fill).
-          for rule in 9999,1 16,1 32,0 16,0; do
-            LAB_FAST=1 LAB_PF=0,8,0,2 LAB_BUILD="$rule" "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/g$rule.chassis" "$n" | sed "s/\tbase\t/\tbuild$rule\t/" | tee -a results/lab.tsv
-          done
+          index="$RUNNER_TEMP/default.chassis"
+          "$L" build "$DATA" "$NAME" "$index" "$n" | tee -a results/lab.tsv
           "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
-          default="$RUNNER_TEMP/g9999,1.chassis"
-          for rule in 9999,1 16,1 32,0 16,0; do chassis count 1 0,8,0,2 "$RUNNER_TEMP/g$rule.chassis"; done
-          for round in 1 2; do
-            hnsw native
-            hnsw nothp LAB_NO_THP=1
-            chassis base 0 0,8,0,0 "$default"
-            # How many lines to hint into L1, all into L2, and the first lines into L1 with the
-            # rest into L2.
-            for pf in 0,2,0,2 0,3,0,2 0,4,0,2 0,5,0,2 0,6,0,2 0,8,0,2 5,8,0,2 5,4,0,2 7,8,1,2 7,8,2,2 7,8,3,2 7,8,4,2; do
-              chassis base 1 "$pf" "$default"
-            done
-            for pf in 0,3,0,2 0,8,0,2 5,8,0,2 7,8,3,2; do
-              chassis "$best" 1 "$pf" "$default"
-              for rule in 16,1 32,0 16,0; do chassis "$best" 1 "$pf" "$RUNNER_TEMP/g$rule.chassis"; done
-            done
-            chassis "$best" 1 0,8,0,2 "$default" LAB_MADV=1
-            hnsw native
-          done
-
-      - name: Huge pages for a file mapping
-        if: runner.arch == 'X64'
-        run: |
-          n=1000000
-          truth="$DATA/$NAME.gt.u32"
-          run() { # tag, index, [extra env]
-            env $3 LAB_FAST=1 LAB_PF=0,8,0,2 "$RUNNER_TEMP/lab-v3" search "$DATA" "$NAME" "$2" "$truth" "$1" 2>> results/pages.txt | tee -a results/lab.tsv
+          lean() { # LAB_FAST, LAB_PF
+            LAB_FAST="$1" LAB_PF="$2" "$L" search "$DATA" "$NAME" "$index" "$truth" "lab/fast$1/$2" 2> /dev/null | tee -a results/lab.tsv
           }
-          # The page cache read back from disk with huge pages asked for.
-          sync; echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-          run ext4-reread-madv "$RUNNER_TEMP/g9999,1.chassis" LAB_MADV=1
-          run ext4-reread-madv "$RUNNER_TEMP/g9999,1.chassis" LAB_MADV=1
-          # The same file in shared memory, where the kernel can be told to use huge pages.
-          echo always | sudo tee /sys/kernel/mm/transparent_hugepage/shmem_enabled || true
-          sudo mount -o remount,huge=always /dev/shm || true
-          cp "$RUNNER_TEMP/g9999,1.chassis" /dev/shm/huge.chassis
-          run shm-huge /dev/shm/huge.chassis LAB_MADV=1
-          run shm-huge /dev/shm/huge.chassis LAB_MADV=1
-          cat results/pages.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          for round in 1 2 3; do
+            "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" native 2> /dev/null | tee -a results/lab.tsv
+            lean 0 0,8,0,0
+            for pf in 0,3,0,2 0,8,0,2 5,8,0,2; do lean 1 "$pf"; done
+            "$RUNNER_TEMP/lab-product" search "$DATA" "$NAME" "$index" "$truth" product 2> /dev/null | tee -a results/lab.tsv
+          done
 
       - name: Summary
         if: always()

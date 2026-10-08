@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
+  RUN: 2
   OLD: origin/fix/lost-adds
   NEW: origin/perf/hot-path
 
@@ -52,6 +52,7 @@ jobs:
           {
             echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
             echo "old $(git rev-parse --short "$OLD"), new $(git rev-parse --short "$NEW")"
+            echo "family $(lscpu | sed -n 's/^CPU family: *//p'), model $(lscpu | sed -n 's/^Model: *//p'), SIMD: $(grep -owE 'avx2|fma|avx512f' /proc/cpuinfo | sort -u | tr '\n' ' ')"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/cache@v4
