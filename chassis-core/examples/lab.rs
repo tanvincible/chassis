@@ -26,6 +26,26 @@ fn options(ef_search: usize) -> IndexOptions {
     IndexOptions { max_connections: 16, ef_construction: 200, ef_search, ..IndexOptions::default() }
 }
 
+/// How much of this process is mapped with huge pages, to stderr.
+fn huge_pages(tag: &str) {
+    if let Ok(smaps) = std::fs::read_to_string("/proc/self/smaps_rollup") {
+        let pick = |key: &str| {
+            smaps
+                .lines()
+                .find(|l| l.starts_with(key))
+                .map_or("?", |l| l[key.len()..].trim())
+                .to_string()
+        };
+        eprintln!(
+            "pages chassis {tag}: Rss {} AnonHuge {} FilePmd {} ShmemPmd {}",
+            pick("Rss:"),
+            pick("AnonHugePages:"),
+            pick("FilePmdMapped:"),
+            pick("ShmemPmdMapped:")
+        );
+    }
+}
+
 fn kernel(tag: &str) {
     for dims in [128usize, 960, 1536] {
         // 256 pairs: in L2 at every size here.
@@ -75,7 +95,7 @@ fn main() -> anyhow::Result<()> {
         }
         "seq" => {
             let n: usize = arg(3).parse()?;
-            let path = dir.join(format!("{name}.seq.{}.chassis", arg(4)));
+            let path = dir.join(format!("{name}.seq.{}.chassis", arg(4).replace(['/', ','], "_")));
             let _ = std::fs::remove_file(&path);
             let mut index = VectorIndex::open(&path, dims as u32, options(K))?;
             let start = Instant::now();
@@ -115,6 +135,10 @@ fn main() -> anyhow::Result<()> {
             for ef_search in EF_SEARCH {
                 let index = VectorIndex::open(arg(3), dims as u32, options(ef_search))?;
                 let n = index.len();
+                #[cfg(all(lab, target_os = "linux"))]
+                if std::env::var("LAB_MADV").is_ok() {
+                    index.lab_huge();
+                }
                 for query in &queries {
                     index.search(query, K)?;
                 }
@@ -146,6 +170,9 @@ fn main() -> anyhow::Result<()> {
                     "chassis\t{tag}\t{n}\tsearch\t{ef_search}\t{recall:.4}\t{:.0}\t{per_query:.0}",
                     passes[PASSES / 2]
                 );
+                if ef_search == 256 {
+                    huge_pages(&tag);
+                }
             }
         }
         other => anyhow::bail!("unknown mode {other}"),

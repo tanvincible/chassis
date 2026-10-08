@@ -428,6 +428,8 @@ impl HnswGraph {
                             3 => sum += Storage::hint(vector, lines, true, 1),
                             4 => sum += Storage::hint(vector, lines, true, lines),
                             5 => sum += Storage::hint(vector, lines, false, 0),
+                            // The first `ahead` lines into L1, the rest of 8 into L2.
+                            7 => sum += Storage::hint_split(vector, 8, ahead, 0),
                             _ => {}
                         }
                         fresh.push((neighbor_id, vector));

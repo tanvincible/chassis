@@ -639,6 +639,12 @@ impl VectorIndex {
         Ok(())
     }
 
+    /// Lab: `MADV_HUGEPAGE` on every region.
+    #[cfg(all(lab, target_os = "linux"))]
+    pub fn lab_huge(&self) -> usize {
+        self.graph.storage.lab_huge()
+    }
+
     /// Get the number of live (not deleted) vectors in the index
     pub fn len(&self) -> u64 {
         self.graph.node_count() - self.graph.deleted_count

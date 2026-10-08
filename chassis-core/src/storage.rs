@@ -911,6 +911,13 @@ impl Storage {
     /// Asks the CPU to start loading the vector in `slot`, if there is one: up to its first
     /// 512 bytes, after which the hardware prefetcher follows the stream.
     #[inline]
+    /// Lab: asks for huge pages on every mapped region; returns how many accepted.
+    #[cfg(all(lab, target_os = "linux"))]
+    pub(crate) fn lab_huge(&self) -> usize {
+        let regions = self.segments.iter().map(|s| &s.region).chain(&self.chunks);
+        regions.filter(|r| r.map.advise(memmap2::Advice::HugePage).is_ok()).count()
+    }
+
     /// The first `lines` cache lines of a node's level-0 record.
     #[cfg(lab)]
     pub(crate) fn prefetch_record(&self, slot: u64, lines: usize) {
@@ -945,10 +952,18 @@ impl Storage {
     #[cfg(lab)]
     #[inline(always)]
     pub(crate) fn hint(vector: &[f32], lines: usize, near: bool, reads: usize) -> u8 {
+        Self::hint_split(vector, lines, if near { usize::MAX } else { 0 }, reads)
+    }
+
+    /// Like `hint`, with the first `near_lines` lines into L1 and the rest into L2.
+    #[cfg(lab)]
+    #[inline(always)]
+    pub(crate) fn hint_split(vector: &[f32], lines: usize, near_lines: usize, reads: usize) -> u8 {
         let start = vector.as_ptr().cast::<u8>();
         let mut sum = 0u8;
         for (i, offset) in (0..(vector.len() * 4).min(lines * 64)).step_by(64).enumerate() {
             let line = unsafe { start.add(offset) };
+            let near = i < near_lines;
             if i < reads {
                 sum = sum.wrapping_add(unsafe { std::ptr::read_volatile(line) });
                 continue;

@@ -34,8 +34,24 @@ struct CountedL2 : hnswlib::L2Space {
     hnswlib::DISTFUNC<float> get_dist_func() override { return counted; }
 };
 
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
+static void huge_pages(const char *tag) {
+    std::ifstream in("/proc/self/smaps_rollup");
+    std::string line, out;
+    while (std::getline(in, line))
+        for (const char *key : {"Rss:", "AnonHugePages:", "FilePmdMapped:"})
+            if (line.rfind(key, 0) == 0) out += " " + line;
+    fprintf(stderr, "pages hnswlib %s:%s\n", tag, out.c_str());
+}
+
 int main(int argc, char **argv) {
     std::string mode = argv[1];
+#ifdef __linux__
+    // LAB_NO_THP=1: no transparent huge pages for this process, whatever the system setting.
+    if (getenv("LAB_NO_THP")) prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+#endif
     if (mode == "kernel") {
         for (size_t dims : {128, 960, 1536}) {
             hnswlib::L2Space space(dims);
@@ -99,6 +115,7 @@ int main(int argc, char **argv) {
             for (uint32_t q = 0; q < qn; q++) again.searchKnn(test.data() + (size_t)q * dims, K);
             printf("hnswlib\t%s\t%zu\tsearch\t%zu\t%.4f\t%.0f\t%.0f\n", argv[6], (size_t)index.cur_element_count, ef,
                    hits / double(qn * K), passes[PASSES / 2], g_count / double(qn));
+            if (ef == 256) huge_pages(argv[6]);
         }
         return 0;
     }
