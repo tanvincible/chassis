@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 2
+  RUN: 3
 
 jobs:
   prof:
@@ -83,39 +83,34 @@ jobs:
           sed -i 's/bool collect_metrics = false/bool collect_metrics = true/' "$RUNNER_TEMP/hnswlib-count/hnswlib/hnswalg.h"
           g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab_count" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib-count" -lpthread
 
-      - name: Build Chassis as shipped and each variant
+      - name: Build Chassis before and after
         run: |
-          build() { # name, ref, rustflags
-            if [ ! -d "$RUNNER_TEMP/src-$2" ]; then
-              git fetch -q origin "lab/$2"
-              git worktree add "$RUNNER_TEMP/src-$2" FETCH_HEAD
-              cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src-$2/chassis-core/examples/lab.rs"
-            fi
-            (cd "$RUNNER_TEMP/src-$2" && RUSTFLAGS="--cfg lab $3" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t-$1")
-            cp "$RUNNER_TEMP/t-$1/release/examples/lab" "$RUNNER_TEMP/lab-$1"
-          }
-          build base exp-count ""
-          build inline exp-inline ""
-          build count exp-inline "--cfg lab_count"
+          git fetch -q origin perf/small-index
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          for step in base=c46fb1c final=2b20200; do
+            (cd "$RUNNER_TEMP/src" && git checkout -q --detach "${step#*=}" \
+              && cp "$GITHUB_WORKSPACE/chassis-core/examples/lab.rs" chassis-core/examples/lab.rs \
+              && cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t" \
+              && rm chassis-core/examples/lab.rs)
+            cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab-${step%%=*}"
+          done
 
       - name: Time and profile small indexes
         run: |
           L="$RUNNER_TEMP/lab-base"
           "$L" kernel base | tee -a results/lab.tsv
           "$RUNNER_TEMP/hnsw_lab" kernel | tee -a results/lab.tsv
-          for n in 2000 20000; do
+          for n in 2000 20000 1000000; do
             truth="$RUNNER_TEMP/gt-$n.u32"
             "$L" truth "$DATA" "$NAME" "$n" "$truth"
             "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
             "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
             C="search $DATA $NAME $RUNNER_TEMP/c-$n.chassis $truth"
             H="search $RUNNER_TEMP/h-$n.bin $DATA/$NAME.train.f32 $DATA/$NAME.test.f32 $truth"
-            "$RUNNER_TEMP/lab-count" $C count 2>/dev/null | tee -a results/lab.tsv
-            "$RUNNER_TEMP/hnsw_lab_count" $H count 2>/dev/null | tee -a results/lab.tsv
             for round in 1 2 3; do
               "$RUNNER_TEMP/hnsw_lab" $H native 2>/dev/null | tee -a results/lab.tsv
               "$RUNNER_TEMP/lab-base" $C shipped 2>/dev/null | tee -a results/lab.tsv
-              "$RUNNER_TEMP/lab-inline" $C inline 2>/dev/null | tee -a results/lab.tsv
+              "$RUNNER_TEMP/lab-final" $C final 2>/dev/null | tee -a results/lab.tsv
             done
             for ef in 32 256; do
               profile() { # name, command...
@@ -127,11 +122,10 @@ jobs:
                 echo "### $name"; head -12 "results/$name.sym.txt"
               }
               profile hnswlib "$RUNNER_TEMP/hnsw_lab" $H
-              profile base "$RUNNER_TEMP/lab-base" $C
-              profile inline "$RUNNER_TEMP/lab-inline" $C
+              profile final "$RUNNER_TEMP/lab-final" $C
             done
           done
-          cp "$RUNNER_TEMP/lab-base" "$RUNNER_TEMP/lab-inline" "$RUNNER_TEMP/hnsw_lab" results/
+          cp "$RUNNER_TEMP/lab-final" "$RUNNER_TEMP/hnsw_lab" results/
           {
             echo '```'
             cat results/lab.tsv
