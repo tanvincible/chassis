@@ -175,6 +175,7 @@ impl VisitedFilter {
     }
     /// Check if a node is visited without modifying state.
     #[inline]
+    #[allow(dead_code)]
     fn is_visited(&self, node_id: u64) -> bool {
         let idx = node_id as usize;
         if idx >= self.capacity {
@@ -357,7 +358,6 @@ impl HnswGraph {
         // index's dimensions, and so does a query.
         let mut best_id = entry;
         let mut best_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
-        let prefetch = Prefetch::detect().for_dims(query.len());
 
         let mut visited = Visited::take(self.node_count as usize);
         visited.0.visit(entry);
@@ -365,15 +365,6 @@ impl HnswGraph {
         while changed {
             changed = false;
 
-            // As on layer 0, ask for every unvisited neighbor's vector before computing a
-            // distance. Only hints, so a neighbor that can't be read is left for the loop below.
-            for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
-                if !visited.0.is_visited(neighbor_id)
-                    && let Ok(vector) = self.storage.get_vector_slice(neighbor_id)
-                {
-                    prefetch.vector(vector);
-                }
-            }
             for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
                 if visited.0.visit(neighbor_id) {
                     let vector = self.storage.get_vector_slice(neighbor_id)?;
