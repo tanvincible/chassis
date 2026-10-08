@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 env:
-  RUN: 2
+  RUN: 3
   # name=commit, oldest first.
-  STEPS: "base=c46fb1c sq=ff84bd6 visit=e7b899c pf=1f9fb25 visit2=214bc3f hop=2b20200"
+  STEPS: "base=c46fb1c pf=1e84b02 greedy=4186e22"
 
 jobs:
   steps:
@@ -92,14 +92,18 @@ jobs:
             "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
             "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
             names=$(for step in $STEPS; do echo "${step%%=*}"; done)
-            # The big index only has to show that nothing got slower.
-            [ "$n" = 1000000 ] && names="base pf hop"
             for round in 1 2 3; do
               LAB_PASSES=3 "$RUNNER_TEMP/hnsw_lab" search "$RUNNER_TEMP/h-$n.bin" "$DATA/$NAME.train.f32" "$DATA/$NAME.test.f32" "$truth" native 2>/dev/null | tee -a results/lab.tsv
               for name in $names; do
                 LAB_PASSES=3 "$RUNNER_TEMP/lab-$name" search "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$truth" "$name" 2>/dev/null | tee -a results/lab.tsv
               done
             done
+          done
+          # One-thread builds of 100,000 vectors, which run the same loop.
+          for round in 1 2; do
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" 100000 "$RUNNER_TEMP/seq.bin" 1 | tee -a results/lab.tsv
+            "$RUNNER_TEMP/lab-base" seq "$DATA" "$NAME" 100000 base | tee -a results/lab.tsv
+            "$RUNNER_TEMP/lab-greedy" seq "$DATA" "$NAME" 100000 greedy | tee -a results/lab.tsv
           done
           {
             echo '```'
