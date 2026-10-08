@@ -5,7 +5,7 @@
 //! - Dense visited filter (no HashSet in hot path)
 //! - Zero-allocation neighbor iteration via `neighbors_iter_from_mmap()`
 //! - Zero-copy distance computation via `compute_distance_zero_copy()`
-//! - NaN-safe ordering with `f32::total_cmp`
+//! - NaN-safe ordering: a NaN distance sorts past every other
 //!
 //! # Safety Guarantees
 //!
@@ -406,8 +406,8 @@ impl HnswGraph {
     ///    - No `Vec<f32>` allocation per distance calculation
     ///    - Direct mmap reads
     ///
-    /// 4. **NaN-safe ordering**: `f32::total_cmp`
-    ///    - No panics on NaN
+    /// 4. **NaN-safe ordering**: nodes packed into integers that order by distance, then slot
+    ///    - No panics on NaN, which sorts past every distance
     ///    - Deterministic behavior
     ///
     /// # Hot Path Analysis
