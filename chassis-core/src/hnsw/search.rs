@@ -504,6 +504,7 @@ impl HnswGraph {
 
         // Dense visited filter: O(n) space, O(1) time per check, reused across searches
         let mut visited = Visited::take(self.node_count as usize);
+        // Both heaps hold packed nodes: `candidates` nearest first, `results` farthest first.
         let mut candidates = BinaryHeap::new();
         let mut results = BinaryHeap::new();
         // The unvisited neighbors of the node being expanded, each with its vector: located
@@ -514,24 +515,23 @@ impl HnswGraph {
         // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
         // index's dimensions, and so does a query.
         let entry_dist = unsafe { K::distance(query, self.storage.get_vector_slice(entry)?) };
-        candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
+        candidates.push(Reverse(pack(entry_dist, entry)));
         if !excluded(entry)? {
-            results.push(SearchResult { id: entry, distance: entry_dist });
+            results.push(pack(entry_dist, entry));
         }
         visited.0.visit(entry);
-        // The worst result's distance, read only while there are `ef` results.
-        let mut bound = results.peek().map_or(f32::INFINITY, |worst| worst.distance);
+        let mut bound = worst_allowed(&results, ef);
 
         while let Some(Reverse(current)) = candidates.pop() {
             // Early termination: current is further than worst result
-            if results.len() >= ef && current.distance.total_cmp(&bound).is_gt() {
+            if current >> 32 > bound {
                 break;
             }
 
             // Start loading every unvisited neighbor's vector before computing any distance, so the
             // cache misses overlap instead of each distance waiting on its own.
             fresh.clear();
-            for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
+            for neighbor_id in self.neighbors_iter_from_mmap(current & SLOT, layer)? {
                 if visited.0.visit(neighbor_id) {
                     let vector = self.storage.get_vector_slice(neighbor_id)?;
                     prefetch.vector(vector);
@@ -547,26 +547,57 @@ impl HnswGraph {
                 }
                 let dist = unsafe { K::distance(query, vector) };
 
-                if results.len() < ef || dist.total_cmp(&bound).is_lt() {
-                    candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
+                if u64::from(dist.to_bits()) < bound {
+                    let found = pack(dist, neighbor_id);
+                    candidates.push(Reverse(found));
                     // It will most likely be expanded: have its neighbor list on the way.
                     self.storage.prefetch_record(neighbor_id);
                     if excluded(neighbor_id)? {
                         continue;
                     }
-                    results.push(SearchResult { id: neighbor_id, distance: dist });
-
-                    if results.len() > ef {
-                        results.pop();
+                    if results.len() < ef {
+                        results.push(found);
+                    } else if let Some(mut worst) = results.peek_mut() {
+                        // Nearer than the worst of `ef` results: it takes its place, in one walk
+                        // down the heap where a push and a pop would take three.
+                        *worst = found;
                     }
-                    bound = results.peek().map_or(bound, |worst| worst.distance);
+                    bound = worst_allowed(&results, ef);
                 }
             }
         }
 
-        let mut sorted: Vec<_> = results.into_iter().collect();
-        sorted.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-        Ok(Some(sorted))
+        let mut sorted = results.into_vec();
+        sorted.sort_unstable();
+        Ok(Some(sorted.into_iter().map(unpack).collect()))
+    }
+}
+
+/// The slot of a packed node.
+const SLOT: u64 = 0xffff_ffff;
+
+/// A node and its distance in one integer that orders by distance, then slot: the distance's bits
+/// above the slot. A distance is never negative, so its bits order as its value does, and NaN
+/// lands past every distance. A heap of these is half the size of one of pairs, and each of its
+/// steps is one integer comparison.
+#[inline]
+fn pack(distance: f32, slot: NodeId) -> u64 {
+    debug_assert!(slot < SLOT && !distance.is_sign_negative());
+    (u64::from(distance.to_bits()) << 32) | slot
+}
+
+#[inline]
+fn unpack(packed: u64) -> SearchResult {
+    SearchResult { id: packed & SLOT, distance: f32::from_bits((packed >> 32) as u32) }
+}
+
+/// What a distance's bits must be below for a search to take the node: the worst result's, once
+/// there are `ef` results.
+#[inline]
+fn worst_allowed(results: &BinaryHeap<u64>, ef: usize) -> u64 {
+    match results.peek() {
+        Some(worst) if results.len() >= ef => worst >> 32,
+        _ => u64::MAX,
     }
 }
 
