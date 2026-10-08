@@ -16,6 +16,7 @@
 
 use crate::hnsw::graph::HnswGraph;
 use crate::hnsw::node::NodeId;
+use crate::prefetch::Prefetch;
 use anyhow::Result;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -310,8 +311,13 @@ impl HnswGraph {
         entry: NodeId,
         layer: usize,
     ) -> Result<NodeId> {
+        let kernel = crate::distance::kernel();
+        // SAFETY (here and below): a stored vector has the index's dimensions, and so does a query.
+        let distance = |slot| -> Result<f32> {
+            Ok(unsafe { kernel(query, self.storage.get_vector_slice(slot)?) })
+        };
         let mut best_id = entry;
-        let mut best_dist = self.compute_distance_zero_copy(query, entry)?;
+        let mut best_dist = distance(entry)?;
 
         with_visited(self.node_count as usize, |visited| {
             visited.visit(entry);
@@ -321,7 +327,7 @@ impl HnswGraph {
 
                 for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
                     if visited.visit(neighbor_id) {
-                        let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
+                        let dist = distance(neighbor_id)?;
 
                         if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
                             best_id = neighbor_id;
@@ -411,26 +417,34 @@ impl HnswGraph {
         };
         let mut budget = filter.map_or(usize::MAX, |(_, budget)| budget);
 
+        // An `ef` of 0 would leave no worst result to compare with; callers truncate anyway.
+        let ef = ef.max(1);
+        let kernel = crate::distance::kernel();
+        let prefetch = Prefetch::detect();
+
         // Dense visited filter: O(n) space, O(1) time per check, reused across searches
         with_visited(self.node_count as usize, |visited| {
             let mut candidates = BinaryHeap::new();
             let mut results = BinaryHeap::new();
-            let mut fresh = Vec::with_capacity(self.record_params.max_neighbors(layer));
+            // The unvisited neighbors of the node being expanded, each with its vector: located
+            // once, for the prefetch and for the distance.
+            let mut fresh: Vec<(NodeId, &[f32])> =
+                Vec::with_capacity(self.record_params.max_neighbors(layer));
 
-            // Zero-copy distance computation
-            let entry_dist = self.compute_distance_zero_copy(query, entry)?;
+            // SAFETY (here and below): a stored vector has the index's dimensions, and so does a
+            // query.
+            let entry_dist = unsafe { kernel(query, self.storage.get_vector_slice(entry)?) };
             candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
             if !excluded(entry)? {
                 results.push(SearchResult { id: entry, distance: entry_dist });
             }
             visited.visit(entry);
+            // The worst result's distance, read only while there are `ef` results.
+            let mut bound = results.peek().map_or(f32::INFINITY, |worst| worst.distance);
 
             while let Some(Reverse(current)) = candidates.pop() {
                 // Early termination: current is further than worst result
-                if results.len() >= ef
-                    && let Some(worst) = results.peek()
-                    && current.distance.total_cmp(&worst.distance) == std::cmp::Ordering::Greater
-                {
+                if results.len() >= ef && current.distance.total_cmp(&bound).is_gt() {
                     break;
                 }
 
@@ -439,31 +453,24 @@ impl HnswGraph {
                 fresh.clear();
                 for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
                     if visited.visit(neighbor_id) {
-                        self.storage.prefetch_vector(neighbor_id);
-                        fresh.push(neighbor_id);
+                        let vector = self.storage.get_vector_slice(neighbor_id)?;
+                        prefetch.vector(vector);
+                        fresh.push((neighbor_id, vector));
                     }
                 }
-                for &neighbor_id in &fresh {
+                for &(neighbor_id, vector) in &fresh {
                     if FILTERED {
                         budget = match budget.checked_sub(1) {
                             Some(left) => left,
                             None => return Ok(None),
                         };
                     }
-                    // Zero-copy distance computation
-                    // Reads directly from mmap instead of allocating Vec<f32>
-                    let dist = self.compute_distance_zero_copy(query, neighbor_id)?;
+                    let dist = unsafe { kernel(query, vector) };
 
-                    let should_add = if results.len() < ef {
-                        true
-                    } else if let Some(worst) = results.peek() {
-                        dist.total_cmp(&worst.distance) == std::cmp::Ordering::Less
-                    } else {
-                        false
-                    };
-
-                    if should_add {
+                    if results.len() < ef || dist.total_cmp(&bound).is_lt() {
                         candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
+                        // It will most likely be expanded: have its neighbor list on the way.
+                        self.storage.prefetch_record(neighbor_id);
                         if excluded(neighbor_id)? {
                             continue;
                         }
@@ -472,6 +479,7 @@ impl HnswGraph {
                         if results.len() > ef {
                             results.pop();
                         }
+                        bound = results.peek().map_or(bound, |worst| worst.distance);
                     }
                 }
             }
