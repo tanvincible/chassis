@@ -31,6 +31,7 @@
 - [ADR-0010: Parallel Batch Builds (Proposed)](./adr/010-parallel-batch-builds.md)
 - [ADR-0011: Compaction (Proposed)](./adr/011-compaction.md)
 - [ADR-0012: Rolling Back Lost Adds (Proposed)](./adr/012-rolling-back-lost-adds.md)
+- [ADR-0013: Prefetching into L2, a Leaner Search Loop, and a Smaller Fill (Proposed)](./adr/013-prefetching-and-a-leaner-search-loop.md)
 
 # Development
 
