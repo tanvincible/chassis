@@ -30,6 +30,7 @@
 - [ADR-0009: Filtered Search (Proposed)](./adr/009-filtered-search.md)
 - [ADR-0010: Parallel Batch Builds (Proposed)](./adr/010-parallel-batch-builds.md)
 - [ADR-0011: Compaction (Proposed)](./adr/011-compaction.md)
+- [ADR-0012: Rolling Back Lost Adds (Proposed)](./adr/012-rolling-back-lost-adds.md)
 
 # Development
 

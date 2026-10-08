@@ -113,6 +113,7 @@ impl HnswGraph {
         self.write_node_record(&node_record)?;
 
         // STEP B: Update backward links (B→A) for each neighbor
+        self.storage.save_lists(&filtered_neighbors.concat())?;
         for (layer, neighbors) in filtered_neighbors.iter().enumerate().take(layer_count) {
             for &neighbor_id in neighbors {
                 // Additional safety check (already filtered, but defensive)
@@ -320,6 +321,7 @@ impl HnswGraph {
                 batch.linked[(slot - batch.first) as usize].store(true, Ordering::Release);
             }
         }
+        self.storage.save_lists(&neighbors.concat())?;
         for (l, ids) in neighbors.iter().enumerate() {
             for &neighbor in ids {
                 let _theirs = lock(neighbor);
