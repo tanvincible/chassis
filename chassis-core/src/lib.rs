@@ -566,6 +566,7 @@ impl VectorIndex {
             return Err(e.into());
         }
         fresh.path = std::mem::take(&mut self.path);
+        fresh.graph.storage.moved_to(&fresh.path);
         *self = fresh;
         // Either file may be at the path after a power loss; they hold the same vectors.
         storage::sync_dir(&self.path)
@@ -589,6 +590,7 @@ impl VectorIndex {
             }
             return Err(e);
         }
+        self.graph.storage.moved_to(&path);
         self.path = path;
         Ok(())
     }
@@ -919,6 +921,157 @@ mod tests {
         index.flush().unwrap();
         assert_eq!(reader.search(&random_vector(50), 1).unwrap()[0].id, 50);
         assert!(!reader.graph.storage.superseded());
+    }
+
+    /// Every committed node's neighbors on every layer, each list in id order.
+    fn lists(index: &VectorIndex) -> Vec<Vec<Vec<u64>>> {
+        let graph = &index.graph;
+        let list = |slot, layer| {
+            let mut ids: Vec<u64> = graph.neighbors_iter_from_mmap(slot, layer).unwrap().collect();
+            ids.sort_unstable();
+            ids
+        };
+        let layers = |slot| graph.storage.layer_count(slot).unwrap();
+        (0..graph.node_count())
+            .map(|slot| (0..layers(slot)).map(|l| list(slot, l)).collect())
+            .collect()
+    }
+
+    /// 300 flushed vectors, then 1,700 more that aren't flushed, added both ways.
+    fn index_with_unflushed_adds(path: &Path) -> (VectorIndex, Vec<Vec<Vec<u64>>>) {
+        let mut index = VectorIndex::open(path, 16, IndexOptions::default()).unwrap();
+        let flat = |ids: std::ops::Range<u64>| ids.flat_map(random_vector).collect::<Vec<f32>>();
+        index.add_batch(&flat(0..300)).unwrap();
+        index.flush().unwrap();
+        let committed = lists(&index);
+        for id in 300..600 {
+            index.add(&random_vector(id)).unwrap();
+        }
+        index.add_batch(&flat(600..2000)).unwrap();
+        (index, committed)
+    }
+
+    #[test]
+    fn test_adds_lost_to_a_crash_leave_no_trace_in_committed_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let undo = storage::sibling(&path, "undo");
+        let (index, committed) = index_with_unflushed_adds(&path);
+        assert_ne!(lists(&index)[..300], committed[..], "the adds changed committed lists");
+        assert!(undo.exists());
+        drop(index);
+
+        let mut index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(lists(&index), committed);
+        assert!(!undo.exists(), "rolling back removes the undo file");
+
+        // A flush has nothing to undo, and a reopen after it changes nothing.
+        index.add(&random_vector(300)).unwrap();
+        assert!(undo.exists());
+        index.flush().unwrap();
+        assert!(!undo.exists(), "a flush removes the undo file");
+        let flushed = lists(&index);
+        drop(index);
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(lists(&index), flushed);
+    }
+
+    #[test]
+    fn test_an_undo_file_saved_from_an_earlier_commit_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let undo = storage::sibling(&path, "undo");
+        let (mut index, _) = index_with_unflushed_adds(&path);
+        let stale = std::fs::read(&undo).unwrap();
+        index.flush().unwrap();
+        let flushed = lists(&index);
+        drop(index);
+
+        // As if a crash had come between the commit and removing the file.
+        std::fs::write(&undo, stale).unwrap();
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(lists(&index), flushed);
+        assert!(!undo.exists());
+    }
+
+    #[test]
+    fn test_a_torn_undo_file_restores_the_entries_it_holds_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let undo = storage::sibling(&path, "undo");
+        let (index, committed) = index_with_unflushed_adds(&path);
+        drop(index);
+        let saved = std::fs::read(&undo).unwrap();
+        std::fs::write(&undo, &saved[..saved.len() - 3]).unwrap();
+
+        let differing = |index: &VectorIndex| {
+            let restored = lists(index);
+            (0..300).filter(|&slot| restored[slot] != committed[slot]).count()
+        };
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(differing(&index), 1, "only the node whose entry was torn keeps lost links");
+        drop(index);
+
+        // An entry that fails its checksum ends the file there: here, at its first entry.
+        let mut index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        index.add_batch(&(300..2000).flat_map(random_vector).collect::<Vec<f32>>()).unwrap();
+        drop(index);
+        let mut saved = std::fs::read(&undo).unwrap();
+        saved[23] ^= 1; // a neighbor in the first entry
+        std::fs::write(&undo, &saved).unwrap();
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert!(differing(&index) > 100, "nothing after the corrupt entry is trusted");
+    }
+
+    /// A crash under a release without the undo file leaves links to slots that are gone. They
+    /// aren't saved with a list, and they don't stop it being written back.
+    #[test]
+    fn test_links_an_older_crash_left_dont_stop_a_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let (index, _) = index_with_unflushed_adds(&path);
+        drop(index);
+        std::fs::remove_file(storage::sibling(&path, "undo")).unwrap();
+
+        let committed_only = |index: &VectorIndex| -> Vec<Vec<Vec<u64>>> {
+            let keep = |ids: Vec<u64>| ids.into_iter().filter(|&id| id < 300).collect();
+            lists(index).into_iter().map(|node| node.into_iter().map(keep).collect()).collect()
+        };
+        let mut index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_ne!(lists(&index), committed_only(&index), "links to lost slots remain");
+        let before = committed_only(&index);
+        index.add_batch(&(300..2000).flat_map(random_vector).collect::<Vec<f32>>()).unwrap();
+        drop(index);
+
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(committed_only(&index), before);
+    }
+
+    #[test]
+    fn test_adds_lost_after_a_compaction_are_rolled_back_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let (mut index, _) = index_with_unflushed_adds(&path);
+        index.compact().unwrap();
+        let committed = lists(&index);
+        index.add_batch(&(2000..4000).flat_map(random_vector).collect::<Vec<f32>>()).unwrap();
+        assert!(storage::sibling(&path, "undo").exists(), "the undo file follows the rename");
+        drop(index);
+
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(lists(&index), committed);
+    }
+
+    #[test]
+    fn test_a_new_index_built_in_one_go_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let mut index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        index.add_batch(&(0..500).flat_map(random_vector).collect::<Vec<f32>>()).unwrap();
+        for id in 500..600 {
+            index.add(&random_vector(id)).unwrap();
+        }
+        assert!(!storage::sibling(&path, "undo").exists(), "nothing committed could change");
     }
 
     #[test]
