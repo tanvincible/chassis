@@ -21,10 +21,13 @@ impl Prefetch {
         *POLICY.get_or_init(|| {
             // Lab: LAB_PF=<near>,<lines> overrides the policy.
             #[cfg(lab_pf)]
-            if let Ok(spec) = std::env::var("LAB_PF")
-                && let Some((near, lines)) = spec.split_once(',')
-            {
-                return Self { near: near.parse().unwrap(), lines: lines.parse().unwrap() };
+            if let Ok(spec) = std::env::var("LAB_PF") {
+                let mut parts = spec.split(',').map(|p| p.parse::<usize>().unwrap());
+                if let (Some(near), Some(lines)) = (parts.next(), parts.next()) {
+                    // Lab: a third number asks for that many lines at each later page start.
+                    LAB_PAGE_LINES.store(parts.next().unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+                    return Self { near, lines };
+                }
             }
             Self::for_this_cpu()
         })
@@ -76,8 +79,27 @@ impl Prefetch {
         for line in self.near..self.lines {
             hint(start.wrapping_add(line * LINE), false);
         }
+        #[cfg(lab_pf)]
+        {
+            let page_lines = LAB_PAGE_LINES.load(std::sync::atomic::Ordering::Relaxed);
+            if page_lines > 0 {
+                let end = start as usize + std::mem::size_of_val(vector);
+                let mut page = (start as usize & !4095) + 4096;
+                while page < end {
+                    for line in 0..page_lines {
+                        if page + line * LINE < end {
+                            hint((page + line * LINE) as *const u8, self.near > 0);
+                        }
+                    }
+                    page += 4096;
+                }
+            }
+        }
     }
 }
+
+#[cfg(lab_pf)]
+static LAB_PAGE_LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Asks for all of the `bytes` at `start`, into L1: a neighbor list about to be read.
 #[inline(always)]

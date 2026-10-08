@@ -240,6 +240,11 @@ impl Region {
         // SAFETY: one writer at a time holds the lock, and committed regions never shrink.
         let map = if writable { options.map_raw(file) } else { options.map_raw_read_only(file) };
         let map = map.with_context(|| format!("Failed to map {len} bytes at offset {offset}"))?;
+        // Lab: LAB_MADV asks for huge pages on every mapping.
+        #[cfg(all(lab_pf, target_os = "linux"))]
+        if std::env::var_os("LAB_MADV").is_some() {
+            let _ = map.advise(memmap2::Advice::HugePage);
+        }
         Ok(Self { map, offset })
     }
 
