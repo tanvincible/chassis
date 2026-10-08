@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 2
+  RUN: 3
   OLD: origin/fix/lost-adds
   NEW: origin/perf/hot-path
 
