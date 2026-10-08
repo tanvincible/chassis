@@ -49,19 +49,23 @@ impl Prefetch {
         Self { near: 0, lines: 0 }
     }
 
+    /// The policy for vectors of `dims` floats: no more lines than one has. Worked out once per
+    /// search, so that asking for a vector is two counted loops.
+    pub(crate) fn for_dims(self, dims: usize) -> Self {
+        let lines = self.lines.min((dims * size_of::<f32>()).div_ceil(LINE));
+        Self { near: self.near.min(lines), lines }
+    }
+
     /// Asks for the start of `vector`.
     #[inline(always)]
     pub(crate) fn vector(self, vector: &[f32]) {
-        let bytes = std::mem::size_of_val(vector);
-        self.range(vector.as_ptr().cast(), bytes);
-    }
-
-    /// Asks for the first lines of the `bytes` at `start`.
-    #[inline(always)]
-    fn range(self, start: *const u8, bytes: usize) {
-        for (line, offset) in (0..bytes.min(self.lines * LINE)).step_by(LINE).enumerate() {
-            // In bounds of the allocation; a prefetch is only a hint and never faults.
-            hint(start.wrapping_add(offset), line < self.near);
+        let start = vector.as_ptr().cast::<u8>();
+        // A prefetch is only a hint and never faults, wherever it points.
+        for line in 0..self.near {
+            hint(start.wrapping_add(line * LINE), true);
+        }
+        for line in self.near..self.lines {
+            hint(start.wrapping_add(line * LINE), false);
         }
     }
 }
@@ -126,8 +130,18 @@ mod tests {
         for dims in [0, 1, 3, 16, 17, 128, 1536] {
             let vector = vec![1.0f32; dims];
             policy.vector(&vector);
+            policy.for_dims(dims).vector(&vector);
             list(vector.as_ptr().cast(), dims * 4);
         }
+    }
+
+    #[test]
+    fn test_a_short_vector_gets_no_more_lines_than_it_has() {
+        let into_l1 = Prefetch { near: 8, lines: 8 };
+        assert_eq!(into_l1.for_dims(0), Prefetch { near: 0, lines: 0 });
+        assert_eq!(into_l1.for_dims(17), Prefetch { near: 2, lines: 2 });
+        assert_eq!(into_l1.for_dims(1536), into_l1);
+        assert_eq!(Prefetch { near: 0, lines: 8 }.for_dims(16), Prefetch { near: 0, lines: 1 });
     }
 
     #[test]
