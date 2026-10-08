@@ -51,6 +51,7 @@ pub mod distance;
 mod header;
 mod hnsw;
 mod legacy;
+mod prefetch;
 mod storage;
 
 #[cfg(test)]
@@ -1072,6 +1073,28 @@ mod tests {
             index.add(&random_vector(id)).unwrap();
         }
         assert!(!storage::sibling(&path, "undo").exists(), "nothing committed could change");
+    }
+
+    /// A new node's neighbors are selected from the distances its search computed; a backlink
+    /// computes them itself. Both must select alike.
+    #[test]
+    fn test_selecting_from_known_distances_matches_computing_them() {
+        let file = NamedTempFile::new().unwrap();
+        let index = filter_index(&file);
+        let graph = &index.graph;
+        for base in [0u64, 7, 1234, 2499] {
+            let ids: Vec<u64> = (0..300).map(|i| (base + 1 + i * 8) % 2500).collect();
+            let from = graph.storage.get_vector_slice(base).unwrap();
+            let to = |id| graph.storage.get_vector_slice(id).unwrap();
+            let mut near: Vec<(u64, f32)> =
+                ids.iter().map(|&id| (id, euclidean_distance(from, to(id)))).collect();
+            near.sort_by(|a, b| a.1.total_cmp(&b.1));
+            for max in [8, 32] {
+                let computed = graph.select_neighbors_heuristic(base, &ids, 0, max, None).unwrap();
+                assert_eq!(graph.select_diverse(&near, max, None).unwrap(), computed);
+                assert!(!computed.is_empty() && computed.len() <= max);
+            }
+        }
     }
 
     #[test]
