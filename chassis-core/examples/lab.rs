@@ -6,6 +6,7 @@
 //! lab seq <data> <dataset> <n> <tag>               one-thread build of the first n, timed
 //! lab truth <data> <dataset> <n> <out>             exact top 10 among the first n
 //! lab search <data> <dataset> <index> <truth> <tag>
+//! lab flushes <data> <dataset> <index> <count> <tag>   add one vector and flush, count times
 
 use chassis_core::{IndexOptions, VectorIndex, euclidean_distance};
 use std::path::Path;
@@ -143,9 +144,13 @@ fn main() -> anyhow::Result<()> {
                 if std::env::var("LAB_MADV").is_ok() {
                     index.lab_huge();
                 }
+                // The first pass over a file that may not be in memory yet.
+                let first = Instant::now();
                 for query in &queries {
                     index.search(query, K)?;
                 }
+                let first = first.elapsed().as_secs_f64();
+                println!("chassis\t{tag}\t{n}\tfirst_pass_s\t{ef_search}\t0\t{first:.3}\t0");
                 #[cfg(lab)]
                 let counted = chassis_core::lab::distances();
                 #[cfg(lab)]
@@ -187,6 +192,26 @@ fn main() -> anyhow::Result<()> {
                     huge_pages(&tag);
                 }
             }
+        }
+        "flushes" => {
+            let count: usize = arg(4).parse()?;
+            let mut index = VectorIndex::open(arg(3), dims as u32, options(K))?;
+            let n = index.len();
+            let mut times = Vec::with_capacity(count);
+            for i in 0..count {
+                let start = Instant::now();
+                index.add(queries[i % queries.len()])?;
+                index.flush()?;
+                times.push(start.elapsed().as_secs_f64() * 1e3);
+            }
+            times.sort_by(f64::total_cmp);
+            let mean = times.iter().sum::<f64>() / count as f64;
+            println!(
+                "chassis\t{}\t{n}\tflush_ms\t0\t{:.3}\t{mean:.3}\t{:.3}",
+                arg(5),
+                times[count / 2],
+                times[count * 9 / 10]
+            );
         }
         other => anyhow::bail!("unknown mode {other}"),
     }
