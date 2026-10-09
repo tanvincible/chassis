@@ -35,6 +35,7 @@
 - [ADR-0014: Packed Heap Entries, Squared Distances, and a Search Loop That Inlines (Proposed)](./adr/014-packed-heap-entries-and-squared-distances.md)
 - [ADR-0015: Prefetch Depth for Long Vectors (Proposed)](./adr/015-prefetch-depth-for-long-vectors.md)
 - [ADR-0016: Huge Pages for the Vectors, on Request (Proposed)](./adr/016-huge-pages-on-request.md)
+- [ADR-0017: Compare at Equal Recall; Long Vectors Out of Cache Are Bound by Memory (Proposed)](./adr/017-equal-recall-and-long-vectors.md)
 
 # Development
 
