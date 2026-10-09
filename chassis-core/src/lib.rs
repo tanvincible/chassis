@@ -66,7 +66,7 @@ pub use storage::Storage;
 
 use anyhow::Result;
 use hnsw::layer_from_uniform;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Configuration options for VectorIndex
@@ -196,6 +196,135 @@ impl VectorIndex {
         self.insert(id, vector)
     }
 
+    /// Add many vectors at once, given back to back, `dims` floats each, and return their ids,
+    /// assigned as `add` assigns them. Linking runs on every core, so a large batch builds many
+    /// times faster than adding one vector at a time; the graph then depends on thread timing
+    /// (ADR-0010). All or nothing: after an error, none of the batch is added.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `vectors` isn't a whole number of vectors of the index's dimensions,
+    /// or if storing or linking them fails.
+    pub fn add_batch(&mut self, vectors: &[f32]) -> Result<Vec<u64>> {
+        let count = self.batch_len(vectors)? as u64;
+        let first = if self.graph.custom_ids {
+            self.ids()?;
+            self.next_id
+        } else {
+            self.graph.node_count()
+        };
+        let ids: Vec<u64> = (first..first + count).collect();
+        self.insert_batch(&ids, vectors)?;
+        Ok(ids)
+    }
+
+    /// `add_with_id` for many vectors at once: `ids[i]` is the id of the `i`-th vector in
+    /// `vectors`. Linking runs on every core, as for `add_batch`. All or nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the counts differ, an id is `u64::MAX`, repeats, or already exists, or
+    /// storing or linking fails.
+    pub fn add_batch_with_ids(&mut self, ids: &[u64], vectors: &[f32]) -> Result<()> {
+        if self.batch_len(vectors)? != ids.len() {
+            anyhow::bail!("{} ids for {} vectors", ids.len(), vectors.len() / self.dims());
+        }
+        let mut seen = HashSet::with_capacity(ids.len());
+        for &id in ids {
+            if id == u64::MAX {
+                anyhow::bail!("Id u64::MAX is reserved");
+            }
+            if !seen.insert(id) {
+                anyhow::bail!("Id {id} appears twice in the batch");
+            }
+            if self.slot_of(id)?.is_some() {
+                anyhow::bail!("Id {id} already exists; delete it first to replace it");
+            }
+        }
+        let first = self.graph.node_count();
+        if !self.graph.custom_ids && ids.iter().zip(first..).any(|(&id, slot)| id != slot) {
+            self.ids()?;
+            self.graph.custom_ids = true;
+        }
+        self.insert_batch(ids, vectors)
+    }
+
+    fn dims(&self) -> usize {
+        self.graph.storage.dimensions() as usize
+    }
+
+    /// Vectors in a batch, which must be a whole number of them.
+    fn batch_len(&self, vectors: &[f32]) -> Result<usize> {
+        if !vectors.len().is_multiple_of(self.dims()) {
+            anyhow::bail!(
+                "Vector dimension mismatch: {} floats is not a whole number of {}-dimensional \
+                 vectors",
+                vectors.len(),
+                self.dims()
+            );
+        }
+        Ok(vectors.len() / self.dims())
+    }
+
+    /// Writes every vector and an empty record for it, then links them all on every core.
+    fn insert_batch(&mut self, ids: &[u64], vectors: &[f32]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let dims = self.dims();
+        let unit: Vec<f32>;
+        let vectors = match self.graph.storage.metric() {
+            DistanceMetric::Euclidean => vectors,
+            DistanceMetric::Cosine => {
+                let rows = vectors.chunks_exact(dims).map(distance::unit);
+                unit = rows.collect::<Result<Vec<_>>>()?.concat();
+                &unit
+            }
+        };
+        let layers: Vec<usize> = ids.iter().map(|_| self.select_layer()).collect();
+        let first = self.graph.node_count();
+        let saved = (self.graph.entry_point, self.graph.max_layer);
+        let linked = self.write_and_link(first, ids, vectors, &layers);
+        if linked.is_err() {
+            self.graph.node_count = first;
+            (self.graph.entry_point, self.graph.max_layer) = saved;
+            self.graph.storage.truncate_logical(first);
+            return linked;
+        }
+        self.graph.storage.publish_routing(self.graph.node_count);
+        if let Some(map) = &mut self.ids {
+            map.extend(ids.iter().copied().zip(first..));
+        }
+        self.next_id = self.next_id.max(ids.iter().max().map_or(0, |&id| id + 1));
+        Ok(())
+    }
+
+    fn write_and_link(
+        &mut self,
+        first: u64,
+        ids: &[u64],
+        vectors: &[f32],
+        layers: &[usize],
+    ) -> Result<()> {
+        let dims = self.dims();
+        let storage = &mut self.graph.storage;
+        storage.truncate_logical(first);
+        for ((&id, vector), &layer) in ids.iter().zip(vectors.chunks_exact(dims)).zip(layers) {
+            let slot = storage.append(id, vector)?;
+            storage.write_record(slot, &vec![Vec::new(); layer + 1])?;
+        }
+        // An empty graph's first node is its entry point, with nothing to link to.
+        let start = if self.graph.entry_point.is_none() {
+            (self.graph.entry_point, self.graph.max_layer) = (Some(first), layers[0]);
+            1
+        } else {
+            0
+        };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let ef = self.options.ef_construction;
+        self.graph.link_batch(first + start as u64, &layers[start..], ef, threads.min(ids.len()))
+    }
+
     /// Delete the vector with `id`. Returns false if no live vector has that id.
     ///
     /// Search stops returning it immediately. Like an add, the delete is durable after the next
@@ -274,10 +403,13 @@ impl VectorIndex {
         let layer_count = layer + 1;
 
         // STEP 3: Neighbor selection (in-memory phase); an empty graph has none
-        let neighbors = if self.graph.node_count() == 0 {
-            vec![vec![]; layer_count]
-        } else {
-            self.select_neighbors(vector, new_id, layer)?
+        let neighbors = match self.graph.entry_point {
+            Some(entry) if self.graph.node_count() > 0 => {
+                let start = (entry, self.graph.max_layer);
+                let ef = self.options.ef_construction;
+                self.graph.find_neighbors(vector, new_id, layer, start, ef)?
+            }
+            _ => vec![vec![]; layer_count],
         };
 
         // STEP 4: Atomic write (disk phase)
@@ -374,68 +506,6 @@ impl VectorIndex {
     fn select_layer(&self) -> usize {
         let uniform: f32 = rand::random();
         layer_from_uniform(uniform, self.ml, self.graph.record_params.max_layers)
-    }
-
-    /// Select neighbors for a new node at each layer
-    ///
-    /// This implements the HNSW neighbor selection algorithm:
-    /// - Phase 1 (Zoom): Greedy descent from entry point to target layer
-    /// - Phase 2 (Construction): Select diverse neighbors at each layer
-    fn select_neighbors(
-        &mut self,
-        vector: &[f32],
-        new_id: u64,
-        target_layer: usize,
-    ) -> Result<Vec<Vec<u64>>> {
-        let mut neighbors = vec![Vec::new(); target_layer + 1];
-
-        let entry_point = self.graph.entry_point.expect("Graph should have entry point");
-        let max_layer = self.graph.max_layer;
-
-        // Phase 1: Zoom down from max_layer to target_layer + 1
-        let mut curr = entry_point;
-        for layer in (target_layer + 1..=max_layer).rev() {
-            curr = self.graph.search_layer_greedy(vector, curr, layer)?;
-        }
-
-        // Phase 2: Construction - select neighbors at each layer
-        for layer in (0..=target_layer.min(max_layer)).rev() {
-            // Search for candidates
-            let candidates = self.graph.search_layer_optimized(
-                vector,
-                curr,
-                self.options.ef_construction,
-                layer,
-            )?;
-
-            // Extract candidate IDs
-            let candidate_ids: Vec<u64> = candidates.iter().map(|r| r.id).collect();
-
-            // Determine max neighbors for this layer
-            let max_neighbors = if layer == 0 {
-                self.options.max_connections as usize * 2
-            } else {
-                self.options.max_connections as usize
-            };
-
-            // Select diverse neighbors using unified heuristic
-            let selected = self.graph.select_neighbors_heuristic(
-                new_id,
-                &candidate_ids,
-                layer,
-                max_neighbors,
-                None,
-            )?;
-
-            neighbors[layer] = selected;
-
-            // Update curr to closest candidate for next layer
-            if !candidates.is_empty() {
-                curr = candidates[0].id;
-            }
-        }
-
-        Ok(neighbors)
     }
 }
 
@@ -668,6 +738,24 @@ mod tests {
         }
         let live = index.graph.estimated_matches(&|_| Ok(true)).unwrap();
         assert!((1000..=1500).contains(&live), "deleted slots counted as matches: {live}");
+    }
+
+    #[test]
+    fn test_batch_entry_point_is_on_the_top_layer() {
+        for existing in [0, 50] {
+            let file = NamedTempFile::new().unwrap();
+            let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+            for id in 0..existing {
+                index.add(&random_vector(id)).unwrap();
+            }
+            let vectors: Vec<f32> = (existing..existing + 3000).flat_map(random_vector).collect();
+            index.add_batch(&vectors).unwrap();
+            let graph = &index.graph;
+            let layers = |slot| graph.storage.layer_count(slot).unwrap() - 1;
+            let top = (0..graph.node_count()).map(layers).max().unwrap();
+            assert!(top > 0, "3,050 draws should reach layer 1");
+            assert_eq!((graph.max_layer, layers(graph.entry_point.unwrap())), (top, top));
+        }
     }
 
     #[test]
