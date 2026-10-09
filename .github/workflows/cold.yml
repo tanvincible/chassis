@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
-  CHASSIS: feat/half-precision
+  RUN: 2
+  CHASSIS: lab/exp-cold
 
 jobs:
   dims:
@@ -125,19 +125,26 @@ jobs:
           "$P" evict "$T/full.chassis"; "$P" willneed "$T/full.chassis" | tee -a results/disk.txt
           for threads in 1 4; do "$P" evict "$T/full.chassis"; "$P" touch "$T/full.chassis" $threads | tee -a results/disk.txt; done
           "$P" touch "$T/full.chassis" 1 | sed 's/^touch/touch-in-memory/' | tee -a results/disk.txt
-          run() { # state, tag, file
-            if [ "$1" = cold ]; then "$P" evict "$3"; else cat "$3" > /dev/null; fi
-            "$P" resident "$3" | awk -v t="$1-$2" '{print "resident\t" t "\t" $5}' | tee -a results/cold.tsv
-            if [ "$2" = hnsw ]; then
-              "$RUNNER_TEMP/hnsw_lab" cold "$3" "$DATA/$NAME.test.f32" "$truth" "$1-$2" | tee -a results/cold.tsv
+          run() { # state, tag, file, env...
+            state=$1; tag=$2; file=$3; shift 3
+            if [ "$state" = cold ]; then "$P" evict "$file"; else cat "$file" > /dev/null; fi
+            "$P" resident "$file" | awk -v t="$state-$tag" '{print "resident\t" t "\t" $5}' | tee -a results/cold.tsv
+            if [ "$tag" = hnsw ]; then
+              "$RUNNER_TEMP/hnsw_lab" cold "$file" "$DATA/$NAME.test.f32" "$truth" "$state-$tag" | tee -a results/cold.tsv
             else
-              LAB_READER=1 "$L" cold "$DATA" "$NAME" "$3" "$truth" "$1-$2" | tee -a results/cold.tsv
+              env LAB_READER=1 "$@" "$L" cold "$DATA" "$NAME" "$file" "$truth" "$state-$tag" | tee -a results/cold.tsv
             fi
           }
-          for round in 1 2 3 4 5; do
+          # The experiment build: as it ships, asking for a node's neighbors at once (LAB_BATCH), and
+          # reading the whole index in on another thread from the moment it opens (LAB_WARM).
+          for round in 1 2 3 4; do
             for state in cold warm; do
               run $state full "$T/full.chassis"
+              run $state batch "$T/full.chassis" LAB_BATCH=1
+              run $state warm "$T/full.chassis" LAB_WARM=willneed+touch
               run $state c-half "$T/half.chassis"
+              run $state c-half-batch "$T/half.chassis" LAB_BATCH=1
+              run $state c-half-warm "$T/half.chassis" LAB_WARM=willneed+touch
               run $state hnsw "$T/hnsw.bin"
             done
           done
