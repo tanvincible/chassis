@@ -25,8 +25,8 @@ use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
-use std::sync::{Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::{Arc, Mutex, PoisonError};
 use xxhash_rust::xxh3::xxh3_64_with_seed;
 
 #[cfg(target_endian = "big")]
@@ -309,6 +309,89 @@ impl Region {
     }
 }
 
+/// How much the warming thread asks the system for at a time, so that it can be stopped between.
+const WARM_STEP: usize = 8 << 20;
+
+/// A thread reading the index into memory (`IndexOptions::warm`, ADR-0019). It hands the system
+/// address ranges and never reads them itself, so a region unmapped under it is an error from the
+/// system, not a fault.
+#[derive(Debug)]
+struct Warming {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Warming {
+    /// Starts reading `ranges` of (address, length) in, in order; `None` where there is no way to
+    /// ask for that.
+    fn start(ranges: Vec<(usize, usize)>) -> Option<Self> {
+        if !cfg!(unix) {
+            return None;
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        let work = move || {
+            for (at, len) in ranges {
+                for offset in (0..len).step_by(WARM_STEP) {
+                    if stopped.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    read_in(at + offset, WARM_STEP.min(len - offset));
+                }
+            }
+        };
+        let thread = std::thread::Builder::new().name("chassis-warm".into()).spawn(work).ok()?;
+        Some(Self { stop, thread: Some(thread) })
+    }
+
+    fn running(&self) -> bool {
+        self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
+    }
+
+    /// Waits for everything to have been read in.
+    #[cfg(test)]
+    fn wait(mut self) {
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
+    }
+}
+
+impl Drop for Warming {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Asks the system to read the pages of the `len` bytes at address `at` into memory.
+#[cfg(unix)]
+fn read_in(at: usize, len: usize) {
+    let at = at as *mut libc::c_void;
+    // SAFETY (both calls): advice about an address range. If the range is no longer mapped the
+    // call fails; nothing here reads or writes it.
+    #[cfg(target_os = "linux")]
+    // Reads the pages in and maps them, as touching each would. Linux 5.14 and later; before
+    // that, the request below, which the kernel honors only in part.
+    if unsafe { libc::madvise(at, len, libc::MADV_POPULATE_READ) } == 0 {
+        return;
+    }
+    unsafe { libc::madvise(at, len, libc::MADV_WILLNEED) };
+}
+
+#[cfg(not(unix))]
+fn read_in(_: usize, _: usize) {}
+
+fn page_size() -> usize {
+    #[cfg(unix)]
+    // SAFETY: sysconf only reads.
+    return unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    #[cfg(not(unix))]
+    4096
+}
+
 #[derive(Debug)]
 struct Segment {
     region: Region,
@@ -397,6 +480,9 @@ impl Undo {
 /// Storage engine for one index file.
 #[derive(Debug)]
 pub struct Storage {
+    /// The thread reading the index into memory, if `warm` started one. First, so that it is
+    /// stopped before the regions it was told about are unmapped.
+    warming: Option<Warming>,
     /// File handle (owns the file lock)
     file: File,
     /// A reader maps the file read-only and takes no lock.
@@ -568,6 +654,7 @@ impl Storage {
         copy: usize,
     ) -> Result<Self> {
         Ok(Self {
+            warming: None,
             file,
             writable,
             headers,
@@ -587,6 +674,49 @@ impl Storage {
             undo: None,
             huge_slots: None,
         })
+    }
+
+    /// Starts another thread reading what the index holds into memory (`IndexOptions::warm`,
+    /// ADR-0019), unless one is at it already, and returns at once.
+    pub(crate) fn warm(&mut self) {
+        if self.warming.as_ref().is_some_and(Warming::running) {
+            return;
+        }
+        // The system takes whole pages.
+        let page = page_size();
+        let whole_pages = |(at, len): (usize, usize)| (at / page * page, len + at % page);
+        self.warming = Warming::start(self.written().into_iter().map(whole_pages).collect());
+    }
+
+    /// The address ranges of what has been written: each segment's three arrays up to the last
+    /// written slot, and the heap up to its last entry. What lies past them was never written, and
+    /// in a sparse file is a hole.
+    fn written(&self) -> Vec<(usize, usize)> {
+        let g = self.geometry;
+        let mut ranges = Vec::new();
+        for (k, segment) in self.segments.iter().enumerate() {
+            let k = k as u64;
+            let slots = self.count.saturating_sub(g.capacity(k)).min(g.segment_slots(k)) as usize;
+            let base = segment.region.map.as_ptr() as usize;
+            let arrays = [
+                (0, SLOT_HEADER),
+                (segment.vectors, g.vector_bytes()),
+                (segment.level0, g.level0_bytes()),
+            ];
+            ranges.extend(arrays.map(|(at, per_slot)| (base + at, per_slot * slots)));
+        }
+        let (last, used) =
+            ((self.state.heap_used >> 32) as usize, (self.state.heap_used & 0xffff_ffff) as usize);
+        for (c, chunk) in self.chunks.iter().enumerate() {
+            let len = match c.cmp(&last) {
+                std::cmp::Ordering::Less => chunk.len(),
+                std::cmp::Ordering::Equal => used,
+                std::cmp::Ordering::Greater => 0,
+            };
+            ranges.push((chunk.map.as_ptr() as usize, len));
+        }
+        ranges.retain(|&(_, len)| len > 0);
+        ranges
     }
 
     /// Asks for huge pages under the committed vectors, and from here on under vectors as they

@@ -98,6 +98,12 @@ pub struct IndexOptions {
     /// page not yet in memory is read 2 MB at a time, which an index much larger than memory
     /// pays for on every miss.
     pub huge_pages: bool,
+
+    /// Read the whole index into memory on another thread from the moment it is opened
+    /// (ADR-0019), so that searches stop waiting for the disk one page at a time. For an index
+    /// that fits in memory; one much larger would push everything else out. Off by default. It
+    /// does nothing on Windows yet.
+    pub warm: bool,
 }
 
 impl Default for IndexOptions {
@@ -109,6 +115,7 @@ impl Default for IndexOptions {
             metric: DistanceMetric::Euclidean,
             precision: Precision::Full,
             huge_pages: false,
+            warm: false,
         }
     }
 }
@@ -190,6 +197,9 @@ impl VectorIndex {
         let mut index = Self { graph, ml: params.ml, options, ids: None, next_id: 0, path };
         if index.options.huge_pages {
             index.use_huge_pages();
+        }
+        if index.options.warm {
+            index.warm();
         }
         Ok(index)
     }
@@ -650,6 +660,13 @@ impl VectorIndex {
         self.graph.storage.use_huge_pages();
     }
 
+    /// Starts reading what the index holds now into memory on another thread, as opening with
+    /// `IndexOptions::warm` does, and returns at once. Searches go on meanwhile.
+    pub fn warm(&mut self) {
+        self.options.warm = true;
+        self.graph.storage.warm();
+    }
+
     /// Get the number of live (not deleted) vectors in the index
     pub fn len(&self) -> u64 {
         self.graph.node_count() - self.graph.deleted_count
@@ -802,6 +819,9 @@ impl IndexReader {
         if reader.options.huge_pages {
             reader.use_huge_pages();
         }
+        if reader.options.warm {
+            reader.warm();
+        }
         Ok(reader)
     }
 
@@ -876,6 +896,13 @@ impl IndexReader {
     pub fn use_huge_pages(&mut self) {
         self.options.huge_pages = true;
         self.graph.storage.use_huge_pages();
+    }
+
+    /// Starts reading what the index holds now into memory on another thread, as opening with
+    /// `IndexOptions::warm` does, and returns at once. Searches go on meanwhile.
+    pub fn warm(&mut self) {
+        self.options.warm = true;
+        self.graph.storage.warm();
     }
 
     /// Live vectors as of the last snapshot, taken by `search` or `refresh`.
