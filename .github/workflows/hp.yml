@@ -1,0 +1,190 @@
+name: x86 hp
+
+# Experiment branch only: feat/huge-pages, the option off and on. Search on a file just built by
+# a batch and on one read back from disk, as a writer and as a reader; build time; the first pass
+# over a cold file; and the time to add one vector and flush, in each of those states.
+# Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/hp.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  STEPS: "base=c46fb1c deep=422a5a6"
+
+jobs:
+  dims:
+    name: hp (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [dbpedia-openai3-1536, gist-960, sift-128]
+        runner: [ubuntu-latest]
+        shard: [a, b, c]
+        include:
+          - { name: dbpedia-openai3-1536, sizes: "99000" }
+          - { name: gist-960, sizes: "200000" }
+          - { name: sift-128, sizes: "1000000" }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, sizes: "99000" }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: a, sizes: "200000" }
+          - { name: sift-128, runner: ubuntu-24.04-arm, shard: a, sizes: "1000000" }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+          { uname -r; df -T "$RUNNER_TEMP" | tail -1; grep . /sys/kernel/mm/transparent_hugepage/{enabled,defrag,shmem_enabled} /sys/block/*/queue/read_ahead_kb 2>/dev/null; } > results/system.txt
+          cat results/system.txt
+          df -h / | tail -1
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build Chassis before, after, and with the policy knob
+        run: |
+          git fetch -q origin perf/high-dims feat/huge-pages
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          build() { # name, commit, rustflags
+            (cd "$RUNNER_TEMP/src" && git checkout -q --detach "$2" \
+              && cp "$GITHUB_WORKSPACE/chassis-core/examples/lab.rs" chassis-core/examples/lab.rs \
+              && RUSTFLAGS="$3" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t$3" \
+              && rm chassis-core/examples/lab.rs)
+            cp "$RUNNER_TEMP/t$3/release/examples/lab" "$RUNNER_TEMP/lab-$1"
+          }
+          for step in $STEPS; do build "${step%%=*}" "${step#*=}" ""; done
+          build hp origin/feat/huge-pages "--cfg=lab_hp"
+
+      - name: Search
+        run: |
+          L="$RUNNER_TEMP/lab-base"
+          "$L" kernel base | tee -a results/lab.tsv
+          "$RUNNER_TEMP/hnsw_lab" kernel | tee -a results/lab.tsv
+          for n in ${{ matrix.sizes }}; do
+            truth="$RUNNER_TEMP/gt-$n.u32"
+            "$L" truth "$DATA" "$NAME" "$n" "$truth"
+            "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
+            C="search $DATA $NAME $RUNNER_TEMP/c-$n.chassis $truth"
+            H="search $RUNNER_TEMP/h-$n.bin $DATA/$NAME.train.f32 $DATA/$NAME.test.f32 $truth"
+            HP="$RUNNER_TEMP/lab-hp"
+            S() { # index, tag, env...: a search with the huge-pages build
+              index=$1; tag=$2; shift 2
+              env "$@" "$HP" search "$DATA" "$NAME" "$index" "$truth" "$tag" 2>> results/pages.txt | tee -a results/lab.tsv
+            }
+            F() { # index, tag, env...: one add and a flush, 300 times
+              index=$1; tag=$2; shift 2
+              env "$@" "$HP" flushes "$DATA" "$NAME" "$index" 300 "$tag" | tee -a results/lab.tsv
+            }
+            cold() { sync; echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null; }
+            for round in 1 2 3; do
+              "$RUNNER_TEMP/hnsw_lab" $H native 2>> results/pages.txt | tee -a results/lab.tsv
+              LAB_NO_THP=1 "$RUNNER_TEMP/hnsw_lab" $H nothp 2>> results/pages.txt | tee -a results/lab.tsv
+              "$RUNNER_TEMP/lab-deep" $C deep 2>/dev/null | tee -a results/lab.tsv
+              S "$RUNNER_TEMP/c-$n.chassis" off
+            done
+
+            # A file built by one batch, with the option and without, searched at once.
+            for mode in on off; do
+              rm -f "$RUNNER_TEMP"/b-$mode.chassis*
+              cold
+              opt=LAB_X=0; [ "$mode" = on ] && opt=LAB_HUGE=1
+              env $opt "$HP" build "$DATA" "$NAME" "$RUNNER_TEMP/b-$mode.chassis" "$n" | sed "s/\tbase\t/\tbuild-$mode\t/" | tee -a results/lab.tsv
+            done
+            for round in 1 2 3; do
+              S "$RUNNER_TEMP/b-on.chassis" fresh-on LAB_HUGE=1
+              S "$RUNNER_TEMP/b-off.chassis" fresh-off
+            done
+            for round in 1 2; do
+              F "$RUNNER_TEMP/b-on.chassis" flush-fresh-on LAB_HUGE=1
+              F "$RUNNER_TEMP/b-off.chassis" flush-fresh-off
+            done
+
+            # The first index read back from disk: first pass, then warm, then flushes on a copy
+            # that was read back the same way.
+            for round in 1 2; do
+              cold; S "$RUNNER_TEMP/c-$n.chassis" cold-off
+              cold; S "$RUNNER_TEMP/c-$n.chassis" cold-on LAB_HUGE=1
+            done
+            for round in 1 2 3; do S "$RUNNER_TEMP/c-$n.chassis" reread-on LAB_HUGE=1; done
+            for mode in on off; do
+              opt=LAB_X=0; [ "$mode" = on ] && opt=LAB_HUGE=1
+              rm -f "$RUNNER_TEMP"/f.chassis*; cp "$RUNNER_TEMP/c-$n.chassis" "$RUNNER_TEMP/f.chassis"
+              cold; S "$RUNNER_TEMP/f.chassis" warmup $opt > /dev/null
+              for round in 1 2; do F "$RUNNER_TEMP/f.chassis" flush-reread-$mode $opt; done
+            done
+
+            # A reader with the option, then a writer without it: the reader's huge pages must
+            # not slow the writer's flushes.
+            rm -f "$RUNNER_TEMP"/f.chassis*; cp "$RUNNER_TEMP/c-$n.chassis" "$RUNNER_TEMP/f.chassis"
+            cold; S "$RUNNER_TEMP/f.chassis" warmup LAB_HUGE=1 LAB_READER=1 > /dev/null
+            for round in 1 2 3; do S "$RUNNER_TEMP/f.chassis" reader-on LAB_HUGE=1 LAB_READER=1; done
+            for round in 1 2; do F "$RUNNER_TEMP/f.chassis" flush-after-reader; done
+          done
+          {
+            echo '```'
+            cat results/lab.tsv
+            sort -u results/pages.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hp-${{ matrix.name }}-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/

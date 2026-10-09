@@ -8,7 +8,7 @@
 //! lab search <data> <dataset> <index> <truth> <tag>
 //! lab flushes <data> <dataset> <index> <count> <tag>   add one vector and flush, count times
 
-use chassis_core::{IndexOptions, VectorIndex, euclidean_distance};
+use chassis_core::{IndexOptions, IndexReader, SearchResult, VectorIndex, euclidean_distance};
 use std::path::Path;
 use std::time::Instant;
 
@@ -24,7 +24,52 @@ fn read<T>(path: &Path, parse: fn([u8; 4]) -> T) -> anyhow::Result<(usize, Vec<T
 }
 
 fn options(ef_search: usize) -> IndexOptions {
-    IndexOptions { max_connections: 16, ef_construction: 200, ef_search, ..IndexOptions::default() }
+    #[allow(unused_mut)]
+    let mut options = IndexOptions {
+        max_connections: 16,
+        ef_construction: 200,
+        ef_search,
+        ..IndexOptions::default()
+    };
+    // LAB_HUGE=1 opens with huge pages, in a build that has them (`--cfg lab_hp`).
+    #[cfg(lab_hp)]
+    if std::env::var_os("LAB_HUGE").is_some() {
+        options.huge_pages = true;
+    }
+    options
+}
+
+/// A writer's handle, or with LAB_READER=1 a reader's.
+enum Handle {
+    Writer(VectorIndex),
+    Reader(IndexReader),
+}
+
+impl Handle {
+    fn open(path: &str, dims: u32, options: IndexOptions) -> anyhow::Result<Self> {
+        Ok(if std::env::var_os("LAB_READER").is_some() {
+            Self::Reader(IndexReader::open(path, dims, options)?)
+        } else {
+            Self::Writer(VectorIndex::open(path, dims, options)?)
+        })
+    }
+
+    fn search(&mut self, query: &[f32]) -> anyhow::Result<Vec<SearchResult>> {
+        match self {
+            Self::Writer(index) => index.search(query, K),
+            Self::Reader(reader) => reader.search(query, K),
+        }
+    }
+
+    fn len(&mut self) -> anyhow::Result<u64> {
+        Ok(match self {
+            Self::Writer(index) => index.len(),
+            Self::Reader(reader) => {
+                reader.refresh()?;
+                reader.len()
+            }
+        })
+    }
 }
 
 /// How much of this process is mapped with huge pages, to stderr.
@@ -138,16 +183,18 @@ fn main() -> anyhow::Result<()> {
             let passes_wanted: usize =
                 std::env::var("LAB_PASSES").ok().and_then(|v| v.parse().ok()).unwrap_or(PASSES);
             for ef_search in EF_SEARCH.into_iter().filter(|&ef| only.is_none_or(|o| o == ef)) {
-                let index = VectorIndex::open(arg(3), dims as u32, options(ef_search))?;
-                let n = index.len();
+                let mut index = Handle::open(&arg(3), dims as u32, options(ef_search))?;
+                let n = index.len()?;
                 #[cfg(all(lab, target_os = "linux"))]
-                if std::env::var("LAB_MADV").is_ok() {
+                if std::env::var("LAB_MADV").is_ok()
+                    && let Handle::Writer(index) = &index
+                {
                     index.lab_huge();
                 }
                 // The first pass over a file that may not be in memory yet.
                 let first = Instant::now();
                 for query in &queries {
-                    index.search(query, K)?;
+                    index.search(query)?;
                 }
                 let first = first.elapsed().as_secs_f64();
                 println!("chassis\t{tag}\t{n}\tfirst_pass_s\t{ef_search}\t0\t{first:.3}\t0");
@@ -159,8 +206,7 @@ fn main() -> anyhow::Result<()> {
                 let mut results = Vec::new();
                 for _ in 0..passes_wanted {
                     let start = Instant::now();
-                    results =
-                        queries.iter().map(|q| index.search(q, K)).collect::<Result<_, _>>()?;
+                    results = queries.iter().map(|q| index.search(q)).collect::<Result<_, _>>()?;
                     passes.push(queries.len() as f64 / start.elapsed().as_secs_f64());
                 }
                 let searches = (passes_wanted * queries.len()) as f64;
