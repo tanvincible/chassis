@@ -84,6 +84,14 @@ pub struct IndexOptions {
 
     /// How vectors are compared. Set when the index is created; reopening needs the same one.
     pub metric: DistanceMetric,
+
+    /// Ask the operating system to keep the vectors on huge pages (ADR-0016). On an index too
+    /// large for the CPU's caches, searches are up to a quarter faster and batch builds a little
+    /// faster. Only on Linux, and only where the kernel and filesystem keep files on huge
+    /// pages (ext4 on Linux 6.17 does); elsewhere it does nothing. Off by default: with it a
+    /// page not yet in memory is read 2 MB at a time, which an index much larger than memory
+    /// pays for on every miss.
+    pub huge_pages: bool,
 }
 
 impl Default for IndexOptions {
@@ -93,6 +101,7 @@ impl Default for IndexOptions {
             ef_construction: 200,
             ef_search: 50,
             metric: DistanceMetric::Euclidean,
+            huge_pages: false,
         }
     }
 }
@@ -158,7 +167,11 @@ impl VectorIndex {
         let graph = HnswGraph::open_no_reset(storage, params)?;
         // This is the one writer, so no compaction is running: a copy here is a crashed one's.
         let _ = std::fs::remove_file(storage::sibling(&path, "compacting"));
-        Ok(Self { graph, ml: params.ml, options, ids: None, next_id: 0, path })
+        let mut index = Self { graph, ml: params.ml, options, ids: None, next_id: 0, path };
+        if index.options.huge_pages {
+            index.use_huge_pages();
+        }
+        Ok(index)
     }
 
     /// Add a vector and return the id assigned to it: one past the largest id used so far.
@@ -325,6 +338,8 @@ impl VectorIndex {
         let dims = self.dims();
         let storage = &mut self.graph.storage;
         storage.truncate_logical(first);
+        // A batch writes its vectors once and for all, so they may go straight onto huge pages.
+        storage.huge_pages_up_to(first + ids.len() as u64);
         for ((&id, vector), &layer) in ids.iter().zip(vectors.chunks_exact(dims)).zip(layers) {
             let slot = storage.append(id, vector)?;
             storage.write_record(slot, &vec![Vec::new(); layer + 1])?;
@@ -596,6 +611,12 @@ impl VectorIndex {
         Ok(())
     }
 
+    /// Asks for huge pages from here on, as opening with `IndexOptions::huge_pages` does.
+    pub fn use_huge_pages(&mut self) {
+        self.options.huge_pages = true;
+        self.graph.storage.use_huge_pages();
+    }
+
     /// Get the number of live (not deleted) vectors in the index
     pub fn len(&self) -> u64 {
         self.graph.node_count() - self.graph.deleted_count
@@ -739,7 +760,11 @@ impl IndexReader {
         let path = path.as_ref().to_path_buf();
         let storage = Storage::open_read_only(&path, dims)?;
         let graph = HnswGraph::reader(storage, hnsw_params(&options))?;
-        Ok(Self { graph, ef_search: options.ef_search, path, dims, options })
+        let mut reader = Self { graph, ef_search: options.ef_search, path, dims, options };
+        if reader.options.huge_pages {
+            reader.use_huge_pages();
+        }
+        Ok(reader)
     }
 
     /// Takes a new snapshot, moving to the file a compaction put at the path (ADR-0011). Until
@@ -802,6 +827,12 @@ impl IndexReader {
     /// power loss discarded a flush readers had already seen.
     pub fn snapshot(&self) -> (u64, u64) {
         self.graph.view.map_or((0, 0), |view| (view.committed, view.epoch))
+    }
+
+    /// Asks for huge pages from here on, as opening with `IndexOptions::huge_pages` does.
+    pub fn use_huge_pages(&mut self) {
+        self.options.huge_pages = true;
+        self.graph.storage.use_huge_pages();
     }
 
     /// Live vectors as of the last snapshot, taken by `search` or `refresh`.

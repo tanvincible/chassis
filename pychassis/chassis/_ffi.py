@@ -199,6 +199,10 @@ _lib.chassis_flush.restype = ctypes.c_int
 _lib.chassis_compact.argtypes = [ChassisIndexPtr]
 _lib.chassis_compact.restype = ctypes.c_int
 
+# chassis_use_huge_pages
+_lib.chassis_use_huge_pages.argtypes = [ChassisIndexPtr]
+_lib.chassis_use_huge_pages.restype = ctypes.c_int
+
 # chassis_len
 _lib.chassis_len.argtypes = [ChassisIndexPtr]
 _lib.chassis_len.restype = ctypes.c_uint64

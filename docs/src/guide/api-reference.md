@@ -184,6 +184,9 @@ pub struct IndexOptions {
 
     /// `DistanceMetric::Euclidean` (default) or `DistanceMetric::Cosine`.
     pub metric: DistanceMetric,
+
+    /// Ask the operating system to keep the vectors on huge pages. Default: false
+    pub huge_pages: bool,
 }
 ```
 
@@ -191,6 +194,14 @@ The metric is fixed when the index is created: reopening with another one is an 
 `IndexReader` uses the file's, and `metric()` on either reports it. A cosine index stores vectors
 scaled to unit length, rejects zero vectors and vectors with NaN or infinite components, and
 reports `1 - cosine similarity`, from 0 to 2. Search speed is the same for both.
+
+`huge_pages` is for an index too large for the CPU's caches: with the vectors on 2 MB pages,
+searches are up to a quarter faster and batch builds a little faster
+([ADR-0016](../adr/016-huge-pages-on-request.md)). It works on Linux, where the kernel and
+filesystem keep files on huge pages (ext4 on Linux 6.17 does), and does nothing elsewhere. A writer
+and its readers each ask for themselves. It is off by default because a page not yet in memory is
+then read 2 MB at a time, which an index much larger than memory pays for on every miss.
+`VectorIndex::use_huge_pages` and `IndexReader::use_huge_pages` turn it on after opening.
 
 **Tuning Guide**:
 

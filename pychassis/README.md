@@ -215,6 +215,7 @@ class IndexOptions:
     ef_construction: int = 200     # Build-time search quality
     ef_search: int = 50            # Query-time search quality
     metric: str = "euclidean"      # or "cosine": 1 - cosine similarity, unit-length storage
+    huge_pages: bool = False       # Linux: keep the vectors on 2 MB pages (faster search on a large index)
 ```
 
 ### `SearchResult`
