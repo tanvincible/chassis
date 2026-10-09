@@ -87,6 +87,7 @@ options = IndexOptions(
     ef_construction=400,     # Higher = better index, slower build
     ef_search=100,           # Higher = better search, slower queries
     metric="cosine",         # "euclidean" (default) or "cosine"; fixed at creation
+    precision="half",        # "full" (default) or "half": 16-bit floats, half the file; fixed at creation
 )
 
 index = VectorIndex("tuned.chassis", dimensions=768, options=options)
@@ -201,6 +202,7 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
 - **`dimensions: int`** - Number of dimensions per vector
 - **`metric: str`** - `"euclidean"` or `"cosine"`, as the index was created; opening with
   `read_only=True` and explicit `options` naming another raises `ChassisError`
+- **`precision: str`** - `"full"` or `"half"`, as the index was created
 - **`path: Path`** - Path to the index file
 - **`options: IndexOptions`** - HNSW configuration
 
@@ -215,6 +217,7 @@ class IndexOptions:
     ef_construction: int = 200     # Build-time search quality
     ef_search: int = 50            # Query-time search quality
     metric: str = "euclidean"      # or "cosine": 1 - cosine similarity, unit-length storage
+    precision: str = "full"        # or "half": vectors kept as 16-bit floats, half the file and memory
     huge_pages: bool = False       # Linux: keep the vectors on 2 MB pages (faster search on a large index)
 ```
 

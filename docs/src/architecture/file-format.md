@@ -1,6 +1,7 @@
 # File Format
 
-A Chassis file is one file in format version 3 ([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md)).
+A Chassis file is one file in format version 3 ([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md)),
+or version 4 if it keeps its vectors in half precision ([ADR-0018](../adr/018-half-precision.md)).
 It holds two header copies, then append-only **regions**: segments of slots, heap chunks of
 upper-layer neighbor lists, and table pages that list where the others start. Each region is
 mapped once, and committed bytes never move.
@@ -29,12 +30,12 @@ The valid copy with the higher sequence number is current.
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 8 | Magic | `CHASSIS\0` in every format version |
-| 8 | 4 | Read version | Oldest format a reader must understand: `3` |
-| 12 | 4 | Write version | Oldest format a writer must understand: `3` |
+| 8 | 4 | Read version | Oldest format a reader must understand: `3`, or `4` in half precision |
+| 12 | 4 | Write version | Oldest format a writer must understand: `3`, or `4` in half precision |
 | 16 | 8 | Checksum | xxh3-64 of the header's bytes with this field zeroed |
 | 24 | 8 | Sequence | Increases by one with every header written |
 | 32 | 4 | Length | Header length in bytes, table page lists included |
-| 36 | 4 | Dimensions | `f32` values per vector, 1 to 4096 |
+| 36 | 4 | Dimensions | Components per vector, 1 to 4096 |
 | 40 | 2 | M | Neighbors per upper-layer list |
 | 42 | 2 | M0 | Neighbors per layer-0 list |
 | 44 | 1 | Max layers | Layers a node can belong to |
@@ -45,6 +46,7 @@ The valid copy with the higher sequence number is current.
 | 49 | 1 | Doubling segments | Segments that double in size before the size stays constant |
 | 50 | 1 | Heap base log2 | Bytes in the first heap chunk, as a power of two |
 | 51 | 1 | Doubling chunks | Heap chunks that double in size before the size stays constant |
+| 52 | 1 | Precision | `0`: each component is an `f32`; `1`: an IEEE 754 16-bit float, in a file of version 4 |
 | 56 | 8 | Count | Committed slots |
 | 64 | 8 | Entry point | Slot of the graph's entry point, `u64::MAX` if empty |
 | 72 | 4 | Max layer | Highest layer in the graph |
@@ -64,6 +66,10 @@ A release checks the read version before the checksum, so a newer layout is repo
 not as corrupt. A newer write version only stops writers: `IndexReader` reads the file and ignores
 the bytes after the next id. Releases up to 0.6.3 read bytes 8–11 as their version and refuse
 anything above 2.
+
+A file in half precision is version 4 to readers and writers alike, so that a release from before
+half precision refuses it and doesn't read its vectors as `f32`s. A file in full precision is
+written as version 3 by every release, with byte 52 zero as it always was.
 
 ## Live Page
 
@@ -96,7 +102,7 @@ A segment of `n` slots holds three arrays, each starting at a multiple of 64 byt
 | Array | Per slot | Contents |
 |-------|----------|----------|
 | Slot headers | 24 bytes | id (u64), metadata reference (u64, `0`), deleted epoch (u64, `0` while live) |
-| Vectors | `dims × 4` bytes | the vector |
+| Vectors | `dims × 4` bytes, or `dims × 2` in half precision | the vector, little-endian |
 | Level-0 records | `8 + 4 × M0` bytes | head (u64), then `M0` neighbor slots (u32) |
 
 A record's head holds the node's layer count in bits 0–7 and, for a node above layer 0, the heap

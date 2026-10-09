@@ -139,6 +139,7 @@ index.flush()?;
 let len = index.len();           // Live vectors (deleted ones excluded)
 let dim = index.dimensions();    // Vector size
 let metric = index.metric();     // DistanceMetric::Euclidean or ::Cosine
+let precision = index.precision(); // Precision::Full or ::Half
 let empty = index.is_empty();    // True if count == 0
 ```
 
@@ -185,6 +186,9 @@ pub struct IndexOptions {
     /// `DistanceMetric::Euclidean` (default) or `DistanceMetric::Cosine`.
     pub metric: DistanceMetric,
 
+    /// `Precision::Full` (default) or `Precision::Half`.
+    pub precision: Precision,
+
     /// Ask the operating system to keep the vectors on huge pages. Default: false
     pub huge_pages: bool,
 }
@@ -194,6 +198,18 @@ The metric is fixed when the index is created: reopening with another one is an 
 `IndexReader` uses the file's, and `metric()` on either reports it. A cosine index stores vectors
 scaled to unit length, rejects zero vectors and vectors with NaN or infinite components, and
 reports `1 - cosine similarity`, from 0 to 2. Search speed is the same for both.
+
+`precision` is fixed when the index is created, as the metric is: reopening with another one is
+an error, an `IndexReader` uses the file's, and `precision()` on either reports it.
+`Precision::Half` keeps each component of a vector as a 16-bit float
+([ADR-0018](../adr/018-half-precision.md)), so the vectors take half the space in the file and in
+memory. A search over an index too large for the CPU's caches is faster for it, by a tenth to
+two thirds on most of the machines measured, and builds on x86 take 11 to 48% less time. An index
+that fits in cache searches no faster, and on Neoverse-N2 a fifth more slowly when its vectors are
+long. Each component is rounded to 11 significant bits, about three decimal digits, and reported
+distances are to the vectors as kept; on the embeddings measured, recall was the same. A vector
+with a component of 65,520 or more in magnitude is refused. A file in half precision is format
+version 4, which releases from before this option refuse to open.
 
 `huge_pages` is for an index too large for the CPU's caches: with the vectors on 2 MB pages,
 searches are up to a quarter faster and batch builds a little faster
