@@ -356,7 +356,8 @@ impl HnswGraph {
         }
 
         let base_vector = self.storage.get_vector_slice(base_node)?;
-        let (kernel, prefetch) = (crate::distance::kernel(), Prefetch::detect());
+        let prefetch = Prefetch::detect().for_dims(base_vector.len());
+        let kernel = crate::distance::kernel();
         // Start loading every candidate's vector first, so the cache misses overlap.
         let vectors: Vec<Option<&[f32]>> = candidates
             .iter()
