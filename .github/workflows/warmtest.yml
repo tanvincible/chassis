@@ -1,0 +1,47 @@
+name: x86 warmtest
+
+# Experiment branch only: the warm() tests on each system, with their output, to see that the
+# test which checks the file comes into memory really runs there and isn't skipping itself.
+# Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/warmtest.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+
+jobs:
+  tests:
+    name: warm tests (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: lab/exp-warm
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: The warm tests, five times, with what they print
+        shell: bash
+        run: |
+          uname -a
+          df -T "${TMPDIR:-/tmp}" 2>/dev/null || df "${TMPDIR:-/tmp}" || true
+          cargo test --release -p chassis-core --lib warming -- --nocapture 2>&1 | tail -5
+          for round in 1 2 3 4 5; do
+            cargo test --release -p chassis-core --test warm_tests -- --nocapture 2>&1 | tee out.txt | grep -E "^test |test result|nothing to test|panicked" || true
+            grep -q "test result: ok" out.txt
+            if grep -q "nothing to test" out.txt; then echo "SKIPPED ITSELF on ${{ matrix.runner }}"; fi
+          done
+          # Debug build once: overflow checks and debug assertions are on there.
+          cargo test -p chassis-core --test warm_tests 2>&1 | grep -E "^test |test result|panicked"
