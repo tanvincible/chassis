@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
+  RUN: 2
   STEPS: "base=c46fb1c deep=422a5a6"
 
 jobs:
