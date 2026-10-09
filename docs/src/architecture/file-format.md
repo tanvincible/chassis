@@ -138,6 +138,19 @@ written. The unused end of the last segment is never written, but whether the fi
 sparse varies: on APFS, a real build of this example allocated 33.6 MB, while unused ranges of
 16 MiB or less next to written data were sometimes allocated in full. ext4 is untested.
 
+## The undo file
+
+Adds change the neighbor lists of committed nodes in place before they are committed themselves.
+Before a committed node's lists first change after a flush, they are appended to `<name>.undo`,
+and a writer that opens the index after a crash writes them back (ADR-0012). The file exists
+only between a flush and the next one that follows adds, or after a crash; a flush removes it.
+An index moved or copied while the file exists has to take it along.
+
+After the 8 bytes `CHSUNDO1`, each entry is the slot (u32), its layer count (u8), then per layer
+a count (u16) and that many neighbor ids (u32), then an xxh3-64 of the entry, seeded with a hash
+of the committed vector count, entry point, top layer, delete epoch, deleted count and id mark.
+Entries saved from another commit fail the checksum and are ignored.
+
 ## Migration
 
 Opening a version 1 or 2 file converts it. Chassis takes the original's lock, writes the committed

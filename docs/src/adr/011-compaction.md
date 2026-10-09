@@ -95,6 +95,10 @@ median of three passes, recall@10 against the exact nearest live vectors.
 
 ### After a crash that lost adds
 
+ADR-0012 has since fixed this for a process crash: a writer now writes the committed lists back
+when it opens the index. These numbers are from before it, and still describe an index opened
+without its undo file, or after a power loss that took it.
+
 The same day and machine, 24-dimensional random vectors, `M = 16`, `ef_construction = 100`,
 `ef = 64`: commit some vectors, add more without flushing, reopen as after a crash, add the lost
 ones again, compact. Each cell is recall@10 over 200 queries, then how many of the committed
@@ -135,8 +139,8 @@ vectors a search for that vector's ten nearest returns.
 * It holds the writer for its whole run: adds, deletes and, through a shared C or Python handle,
   searches wait. Readers in other processes keep searching.
 * On Windows it can't run while another process has the index open.
-* After a crash that lost adds, someone has to know to call it: nothing detects the damage or
-  repairs it when the index is opened.
+* Where ADR-0012's undo file doesn't reach (a power loss, an older release, a copy without the
+  file), someone has to know to call it after lost adds: nothing detects that damage.
 * ADR-0008 also described a reader reopening when its file has no name left (`st_nlink == 0`),
   for replacements made without the flag. That check isn't built: every replacement goes through
   the flag.

@@ -141,8 +141,10 @@ fn test_cosine_filtered_search_reports_cosine_distance() {
     }
 }
 
-/// Adds lost to a crash leave committed nodes with links to slots that are gone, so the graph
-/// search can run out of nodes before it runs out of budget. A filter must still find its ids.
+/// Adds lost to a crash leave committed nodes with links to slots that are gone, unless the undo
+/// file takes them out again (ADR-0012), which a power loss or an older release may not leave.
+/// The graph search can then run out of nodes before it runs out of budget. A filter must still
+/// find its ids.
 #[test]
 fn test_a_filter_finds_its_ids_in_a_graph_a_crash_thinned() {
     let dir = tempdir().unwrap();
@@ -157,6 +159,7 @@ fn test_a_filter_finds_its_ids_in_a_graph_a_crash_thinned() {
         index.add(&vector(id)).unwrap();
     }
     drop(index);
+    std::fs::remove_file(dir.path().join("index.chassis.undo")).unwrap();
 
     let index = VectorIndex::open(&path, DIMS, IndexOptions::default()).unwrap();
     assert_eq!(index.len(), kept);

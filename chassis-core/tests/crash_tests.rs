@@ -45,10 +45,70 @@ fn unlocked<T>(open: impl Fn() -> anyhow::Result<T>) -> T {
     panic!("the index stayed locked for two seconds")
 }
 
+/// A vector unlike its neighbors in id, so that lost adds link to committed vectors all over.
+fn scattered(id: u64) -> Vec<f32> {
+    let mut x = id.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..DIMS)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 40) as f32 / (1u64 << 24) as f32
+        })
+        .collect()
+}
+
+const COMMITTED: u64 = 100;
+
+/// The child half of `test_kill_during_adds_leaves_the_committed_graph_whole`: flushes a few
+/// vectors, then adds many more than that without flushing until it is killed.
+fn graph_writer(path: &str) {
+    let mut index = unlocked(|| VectorIndex::open(path, DIMS, options()));
+    for id in 0..COMMITTED {
+        index.add(&scattered(id)).unwrap();
+    }
+    index.flush().unwrap();
+    println!("flushed");
+    for chunk in (COMMITTED..).step_by(64) {
+        let vectors: Vec<f32> = (chunk..chunk + 64).flat_map(scattered).collect();
+        index.add_batch(&vectors).unwrap();
+        index.add(&scattered(1 << 40 | chunk)).unwrap();
+        println!("added {chunk}");
+    }
+}
+
+/// Adds change committed nodes' lists in place. Killed with twenty times as many adds unflushed
+/// as were flushed, the index must come back with every flushed vector within reach (ADR-0012):
+/// without the undo file most of them were not.
+#[test]
+fn test_kill_during_adds_leaves_the_committed_graph_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("graph.chassis");
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.args(["crash_writer", "--exact", "--nocapture"]).env("CHASSIS_CRASH_PATH", &path);
+    let mut child = command.env("CHASSIS_CRASH_GRAPH", "1").stdout(Stdio::piped()).spawn().unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let added = lines.find_map(|line| {
+        let chunk: u64 = line.unwrap().strip_prefix("added ")?.parse().ok()?;
+        (chunk >= 20 * COMMITTED).then_some(chunk)
+    });
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(added.is_some(), "the writer exited before it had added enough");
+
+    let index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
+    assert_eq!(index.len(), COMMITTED);
+    let found = |id: &u64| index.search(&scattered(*id), 1).unwrap()[0].id == *id;
+    assert_eq!((0..COMMITTED).filter(found).count() as u64, COMMITTED);
+}
+
 /// The child half: only does work when the parent test spawns it with a path.
 #[test]
 fn crash_writer() {
     let Ok(path) = std::env::var("CHASSIS_CRASH_PATH") else { return };
+    if std::env::var("CHASSIS_CRASH_GRAPH").is_ok() {
+        return graph_writer(&path);
+    }
     let mut index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
     let mut batch = (0..).find(|&b| live_after(b) == index.len()).unwrap();
     let add_batch = std::env::var("CHASSIS_CRASH_ADD_BATCH").is_ok();

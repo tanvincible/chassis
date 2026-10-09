@@ -115,8 +115,9 @@ fn test_compact_never_frees_an_id_for_add() {
     assert_eq!(index.search(&vector(42), 1).unwrap()[0].id, 42);
 }
 
-/// Adds lost to a crash leave the committed vectors with links to slots that are gone, in place of
-/// the links they had (ADR-0005 amendment). Compaction links every vector again.
+/// Adds lost to a crash under a release without the undo file (ADR-0012), or to a power loss that
+/// took the file, leave the committed vectors with links to slots that are gone, in place of the
+/// links they had. Compaction links every vector again.
 #[test]
 fn test_compaction_reconnects_vectors_a_crash_left_without_edges() {
     let dir = tempdir().unwrap();
@@ -126,9 +127,11 @@ fn test_compaction_reconnects_vectors_a_crash_left_without_edges() {
     let mut index = VectorIndex::open(&path, DIMS as u32, options()).unwrap();
     index.add_batch(&(kept..kept + lost).flat_map(vector).collect::<Vec<_>>()).unwrap();
     drop(index);
+    std::fs::remove_file(dir.path().join("thinned.chassis.undo")).unwrap();
 
     let mut index = VectorIndex::open(&path, DIMS as u32, options()).unwrap();
     assert_eq!(index.len(), kept);
+    assert!(recall(&index, kept, |_| true) < 0.98, "the lost adds were meant to do damage");
     index.compact().unwrap();
     assert!(recall(&index, kept, |_| true) >= 0.98);
 }

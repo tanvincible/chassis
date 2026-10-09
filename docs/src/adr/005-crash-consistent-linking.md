@@ -114,6 +114,10 @@ index takes new inserts, tested by `chassis-core/tests/crash_tests.rs`. Graph ed
 back: edges pruned after the last flush to make room for backlinks stay lost, which can lower recall.
 The same is expected after power loss, because `flush()` is the fsync barrier.
 
+Since 2026-10-08 the edges are rolled back too after a process crash: ADR-0012 saves a committed
+node's lists before they change and writes them back on the next open. ADR-0011 measured what the
+loss had cost.
+
 Since 2026-10-05, `chassis-core/src/power_loss.rs` simulates power loss. At every fsync and between
 operations, each 512-byte sector of a crash image keeps its durable or its current contents, and
 every image must reopen to exactly the last completed flush or the one in progress, then keep
