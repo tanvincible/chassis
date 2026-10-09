@@ -54,6 +54,8 @@ Patch release: SPDX workspace license, `deny.toml` for `cargo deny`, and `rand` 
 
 The storage engine, C FFI layer and Python bindings work end to end. Release history and per-version notes live in [CHANGELOG.md](CHANGELOG.md).
 
+What is planned next is in [ROADMAP.md](ROADMAP.md).
+
 ## License
 
 Chassis is dual licensed under:
