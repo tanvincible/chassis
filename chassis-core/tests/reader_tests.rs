@@ -289,7 +289,7 @@ fn test_a_newer_write_version_is_read_only() {
     for copy in [0, 64 * 1024] {
         let header = &mut bytes[copy..copy + 64 * 1024];
         let len = u32::from_le_bytes(header[32..36].try_into().unwrap()) as usize;
-        header[12..16].copy_from_slice(&4u32.to_le_bytes());
+        header[12..16].copy_from_slice(&(chassis_core::VERSION + 1).to_le_bytes());
         // Longer than any header this release writes.
         let extended = len + 10_000;
         header[len..extended].fill(0xab);

@@ -1,7 +1,7 @@
 //! `IndexOptions::huge_pages` (ADR-0016). Whether the kernel grants huge pages differs by machine
 //! and can't be told from here; what must hold everywhere is that asking changes no result.
 
-use chassis_core::{IndexOptions, IndexReader, SearchResult, VectorIndex};
+use chassis_core::{IndexOptions, IndexReader, Precision, SearchResult, VectorIndex};
 use tempfile::tempdir;
 
 /// 4 KiB a vector, so a thousand of them cover whole huge pages.
@@ -18,16 +18,29 @@ fn vector(id: u64) -> Vec<f32> {
         .collect()
 }
 
-fn options(huge_pages: bool) -> IndexOptions {
-    IndexOptions { ef_construction: 32, ef_search: 32, huge_pages, ..IndexOptions::default() }
-}
-
 fn found(results: Vec<SearchResult>) -> Vec<(u64, u32)> {
     results.iter().map(|r| (r.id, r.distance.to_bits())).collect()
 }
 
 #[test]
 fn test_asking_for_huge_pages_changes_no_result() {
+    asking_changes_no_result(Precision::Full);
+}
+
+/// In half precision a vector is half as long, and so is the stretch of the file to ask for.
+#[test]
+fn test_asking_for_huge_pages_changes_no_result_in_half_precision() {
+    asking_changes_no_result(Precision::Half);
+}
+
+fn asking_changes_no_result(precision: Precision) {
+    let options = |huge_pages| IndexOptions {
+        ef_construction: 32,
+        ef_search: 32,
+        huge_pages,
+        precision,
+        ..IndexOptions::default()
+    };
     let dir = tempdir().unwrap();
     let path = dir.path().join("index.chassis");
     let mut index = VectorIndex::open(&path, DIMS, options(true)).unwrap();

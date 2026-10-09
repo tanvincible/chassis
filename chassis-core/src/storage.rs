@@ -14,12 +14,14 @@
 //! lists as committed are saved in `<name>.undo` first, and a writer opening the file after a
 //! crash writes them back (ADR-0012).
 
-use crate::distance::DistanceMetric;
+use crate::distance::{DistanceMetric, Element};
+use crate::half::{self, Precision};
 use crate::header::{FLAG_SUPERSEDED, FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES, REGIONS_START};
 use crate::hnsw::node::NodeRecordParams;
 use crate::legacy::{LegacyIndex, is_legacy};
 use anyhow::{Context, Result, bail};
 use memmap2::{MmapOptions, MmapRaw};
+use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -65,6 +67,7 @@ const fn align(n: u64, to: u64) -> u64 {
 #[derive(Debug, Clone, Copy)]
 struct Geometry {
     dims: usize,
+    precision: Precision,
     params: NodeRecordParams,
     segment_base_log2: u32,
     doubling_segments: u64,
@@ -102,6 +105,7 @@ impl Geometry {
         }
         let geometry = Self {
             dims: header.dims as usize,
+            precision: if header.precision == 1 { Precision::Half } else { Precision::Full },
             params,
             segment_base_log2: base,
             doubling_segments: u64::from(header.doubling_segments),
@@ -122,6 +126,7 @@ impl Geometry {
         dims: u32,
         params: NodeRecordParams,
         metric: DistanceMetric,
+        precision: Precision,
     ) -> Result<FileHeader> {
         if !(1..=MAX_DIMENSIONS).contains(&dims) {
             bail!("Dimensions must be between 1 and {MAX_DIMENSIONS}, got {dims}");
@@ -130,13 +135,14 @@ impl Geometry {
             bail!("max_connections must be between 2 and 32,767");
         }
         let mut header = FileHeader {
-            write_version: crate::header::VERSION,
+            write_version: crate::header::version_of(u8::from(precision == Precision::Half)),
             sequence: 0,
             dims,
             m: params.m,
             m0: params.m0,
             max_layers: params.max_layers,
             metric: u8::from(metric == DistanceMetric::Cosine),
+            precision: u8::from(precision == Precision::Half),
             flags: 0,
             segment_base_log2: SEGMENT_BASE_LOG2,
             doubling_segments: 0,
@@ -175,6 +181,11 @@ impl Geometry {
         Ok(header)
     }
 
+    /// Bytes of one vector in the file.
+    fn vector_bytes(&self) -> usize {
+        self.dims * self.precision.bytes()
+    }
+
     fn level0_bytes(&self) -> usize {
         8 + 4 * usize::from(self.params.m0)
     }
@@ -200,7 +211,7 @@ impl Geometry {
     fn segment_layout(&self, slots: u64) -> SegmentLayout {
         let slots = slots as usize;
         let vectors = align((SLOT_HEADER * slots) as u64, 64) as usize;
-        let level0 = align((vectors + 4 * self.dims * slots) as u64, 64) as usize;
+        let level0 = align((vectors + self.vector_bytes() * slots) as u64, 64) as usize;
         SegmentLayout { vectors, level0, bytes: level0 + self.level0_bytes() * slots }
     }
 
@@ -446,11 +457,27 @@ impl Storage {
         params: NodeRecordParams,
         metric: DistanceMetric,
     ) -> Result<Self> {
+        Self::open_with_precision(path, dimensions, params, metric, Precision::Full)
+    }
+
+    /// `open_with`, creating a new file with vectors in `precision` (ADR-0018). An existing file
+    /// keeps the precision it was created with, which `precision()` reports.
+    ///
+    /// # Errors
+    ///
+    /// As for `open`.
+    pub fn open_with_precision<P: AsRef<Path>>(
+        path: P,
+        dimensions: u32,
+        params: NodeRecordParams,
+        metric: DistanceMetric,
+        precision: Precision,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let file = open_locked(path)?;
         let len = file.metadata()?.len();
         if len == 0 {
-            return Self::initialize(file, path, dimensions, params, metric);
+            return Self::initialize(file, path, dimensions, params, metric, precision);
         }
 
         let mut prefix = [0u8; 12];
@@ -472,7 +499,7 @@ impl Storage {
             && headers.bytes(LIVE, HEADER_STRIDE).iter().all(|&b| b == 0)
         {
             drop(headers);
-            return Self::initialize(file, path, dimensions, params, metric);
+            return Self::initialize(file, path, dimensions, params, metric, precision);
         }
         Self::load(file, headers, dimensions, path)
     }
@@ -516,8 +543,9 @@ impl Storage {
         dims: u32,
         params: NodeRecordParams,
         metric: DistanceMetric,
+        precision: Precision,
     ) -> Result<Self> {
-        let header = Geometry::initial_header(dims, params, metric)?;
+        let header = Geometry::initial_header(dims, params, metric, precision)?;
         file.set_len(REGIONS_START)?;
         let headers = Region::map(&file, 0, REGIONS_START as usize, true)?;
         headers.store_words(0, &FileHeader { sequence: 1, ..header.clone() }.to_bytes());
@@ -585,7 +613,7 @@ impl Storage {
             let k = k as u64;
             let slots = slots.saturating_sub(g.capacity(k)).min(g.segment_slots(k));
             let start = segment.region.offset + segment.vectors as u64;
-            let end = start + slots * (4 * g.dims) as u64;
+            let end = start + slots * g.vector_bytes() as u64;
             if let Some((from, to)) = whole_huge_pages(start, end)
                 && to > segment.huge
             {
@@ -854,9 +882,9 @@ impl Storage {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
             _ => {}
         }
-        let euclidean = DistanceMetric::Euclidean;
+        let (euclidean, full) = (DistanceMetric::Euclidean, Precision::Full);
         let mut storage =
-            Self::initialize(open_locked(&temp)?, &temp, dims, legacy.params, euclidean)?;
+            Self::initialize(open_locked(&temp)?, &temp, dims, legacy.params, euclidean, full)?;
 
         let mut deleted = 0;
         let mut custom_ids = legacy.custom_ids;
@@ -922,6 +950,9 @@ impl Storage {
         if vector.len() != g.dims {
             bail!("Vector dimension mismatch: expected {}, got {}", g.dims, vector.len());
         }
+        if g.precision == Precision::Half {
+            half::check(vector)?;
+        }
         let slot = self.count;
         if slot >= u64::from(EMPTY) {
             bail!("Index is full: it holds at most {} vectors", EMPTY);
@@ -942,9 +973,15 @@ impl Storage {
         let mut header = [0u8; SLOT_HEADER];
         header[..8].copy_from_slice(&id.to_le_bytes());
         segment.region.store_words(i * SLOT_HEADER, &header);
-        let vector_bytes = segment.region.bytes_mut(segment.vectors + i * g.dims * 4, g.dims * 4);
-        for (dst, x) in vector_bytes.as_chunks_mut::<4>().0.iter_mut().zip(vector) {
-            dst.copy_from_slice(&x.to_le_bytes());
+        let bytes = g.vector_bytes();
+        let stored = segment.region.bytes_mut(segment.vectors + i * bytes, bytes);
+        match g.precision {
+            Precision::Full => {
+                for (dst, x) in stored.as_chunks_mut::<4>().0.iter_mut().zip(vector) {
+                    dst.copy_from_slice(&x.to_le_bytes());
+                }
+            }
+            Precision::Half => half::write(vector, stored),
         }
         self.count += 1;
         Ok(slot)
@@ -1046,15 +1083,45 @@ impl Storage {
     ///
     /// # Errors
     ///
-    /// Returns an error if `index` is past the last written slot.
+    /// Returns an error if `index` is past the last written slot, or if the file keeps its
+    /// vectors in half precision, which `get_vector` widens.
     #[inline]
     pub fn get_vector_slice(&self, index: u64) -> Result<&[f32]> {
+        if self.geometry.precision != Precision::Full {
+            bail!("This index keeps its vectors in half precision: read them with get_vector");
+        }
+        self.stored(index)
+    }
+
+    /// The vector in `index` as the file keeps it. `E` must be the file's precision: callers
+    /// choose it from `precision()`, once for many vectors.
+    #[inline]
+    pub(crate) fn stored<E: Element>(&self, index: u64) -> Result<&[E]> {
+        debug_assert_eq!(E::PRECISION, self.geometry.precision);
         let (segment, i) = self.segment(index)?;
         let dims = self.geometry.dims;
-        let bytes = segment.region.bytes(segment.vectors + i * dims * 4, dims * 4);
-        // SAFETY: maps are page aligned and vectors start at multiples of 4; a published vector
-        // is never rewritten.
-        Ok(unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<f32>(), dims) })
+        let bytes = segment
+            .region
+            .bytes(segment.vectors + i * dims * size_of::<E>(), dims * size_of::<E>());
+        // SAFETY: maps are page aligned and a vector starts at a multiple of its components' size;
+        // a published vector is never rewritten.
+        Ok(unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<E>(), dims) })
+    }
+
+    /// The vector in `index` as f32s: in place, or widened from half precision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is past the last written slot.
+    pub(crate) fn vector(&self, index: u64) -> Result<Cow<'_, [f32]>> {
+        Ok(match self.geometry.precision {
+            Precision::Full => Cow::Borrowed(self.stored(index)?),
+            Precision::Half => {
+                let mut widened = Vec::new();
+                half::widen(self.stored(index)?, &mut widened);
+                Cow::Owned(widened)
+            }
+        })
     }
 
     /// Asks the CPU to start loading the level-0 neighbor list of `slot`, which a search is about
@@ -1074,7 +1141,7 @@ impl Storage {
     ///
     /// Returns an error if `index` is past the last written slot.
     pub fn get_vector(&self, index: u64) -> Result<Vec<f32>> {
-        Ok(self.get_vector_slice(index)?.to_vec())
+        Ok(self.vector(index)?.into_owned())
     }
 
     /// The caller's id stored in `slot`.
@@ -1463,6 +1530,11 @@ impl Storage {
         if self.state.metric == 1 { DistanceMetric::Cosine } else { DistanceMetric::Euclidean }
     }
 
+    /// What the file keeps of each component of a vector.
+    pub fn precision(&self) -> Precision {
+        self.geometry.precision
+    }
+
     /// Forgets slots written past `count`, so the next insert reuses them.
     pub(crate) fn truncate_logical(&mut self, count: u64) {
         self.count = self.count.min(count);
@@ -1677,7 +1749,9 @@ mod tests {
     #[test]
     fn test_locate_matches_capacity() {
         let params = NodeRecordParams::default();
-        let header = Geometry::initial_header(32, params, DistanceMetric::Euclidean).unwrap();
+        let header =
+            Geometry::initial_header(32, params, DistanceMetric::Euclidean, Precision::Full)
+                .unwrap();
         let g = Geometry::new(&header).unwrap();
         let mut slot = 0;
         for k in 0..g.doubling_segments + 3 {
