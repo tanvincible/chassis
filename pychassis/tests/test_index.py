@@ -440,6 +440,20 @@ class TestCosine:
             index.add([0.0, 0.0])
         index.close()
 
+    def test_huge_pages_on_request_change_no_result(self, tmp_path):
+        path = tmp_path / "huge.chassis"
+        index = VectorIndex(path, dimensions=4, options=IndexOptions(huge_pages=True))
+        for i in range(50):
+            index.add([float(i), 1.0, 2.0, 3.0])
+        index.flush()
+        reader = VectorIndex(path, dimensions=4, options=IndexOptions(huge_pages=True), read_only=True)
+        plain = VectorIndex(path, dimensions=4, read_only=True)
+        query = [17.2, 1.0, 2.0, 3.0]
+        assert [r.id for r in index.search(query, k=3)] == [17, 18, 16]
+        assert reader.search(query, k=3) == plain.search(query, k=3) == index.search(query, k=3)
+        for handle in (reader, plain, index):
+            handle.close()
+
     def test_unknown_metric_is_rejected(self, tmp_path):
         with pytest.raises(ValueError):
             VectorIndex(tmp_path / "x.chassis", dimensions=2, options=IndexOptions(metric="dot"))

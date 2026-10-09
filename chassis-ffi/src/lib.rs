@@ -416,6 +416,7 @@ pub unsafe extern "C" fn chassis_open_with_metric(
             ef_construction: ef_construction as usize,
             ef_search: ef_search as usize,
             metric,
+            ..Default::default()
         };
         unsafe { open_handle(path, dimensions, options, false) }
     })
@@ -1048,6 +1049,47 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
     .unwrap_or(-1)
 }
 
+/// Ask the operating system to keep the index's vectors on huge pages
+///
+/// On an index too large for the CPU's caches, searches are up to a quarter faster and batch
+/// builds a little faster. Only on Linux, and only where the kernel and filesystem keep files on huge
+/// pages (ext4 on Linux 6.17 does); elsewhere this does nothing. It is off unless asked for: with
+/// it a page not yet in memory is read 2 MB at a time, which an index much larger than memory
+/// pays for on every miss. Call it right after opening, on a writer's handle or a reader's.
+///
+/// # Arguments
+///
+/// - `ptr`: Non-NULL pointer to index
+///
+/// # Returns
+///
+/// - 0 on success
+/// - -1 on failure (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int {
+    ffi_guard(|| {
+        let Some(state) = (unsafe { state(ptr) }) else {
+            return -1;
+        };
+        let asked = match &state.inner {
+            Kind::Writer(lock) => lock.write().map(|mut index| index.use_huge_pages()).is_ok(),
+            Kind::Reader(lock) => lock.lock().map(|mut reader| reader.use_huge_pages()).is_ok(),
+        };
+        if asked {
+            clear_last_error();
+            0
+        } else {
+            set_last_error(POISONED);
+            -1
+        }
+    })
+    .unwrap_or(-1)
+}
+
 /// Rewrite the index without its deleted vectors and with a newly built graph
 ///
 /// Reclaims the space of deleted vectors and replaces the index file with the copy. Ids don't
@@ -1362,6 +1404,28 @@ mod tests {
         assert_eq!(unsafe { chassis_len(reader) }, 1);
         assert_eq!(unsafe { chassis_flush(writer) }, 0);
         assert_eq!(unsafe { chassis_len(reader) }, 2);
+
+        unsafe { chassis_free(reader) };
+        unsafe { chassis_free(writer) };
+    }
+
+    #[test]
+    fn test_ffi_huge_pages_on_request() {
+        let (_dir, path) = temp_index_path();
+        let writer = unsafe { chassis_open(path.as_ptr(), 8) };
+        assert_eq!(unsafe { chassis_use_huge_pages(writer) }, 0);
+        let vec = [0.5f32; 8];
+        assert_eq!(unsafe { chassis_add_with_id(writer, 7, vec.as_ptr(), 8) }, 0);
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 8, 16, 50) };
+        assert_eq!(unsafe { chassis_use_huge_pages(reader) }, 0);
+        let (mut ids, mut dists) = ([0u64; 1], [0.0f32; 1]);
+        let found = unsafe {
+            chassis_search(reader, vec.as_ptr(), 8, 1, ids.as_mut_ptr(), dists.as_mut_ptr())
+        };
+        assert_eq!((found, ids[0]), (1, 7));
+        assert_eq!(unsafe { chassis_use_huge_pages(ptr::null_mut()) }, -1);
 
         unsafe { chassis_free(reader) };
         unsafe { chassis_free(writer) };

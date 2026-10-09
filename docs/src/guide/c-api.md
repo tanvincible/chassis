@@ -144,6 +144,16 @@ writer's newest flush, which becomes visible just before its final fsync; `chass
 snapshot first. Adds, deletes and flushes on the
 handle fail. A file in an older format must be opened once with `chassis_open` to migrate it.
 
+#### `chassis_use_huge_pages`
+```c
+int chassis_use_huge_pages(ChassisIndex* index);
+```
+Ask the operating system to keep the index's vectors on huge pages
+([ADR-0016](../adr/016-huge-pages-on-request.md)). On an index too large for the CPU's caches,
+searches are up to a quarter faster. Linux only, where the kernel and filesystem keep files on huge pages
+(ext4 on Linux 6.17 does); elsewhere it does nothing. Call it right after opening, on a writer's
+handle or a reader's. Returns `0`, or `-1` for a NULL handle.
+
 #### `chassis_free`
 ```c
 void chassis_free(ChassisIndex* index);
