@@ -476,6 +476,47 @@ class TestMetric:
         writer.close()
 
 
+class TestPrecision:
+    """Vectors kept as 16-bit floats."""
+
+    def test_half_precision_is_reported_enforced_and_half_the_size(self, tmp_path):
+        vectors = np.random.default_rng(7).random((300, 256), dtype=np.float32)
+        sizes = {}
+        for precision in ("full", "half"):
+            path = tmp_path / f"{precision}.chassis"
+            index = VectorIndex(path, dimensions=256, options=IndexOptions(precision=precision))
+            index.add_batch(vectors)
+            index.flush()
+            assert index.precision == precision
+            nearest = index.search(vectors[17], k=1)[0]
+            assert nearest.id == 17 and nearest.distance < 1e-2
+            index.close()
+            sizes[precision] = path.stat().st_size
+        assert 0.5 < sizes["half"] / sizes["full"] < 0.7
+
+        path = tmp_path / "half.chassis"
+        reader = VectorIndex(path, dimensions=256, read_only=True)
+        assert reader.precision == "half"
+        assert reader.search(vectors[17], k=1)[0].id == 17
+        reader.close()
+        for options in (None, IndexOptions()):
+            with pytest.raises(ChassisError, match="precision"):
+                VectorIndex(path, dimensions=256, options=options)
+
+    def test_what_half_precision_cannot_hold_is_refused(self, tmp_path):
+        options = IndexOptions(precision="half")
+        index = VectorIndex(tmp_path / "half.chassis", dimensions=2, options=options)
+        index.add([65504.0, -1.0])
+        with pytest.raises(ChassisError, match="too large"):
+            index.add([1e6, 0.0])
+        assert len(index) == 1
+        index.close()
+
+    def test_unknown_precision_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError):
+            VectorIndex(tmp_path / "x.chassis", dimensions=2, options=IndexOptions(precision="int8"))
+
+
 class TestFiltered:
     """Search restricted to allowed ids."""
 

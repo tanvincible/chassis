@@ -117,6 +117,25 @@ struct ChassisIndex *chassis_open_with_options(const char *path, uint32_t dimens
 struct ChassisIndex *chassis_open_with_metric(const char *path, uint32_t dimensions, uint32_t max_connections, uint32_t ef_construction, uint32_t ef_search, uint32_t metric);
 
 /**
+ * Open or create a Chassis vector index with custom options, a distance metric and a precision
+ *
+ * # Arguments
+ *
+ * - `precision`: `0` to keep each component of a vector as a 32-bit float, `1` as a 16-bit
+ *   float (half precision). Half precision halves the vectors' size in the file and in memory;
+ *   each component is rounded to about three decimal digits, and a vector with a component of
+ *   65,520 or more in magnitude is refused. The precision is fixed when the index is created;
+ *   reopening an existing index with another one fails. A release without this function can't
+ *   open a file in half precision.
+ * - The other arguments are as for `chassis_open_with_metric()`.
+ *
+ * # Safety
+ *
+ * Same safety requirements as `chassis_open()`
+ */
+struct ChassisIndex *chassis_open_with_precision(const char *path, uint32_t dimensions, uint32_t max_connections, uint32_t ef_construction, uint32_t ef_search, uint32_t metric, uint32_t precision);
+
+/**
  * Open an index to search it while a writer, possibly in another process, adds to it
  *
  * Takes no lock, so any number of readers can open the file next to one writer. Every search
@@ -536,6 +555,20 @@ uint32_t chassis_dimensions(const struct ChassisIndex *ptr);
  * - `ptr` must be non-NULL and valid
  */
 int chassis_metric(const struct ChassisIndex *ptr);
+
+/**
+ * Get the precision the index keeps its vectors in
+ *
+ * # Returns
+ *
+ * - `0` for full precision, `1` for half, as for `chassis_open_with_precision()`
+ * - `-1` if `ptr` is NULL
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_precision(const struct ChassisIndex *ptr);
 
 /**
  * Get the last error message for the current thread
