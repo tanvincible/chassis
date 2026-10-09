@@ -2,6 +2,8 @@
 //! and its upper layers in the heap (see `storage.rs`). Neighbor ids are slot numbers.
 
 use crate::Storage;
+use crate::distance::{Element, euclidean_distance};
+use crate::half::Precision;
 use crate::header::FLAG_CUSTOM_IDS;
 use crate::hnsw::HnswParams;
 use crate::hnsw::node::{INVALID_NODE_ID, Node, NodeId, NodeRecord, NodeRecordParams};
@@ -217,8 +219,15 @@ impl HnswGraph {
     /// Returns an error if `node_id` has no stored vector.
     #[inline]
     pub fn compute_distance_zero_copy(&self, query: &[f32], node_id: NodeId) -> Result<f32> {
-        let vector_slice = self.storage.get_vector_slice(node_id)?;
-        Ok(crate::distance::euclidean_distance(query, vector_slice))
+        match self.storage.precision() {
+            Precision::Full => Ok(euclidean_distance(query, self.storage.stored(node_id)?)),
+            Precision::Half => {
+                let stored = self.storage.stored::<u16>(node_id)?;
+                assert_eq!(query.len(), stored.len(), "vectors differ in length");
+                // SAFETY: the lengths were just compared.
+                Ok(unsafe { <u16 as Element>::kernel()(query, stored) })
+            }
+        }
     }
 
     /// Makes every node and delete so far durable: the flush commit point (ADR-0008, decision 6).

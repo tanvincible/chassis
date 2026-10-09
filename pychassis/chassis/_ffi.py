@@ -113,6 +113,18 @@ _lib.chassis_open_with_metric.argtypes = [
 ]
 _lib.chassis_open_with_metric.restype = ChassisIndexPtr
 
+# chassis_open_with_precision
+_lib.chassis_open_with_precision.argtypes = [
+    ctypes.c_char_p,  # path
+    ctypes.c_uint32,  # dimensions
+    ctypes.c_uint32,  # max_connections
+    ctypes.c_uint32,  # ef_construction
+    ctypes.c_uint32,  # ef_search
+    ctypes.c_uint32,  # metric: 0 Euclidean, 1 cosine
+    ctypes.c_uint32,  # precision: 0 full, 1 half
+]
+_lib.chassis_open_with_precision.restype = ChassisIndexPtr
+
 # chassis_open_reader
 _lib.chassis_open_reader.argtypes = [
     ctypes.c_char_p,  # path
@@ -218,6 +230,10 @@ _lib.chassis_dimensions.restype = ctypes.c_uint32
 # chassis_metric
 _lib.chassis_metric.argtypes = [ChassisIndexPtr]
 _lib.chassis_metric.restype = ctypes.c_int
+
+# chassis_precision
+_lib.chassis_precision.argtypes = [ChassisIndexPtr]
+_lib.chassis_precision.restype = ctypes.c_int
 
 # chassis_last_error_message
 _lib.chassis_last_error_message.argtypes = []

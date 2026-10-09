@@ -25,6 +25,7 @@ index = VectorIndex("tuned.chassis", dimensions=128, options=options)
 | **`max_connections`** | Max edges per node in the graph. | 16 | Higher = Better recall, higher memory usage. |
 | **`ef_construction`** | Size of the dynamic candidate list during build. | 200 | Higher = Slower build, higher quality graph. |
 | **`ef_search`** | Size of the dynamic candidate list during search. | 50 | Higher = Slower search, better recall. |
+| **`precision`** | `"full"` keeps 32-bit floats, `"half"` 16-bit floats. Fixed when the index is created. | `"full"` | `"half"` halves the vectors' size in the file and in memory, and on an index too large for the CPU's caches searches are a tenth to two thirds faster on most machines measured. Components are rounded to about three decimal digits; recall on the embeddings measured was the same. A component of 65,520 or more in magnitude is refused, and older releases can't open the file. |
 | **`huge_pages`** | Ask Linux to keep the vectors on 2 MB pages. | `False` | On an index too large for the CPU's caches, up to a quarter faster search. Does nothing off Linux, or where the kernel and filesystem don't keep files on huge pages (ext4 on Linux 6.17 does). An index much larger than memory reads 2 MB per miss. |
 
 ## Batch Insertion Strategy

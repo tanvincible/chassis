@@ -36,6 +36,7 @@
 - [ADR-0015: Prefetch Depth for Long Vectors (Proposed)](./adr/015-prefetch-depth-for-long-vectors.md)
 - [ADR-0016: Huge Pages for the Vectors, on Request (Proposed)](./adr/016-huge-pages-on-request.md)
 - [ADR-0017: Compare at Equal Recall; Long Vectors Out of Cache Are Bound by Memory (Proposed)](./adr/017-equal-recall-and-long-vectors.md)
+- [ADR-0018: Half Precision for the Vectors, on Request (Proposed)](./adr/018-half-precision.md)
 
 # Development
 

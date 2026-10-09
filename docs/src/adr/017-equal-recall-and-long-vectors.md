@@ -73,7 +73,7 @@ in cache. The rest is waiting for memory.
 
 What would move a search over long vectors by more than a few percent is fewer bytes per vector:
 half-precision or 8-bit storage. That changes the file format and, for 8 bits, the results. It is
-not decided here.
+not decided here; ADR-0018 adds half precision.
 
 ## Consequences
 

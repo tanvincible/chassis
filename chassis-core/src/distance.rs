@@ -10,6 +10,8 @@
 //!
 //! Expected speedup: 4-6x on high-dimensional vectors (768-1536D)
 
+use crate::half::Precision;
+
 /// How an index compares vectors; fixed when the index is created.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -75,14 +77,71 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 
 /// A distance kernel that a loop computing many distances is compiled around, so that the kernel
 /// is inlined into it and chosen once, not per call (ADR-0013).
-pub(crate) trait Kernel {
-    /// The squared L2 distance, which orders vectors as the distance does and leaves the square
-    /// root to whoever reports one.
+pub(crate) trait Kernel<E = f32> {
+    /// The squared L2 distance from f32s to a stored vector, which orders vectors as the
+    /// distance does and leaves the square root to whoever reports one.
     ///
     /// # Safety
     ///
     /// The slices must be the same length, and the CPU must have what the kernel uses.
-    unsafe fn squared(a: &[f32], b: &[f32]) -> f32;
+    unsafe fn squared(a: &[f32], b: &[E]) -> f32;
+}
+
+/// A component of a stored vector: an `f32`, or a 16-bit float held in a `u16` (ADR-0018).
+pub(crate) trait Element: Copy + Send + Sync + 'static {
+    const PRECISION: Precision;
+
+    /// The Euclidean distance from f32s to a stored vector on this machine, as a pointer: for
+    /// code that computes many distances but isn't compiled per kernel.
+    ///
+    /// # Safety
+    ///
+    /// The returned function reads `a.len()` components from both slices, which must be the same
+    /// length.
+    fn kernel() -> unsafe fn(&[f32], &[Self]) -> f32;
+
+    /// `stored` as f32s: itself, or widened into `scratch`.
+    fn widened<'a>(stored: &'a [Self], scratch: &'a mut Vec<f32>) -> &'a [f32];
+}
+
+impl Element for f32 {
+    const PRECISION: Precision = Precision::Full;
+
+    fn kernel() -> unsafe fn(&[f32], &[f32]) -> f32 {
+        kernel()
+    }
+
+    #[inline]
+    fn widened<'a>(stored: &'a [f32], _: &'a mut Vec<f32>) -> &'a [f32] {
+        stored
+    }
+}
+
+impl Element for u16 {
+    const PRECISION: Precision = Precision::Half;
+
+    fn kernel() -> unsafe fn(&[f32], &[u16]) -> f32 {
+        #[cfg(target_arch = "x86_64")]
+        if has_f16c() {
+            return rooted::<F16c>;
+        }
+        rooted::<Portable>
+    }
+
+    fn widened<'a>(stored: &'a [u16], scratch: &'a mut Vec<f32>) -> &'a [f32] {
+        crate::half::widen(stored, scratch);
+        scratch
+    }
+}
+
+/// The distance to a vector in half precision, with kernel `K`.
+///
+/// # Safety
+///
+/// As `Kernel::squared`.
+unsafe fn rooted<K: Kernel<u16>>(a: &[f32], b: &[u16]) -> f32 {
+    // SAFETY: the caller's.
+    unsafe { K::squared(a, b) }.sqrt()
 }
 
 /// What every CPU of the target has: NEON on aarch64, plain arithmetic elsewhere.
@@ -98,6 +157,19 @@ impl Kernel for Portable {
         }
         #[allow(unreachable_code)]
         squared_scalar(a, b)
+    }
+}
+
+impl Kernel<u16> for Portable {
+    #[inline(always)]
+    unsafe fn squared(a: &[f32], b: &[u16]) -> f32 {
+        #[cfg(target_arch = "aarch64")]
+        {
+            // SAFETY: every aarch64 CPU has NEON; the caller vouches for the lengths.
+            return unsafe { squared_half_neon(a, b) };
+        }
+        #[allow(unreachable_code)]
+        squared_half_scalar(a, b)
     }
 }
 
@@ -119,6 +191,26 @@ impl Kernel for Avx2 {
 #[inline]
 pub(crate) fn has_avx2() -> bool {
     is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
+}
+
+/// `Avx2` for vectors in half precision, which F16C widens. Its loops are compiled for F16C too.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct F16c;
+
+#[cfg(target_arch = "x86_64")]
+impl Kernel<u16> for F16c {
+    #[inline(always)]
+    unsafe fn squared(a: &[f32], b: &[u16]) -> f32 {
+        // SAFETY: the caller vouches for the CPU and the lengths.
+        unsafe { squared_half_avx2(a, b) }
+    }
+}
+
+/// Whether this CPU can run `F16c`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn has_f16c() -> bool {
+    has_avx2() && is_x86_feature_detected!("f16c")
 }
 
 /// The kernel `euclidean_distance` runs on this machine, as a pointer: for code that computes
@@ -154,6 +246,19 @@ fn squared_scalar(a: &[f32], b: &[f32]) -> f32 {
 
     for i in 0..a.len() {
         let diff = a[i] - b[i];
+        sum += diff * diff;
+    }
+
+    sum
+}
+
+/// `squared_scalar` to a vector in half precision.
+#[inline]
+fn squared_half_scalar(a: &[f32], b: &[u16]) -> f32 {
+    let mut sum = 0.0_f32;
+
+    for i in 0..a.len() {
+        let diff = a[i] - crate::half::decode(b[i]);
         sum += diff * diff;
     }
 
@@ -265,6 +370,64 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
     total
 }
 
+/// `squared_avx2` to a vector in half precision: the same sums in the same order, over components
+/// that F16C widens eight at a time.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+unsafe fn squared_half_avx2(a: &[f32], b: &[u16]) -> f32 {
+    use std::arch::x86_64::*;
+
+    // SAFETY (both): the loops below call them within the slices, which are the same length.
+    let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    let stored = |i: usize| unsafe { _mm256_cvtph_ps(_mm_loadu_si128(b.as_ptr().add(i).cast())) };
+
+    let len = a.len();
+    let mut i = 0;
+
+    let mut sum0 = _mm256_setzero_ps();
+    let mut sum1 = _mm256_setzero_ps();
+    let mut sum2 = _mm256_setzero_ps();
+    let mut sum3 = _mm256_setzero_ps();
+
+    while i + 32 <= len {
+        let diff0 = _mm256_sub_ps(query(i), stored(i));
+        let diff1 = _mm256_sub_ps(query(i + 8), stored(i + 8));
+        let diff2 = _mm256_sub_ps(query(i + 16), stored(i + 16));
+        let diff3 = _mm256_sub_ps(query(i + 24), stored(i + 24));
+
+        sum0 = _mm256_fmadd_ps(diff0, diff0, sum0);
+        sum1 = _mm256_fmadd_ps(diff1, diff1, sum1);
+        sum2 = _mm256_fmadd_ps(diff2, diff2, sum2);
+        sum3 = _mm256_fmadd_ps(diff3, diff3, sum3);
+
+        i += 32;
+    }
+
+    while i + 8 <= len {
+        let diff = _mm256_sub_ps(query(i), stored(i));
+        sum0 = _mm256_fmadd_ps(diff, diff, sum0);
+        i += 8;
+    }
+
+    let sum_combined = _mm256_add_ps(_mm256_add_ps(sum0, sum1), _mm256_add_ps(sum2, sum3));
+    let sum_high = _mm256_extractf128_ps(sum_combined, 1);
+    let sum_low = _mm256_castps256_ps128(sum_combined);
+    let sum128 = _mm_add_ps(sum_low, sum_high);
+    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+    let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x55));
+
+    let mut total = _mm_cvtss_f32(sum32);
+
+    while i < len {
+        let diff = a[i] - crate::half::decode(b[i]);
+        total += diff * diff;
+        i += 1;
+    }
+
+    total
+}
+
 /// NEON implementation with 4-way accumulator unrolling (aarch64)
 ///
 /// # Optimization Strategy
@@ -350,6 +513,62 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
     total
 }
 
+/// `squared_neon` to a vector in half precision: the same sums in the same order, over components
+/// widened four at a time.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn squared_half_neon(a: &[f32], b: &[u16]) -> f32 {
+    use crate::half::widen4;
+    use std::arch::aarch64::*;
+
+    // SAFETY (both): the loops below call them within the slices, which are the same length.
+    let query = |i: usize| unsafe { vld1q_f32(a.as_ptr().add(i)) };
+    let stored = |i: usize| unsafe { widen4(b.as_ptr().add(i)) };
+
+    let len = a.len();
+    let mut i = 0;
+
+    let mut sum0 = vdupq_n_f32(0.0);
+    let mut sum1 = vdupq_n_f32(0.0);
+    let mut sum2 = vdupq_n_f32(0.0);
+    let mut sum3 = vdupq_n_f32(0.0);
+
+    while i + 16 <= len {
+        let diff0 = vsubq_f32(query(i), stored(i));
+        let diff1 = vsubq_f32(query(i + 4), stored(i + 4));
+        let diff2 = vsubq_f32(query(i + 8), stored(i + 8));
+        let diff3 = vsubq_f32(query(i + 12), stored(i + 12));
+
+        sum0 = vfmaq_f32(sum0, diff0, diff0);
+        sum1 = vfmaq_f32(sum1, diff1, diff1);
+        sum2 = vfmaq_f32(sum2, diff2, diff2);
+        sum3 = vfmaq_f32(sum3, diff3, diff3);
+
+        i += 16;
+    }
+
+    while i + 4 <= len {
+        let diff = vsubq_f32(query(i), stored(i));
+        sum0 = vfmaq_f32(sum0, diff, diff);
+        i += 4;
+    }
+
+    let sum_combined = vaddq_f32(vaddq_f32(sum0, sum1), vaddq_f32(sum2, sum3));
+    let sum_pair = vpadd_f32(vget_low_f32(sum_combined), vget_high_f32(sum_combined));
+    let sum_total = vpadd_f32(sum_pair, sum_pair);
+
+    let mut total = vget_lane_f32(sum_total, 0);
+
+    while i < len {
+        let diff = a[i] - crate::half::decode(b[i]);
+        total += diff * diff;
+        i += 1;
+    }
+
+    total
+}
+
 /// Compute cosine distance (1 - cosine similarity).
 ///
 /// Returns `1.0` when either vector has zero norm because cosine similarity is
@@ -389,6 +608,58 @@ mod tests {
         let expected = ((3.0_f32).powi(2) * 3.0).sqrt();
 
         assert!((dist - expected).abs() < 1e-6);
+    }
+
+    /// The half kernels are the f32 kernels with a widening load, so over the same values they
+    /// must give the same bits: what an index finds can't depend on which one ran.
+    #[test]
+    fn test_half_kernels_give_the_bits_of_the_f32_kernels() {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for len in (0..=70).chain([128, 960, 1536]) {
+            // Any finite half, subnormals among them.
+            let stored: Vec<u16> = (0..len)
+                .map(|_| next() as u16)
+                .map(|h| if h & 0x7c00 == 0x7c00 { h & 0x83ff } else { h })
+                .collect();
+            let query: Vec<f32> =
+                (0..len).map(|_| (next() >> 40) as f32 / (1 << 20) as f32 - 8.0).collect();
+            let widened: Vec<f32> = stored.iter().map(|&h| crate::half::decode(h)).collect();
+            let bits = |d: f32| d.to_bits();
+
+            assert_eq!(
+                bits(squared_half_scalar(&query, &stored)),
+                bits(squared_scalar(&query, &widened)),
+                "scalar, {len}"
+            );
+            // SAFETY (here and below): the slices are the same length, and each kernel is used
+            // only on a CPU that has it.
+            let (half, full) = unsafe {
+                (
+                    <Portable as Kernel<u16>>::squared(&query, &stored),
+                    <Portable as Kernel>::squared(&query, &widened),
+                )
+            };
+            assert_eq!(bits(half), bits(full), "portable, {len}");
+            #[cfg(target_arch = "x86_64")]
+            if has_f16c() {
+                let (half, full) =
+                    unsafe { (F16c::squared(&query, &stored), Avx2::squared(&query, &widened)) };
+                assert_eq!(bits(half), bits(full), "AVX2, {len}");
+            }
+            // The pointer may be to a kernel `euclidean_distance` doesn't use: on a CPU with
+            // AVX2 and no F16C, the scalar one.
+            let (half, full) = (
+                unsafe { <u16 as Element>::kernel()(&query, &stored) },
+                squared_scalar(&query, &widened).sqrt(),
+            );
+            assert!((half - full).abs() <= 1e-4 * full, "pointer, {len}: {half} and {full}");
+        }
     }
 
     #[test]

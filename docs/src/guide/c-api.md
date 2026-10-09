@@ -99,8 +99,8 @@ cl myapp.c /I include /link /LIBPATH:target\release chassis_ffi.lib
 ```c
 ChassisIndex* chassis_open(const char* path, uint32_t dimensions);
 ```
-Open or create an index. Returns `NULL` on error, including when the file is a cosine index: open
-those with `chassis_open_with_metric` or `chassis_open_reader`.
+Open or create an index. Returns `NULL` on error, including when the file is a cosine index or
+one in half precision: open those with `chassis_open_with_precision` or `chassis_open_reader`.
 
 #### `chassis_open_with_options`
 ```c
@@ -128,6 +128,26 @@ ChassisIndex* chassis_open_with_metric(
 Like `chassis_open_with_options`, with a distance metric: `0` for Euclidean, `1` for cosine
 (`1 - cosine similarity`; vectors are stored at unit length and zero vectors are rejected). The
 metric is fixed when the index is created; reopening with another one fails.
+
+#### `chassis_open_with_precision`
+```c
+ChassisIndex* chassis_open_with_precision(
+    const char* path,
+    uint32_t dimensions,
+    uint32_t max_connections,
+    uint32_t ef_construction,
+    uint32_t ef_search,
+    uint32_t metric,
+    uint32_t precision
+);
+```
+Like `chassis_open_with_metric`, with a precision: `0` keeps each component of a vector as a
+32-bit float, `1` as a 16-bit float ([ADR-0018](../adr/018-half-precision.md)). Half precision
+halves the vectors' size in the file and in memory, and a search over an index too large for the
+CPU's caches is faster for it. Each component is rounded to about three decimal digits, and a
+vector with a component of 65,520 or more in magnitude is refused. The precision is fixed when
+the index is created; reopening with another one fails, and a release without this function
+can't open a file in half precision.
 
 #### `chassis_open_reader`
 ```c
@@ -306,6 +326,12 @@ Get vector dimensionality.
 int chassis_metric(const ChassisIndex* index);
 ```
 The metric the index was created with: `0` Euclidean, `1` cosine, `-1` if `index` is `NULL`.
+
+#### `chassis_precision`
+```c
+int chassis_precision(const ChassisIndex* index);
+```
+The precision the index keeps its vectors in: `0` full, `1` half, `-1` if `index` is `NULL`.
 
 ### Error Handling
 

@@ -8,8 +8,9 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 ## Current Capabilities
 
-* **One file, in-process**: Vectors and an HNSW graph live in a single memory-mapped file. There is no server. The file grows by appending regions, so nothing is copied or remapped as it grows. Format version 3; files from earlier releases are migrated on first open ([file format](docs/src/architecture/file-format.md)).
+* **One file, in-process**: Vectors and an HNSW graph live in a single memory-mapped file. There is no server. The file grows by appending regions, so nothing is copied or remapped as it grows. Format version 3, or 4 for an index in half precision; files from earlier releases are migrated on first open ([file format](docs/src/architecture/file-format.md)).
 * **Search**: Approximate nearest neighbor search with HNSW, by Euclidean (L2) or cosine distance, chosen when the index is created.
+* **Half precision**: `IndexOptions::precision`, chosen when the index is created (`precision="half"` in Python, `chassis_open_with_precision` in C), keeps vectors as 16-bit floats: half the file and half the memory, with the same recall on the embeddings measured and faster searches once an index is too large for the CPU's caches ([ADR-0018](docs/src/adr/018-half-precision.md)).
 * **Filtered search**: `search_filtered(query, k, |id| ...)` returns the nearest vectors whose ids pass a filter, such as the ids your own database allows (`allowed=` in Python, `chassis_search_filtered` in C). When walking the graph would cost more, as when few vectors match, it checks every vector instead and is exact ([ADR-0009](docs/src/adr/009-filtered-search.md)).
 * **Parallel builds**: `add_batch(vectors)` links a batch on every core (`add_batch` in Python, `chassis_add_batch` in C) ([ADR-0010](docs/src/adr/010-parallel-batch-builds.md)).
 * **Compaction**: `compact()` rewrites the index without its deleted vectors and with a rebuilt graph, then swaps the file in; readers in other processes follow it ([ADR-0011](docs/src/adr/011-compaction.md)).

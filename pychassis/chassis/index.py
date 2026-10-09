@@ -18,6 +18,7 @@ from chassis.exceptions import (
 
 
 _METRICS = {"euclidean": 0, "cosine": 1}
+_PRECISIONS = {"full": 0, "half": 1}
 
 
 @dataclass
@@ -34,6 +35,12 @@ class IndexOptions:
         metric: "euclidean" (L2) or "cosine" (1 - cosine similarity; vectors
             are stored at unit length and zero vectors are rejected). Fixed
             when the index is created. Default: "euclidean"
+        precision: "full" keeps each component of a vector as a 32-bit float,
+            "half" as a 16-bit float: half the file and half the memory, each
+            component rounded to about three decimal digits, and a vector with
+            a component of 65,520 or more in magnitude refused. Fixed when the
+            index is created; a read-only index takes it from the file.
+            Default: "full"
         huge_pages: Ask the operating system to keep the vectors on huge
             pages. On an index too large for the CPU's caches, searches are
             up to a quarter faster. Only on Linux, and only where the kernel and
@@ -47,6 +54,7 @@ class IndexOptions:
     ef_construction: int = 200
     ef_search: int = 50
     metric: str = "euclidean"
+    precision: str = "full"
     huge_pages: bool = False
 
     def validate(self) -> None:
@@ -67,6 +75,10 @@ class IndexOptions:
             raise ValueError(f"ef_search must be >= 1, got {self.ef_search}")
         if self.metric not in _METRICS:
             raise ValueError(f"metric must be one of {list(_METRICS)}, got {self.metric!r}")
+        if self.precision not in _PRECISIONS:
+            raise ValueError(
+                f"precision must be one of {list(_PRECISIONS)}, got {self.precision!r}"
+            )
 
 
 @dataclass
@@ -164,13 +176,14 @@ class VectorIndex:
             ptr = _ffi._lib.chassis_open(path_bytes, dimensions)
         else:
             # Use custom options
-            ptr = _ffi._lib.chassis_open_with_metric(
+            ptr = _ffi._lib.chassis_open_with_precision(
                 path_bytes,
                 dimensions,
                 options.max_connections,
                 options.ef_construction,
                 options.ef_search,
                 _METRICS[options.metric],
+                _PRECISIONS[options.precision],
             )
 
         if not ptr:
@@ -202,6 +215,12 @@ class VectorIndex:
         """The distance metric the index was created with: "euclidean" or "cosine"."""
         self._check_closed()
         return {v: k for k, v in _METRICS.items()}[_ffi._lib.chassis_metric(self._ptr)]
+
+    @property
+    def precision(self) -> str:
+        """What the index keeps of each component of a vector: "full" or "half"."""
+        self._check_closed()
+        return {v: k for k, v in _PRECISIONS.items()}[_ffi._lib.chassis_precision(self._ptr)]
 
     def __del__(self):
         """Clean up resources when index is garbage collected."""

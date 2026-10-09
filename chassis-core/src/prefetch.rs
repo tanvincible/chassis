@@ -63,16 +63,16 @@ impl Prefetch {
         Self { near: 0, lines: 0 }
     }
 
-    /// The policy for vectors of `dims` floats: no more lines than one has. Worked out once per
-    /// search, so that asking for a vector is two counted loops.
-    pub(crate) fn for_dims(self, dims: usize) -> Self {
-        let lines = self.lines.min((dims * size_of::<f32>()).div_ceil(LINE));
+    /// The policy for vectors of `dims` components of type `E`: no more lines than one has.
+    /// Worked out once per search, so that asking for a vector is two counted loops.
+    pub(crate) fn for_dims<E>(self, dims: usize) -> Self {
+        let lines = self.lines.min((dims * size_of::<E>()).div_ceil(LINE));
         Self { near: self.near.min(lines), lines }
     }
 
     /// Asks for the start of `vector`.
     #[inline(always)]
-    pub(crate) fn vector(self, vector: &[f32]) {
+    pub(crate) fn vector<E>(self, vector: &[E]) {
         let start = vector.as_ptr().cast::<u8>();
         // A prefetch is only a hint and never faults, wherever it points.
         for line in 0..self.near {
@@ -156,7 +156,7 @@ mod tests {
         for dims in [0, 1, 3, 16, 17, 128, 1536] {
             let vector = vec![1.0f32; dims];
             policy.vector(&vector);
-            policy.for_dims(dims).vector(&vector);
+            policy.for_dims::<f32>(dims).vector(&vector);
             list(vector.as_ptr().cast(), dims * 4);
         }
     }
@@ -164,10 +164,17 @@ mod tests {
     #[test]
     fn test_a_short_vector_gets_no_more_lines_than_it_has() {
         let into_l1 = Prefetch { near: 8, lines: 8 };
-        assert_eq!(into_l1.for_dims(0), Prefetch { near: 0, lines: 0 });
-        assert_eq!(into_l1.for_dims(17), Prefetch { near: 2, lines: 2 });
-        assert_eq!(into_l1.for_dims(1536), into_l1);
-        assert_eq!(Prefetch { near: 0, lines: 8 }.for_dims(16), Prefetch { near: 0, lines: 1 });
+        assert_eq!(into_l1.for_dims::<f32>(0), Prefetch { near: 0, lines: 0 });
+        assert_eq!(into_l1.for_dims::<f32>(17), Prefetch { near: 2, lines: 2 });
+        assert_eq!(into_l1.for_dims::<f32>(1536), into_l1);
+        let into_l2 = Prefetch { near: 0, lines: 8 };
+        assert_eq!(into_l2.for_dims::<f32>(16), Prefetch { near: 0, lines: 1 });
+        // In half precision a vector is half as many lines.
+        assert_eq!(into_l2.for_dims::<u16>(128), Prefetch { near: 0, lines: 4 });
+        assert_eq!(
+            Prefetch { near: 0, lines: 256 }.for_dims::<u16>(1536),
+            Prefetch { near: 0, lines: 48 }
+        );
     }
 
     #[test]
@@ -185,7 +192,7 @@ mod tests {
         assert_eq!(Prefetch::for_x86(Some((0x17, 0x31))), into_l2);
         assert_eq!(Prefetch::for_x86(Some((0x1b, 0x00))), into_l1);
         // A 128-dimension vector is eight lines whatever the policy.
-        assert_eq!(deeper.for_dims(128), into_l2);
+        assert_eq!(deeper.for_dims::<f32>(128), into_l2);
     }
 
     #[cfg(target_arch = "x86_64")]

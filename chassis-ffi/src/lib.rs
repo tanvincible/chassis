@@ -27,7 +27,9 @@
 //! - `chassis_free` must not race with any other call on the same handle.
 //! - Each thread has its own error message storage
 
-use chassis_core::{DistanceMetric, IndexOptions, IndexReader, SearchResult, VectorIndex};
+use chassis_core::{
+    DistanceMetric, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
+};
 use libc::{c_char, c_float, c_int, size_t};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -61,6 +63,7 @@ trait Readable {
     fn len(&mut self) -> u64;
     fn dimensions(&self) -> u32;
     fn metric(&self) -> DistanceMetric;
+    fn precision(&self) -> Precision;
 }
 
 impl Readable for &VectorIndex {
@@ -83,6 +86,9 @@ impl Readable for &VectorIndex {
     }
     fn metric(&self) -> DistanceMetric {
         VectorIndex::metric(self)
+    }
+    fn precision(&self) -> Precision {
+        VectorIndex::precision(self)
     }
 }
 
@@ -110,6 +116,9 @@ impl Readable for IndexReader {
     }
     fn metric(&self) -> DistanceMetric {
         IndexReader::metric(self)
+    }
+    fn precision(&self) -> Precision {
+        IndexReader::precision(self)
     }
 }
 
@@ -398,6 +407,45 @@ pub unsafe extern "C" fn chassis_open_with_metric(
     ef_search: u32,
     metric: u32,
 ) -> *mut ChassisIndex {
+    // SAFETY: the caller's.
+    unsafe {
+        chassis_open_with_precision(
+            path,
+            dimensions,
+            max_connections,
+            ef_construction,
+            ef_search,
+            metric,
+            0,
+        )
+    }
+}
+
+/// Open or create a Chassis vector index with custom options, a distance metric and a precision
+///
+/// # Arguments
+///
+/// - `precision`: `0` to keep each component of a vector as a 32-bit float, `1` as a 16-bit
+///   float (half precision). Half precision halves the vectors' size in the file and in memory;
+///   each component is rounded to about three decimal digits, and a vector with a component of
+///   65,520 or more in magnitude is refused. The precision is fixed when the index is created;
+///   reopening an existing index with another one fails. A release without this function can't
+///   open a file in half precision.
+/// - The other arguments are as for `chassis_open_with_metric()`.
+///
+/// # Safety
+///
+/// Same safety requirements as `chassis_open()`
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_open_with_precision(
+    path: *const c_char,
+    dimensions: u32,
+    max_connections: u32,
+    ef_construction: u32,
+    ef_search: u32,
+    metric: u32,
+    precision: u32,
+) -> *mut ChassisIndex {
     ffi_guard(|| {
         let Ok(max_connections) = u16::try_from(max_connections) else {
             set_last_error(format!("max_connections must be <= {}", u16::MAX));
@@ -411,11 +459,20 @@ pub unsafe extern "C" fn chassis_open_with_metric(
                 return ptr::null_mut();
             }
         };
+        let precision = match precision {
+            0 => Precision::Full,
+            1 => Precision::Half,
+            other => {
+                set_last_error(format!("Unknown precision {other}: use 0 (full) or 1 (half)"));
+                return ptr::null_mut();
+            }
+        };
         let options = IndexOptions {
             max_connections,
             ef_construction: ef_construction as usize,
             ef_search: ef_search as usize,
             metric,
+            precision,
             ..Default::default()
         };
         unsafe { open_handle(path, dimensions, options, false) }
@@ -1212,6 +1269,25 @@ pub unsafe extern "C" fn chassis_metric(ptr: *const ChassisIndex) -> c_int {
     ffi_guard(|| unsafe { read(ptr, metric) }.unwrap_or(-1)).unwrap_or(-1)
 }
 
+/// Get the precision the index keeps its vectors in
+///
+/// # Returns
+///
+/// - `0` for full precision, `1` for half, as for `chassis_open_with_precision()`
+/// - `-1` if `ptr` is NULL
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_precision(ptr: *const ChassisIndex) -> c_int {
+    let precision = |index: &mut dyn Readable| match index.precision() {
+        Precision::Half => 1,
+        _ => 0,
+    };
+    ffi_guard(|| unsafe { read(ptr, precision) }.unwrap_or(-1)).unwrap_or(-1)
+}
+
 //
 //  ERROR HANDLING
 //
@@ -1377,6 +1453,38 @@ mod tests {
         let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
         assert_eq!(unsafe { chassis_metric(reader) }, 1);
         unsafe { chassis_free(reader) };
+    }
+
+    #[test]
+    fn test_ffi_half_precision() {
+        let (_dir, path) = temp_index_path();
+        let open = |precision| unsafe {
+            chassis_open_with_precision(path.as_ptr(), 2, 16, 200, 50, 0, precision)
+        };
+        assert!(open(2).is_null());
+        let ptr = open(1);
+        assert!(!ptr.is_null());
+        assert_eq!(unsafe { chassis_precision(ptr) }, 1);
+        // A third is not a half; it is kept as the nearest one.
+        assert_ne!(unsafe { chassis_add(ptr, [1.0f32 / 3.0, 0.0].as_ptr(), 2) }, u64::MAX);
+        assert_eq!(unsafe { chassis_add(ptr, [1e6f32, 0.0].as_ptr(), 2) }, u64::MAX);
+        assert_eq!(unsafe { chassis_len(ptr) }, 1);
+        let (mut ids, mut dists) = ([0u64; 1], [0.0f32; 1]);
+        let query = [1.0f32 / 3.0, 0.0];
+        let n = unsafe {
+            chassis_search(ptr, query.as_ptr(), 2, 1, ids.as_mut_ptr(), dists.as_mut_ptr())
+        };
+        assert_eq!((n, ids[0]), (1, 0));
+        assert!(dists[0] > 0.0 && dists[0] < 1e-4, "{dists:?}");
+        assert_eq!(unsafe { chassis_flush(ptr) }, 0);
+        unsafe { chassis_free(ptr) };
+
+        assert!(open(0).is_null(), "reopened with another precision");
+        assert!(unsafe { chassis_open(path.as_ptr(), 2) }.is_null());
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+        assert_eq!(unsafe { chassis_precision(reader) }, 1);
+        unsafe { chassis_free(reader) };
+        assert_eq!(unsafe { chassis_precision(ptr::null()) }, -1);
     }
 
     #[test]
