@@ -1,0 +1,183 @@
+name: x86 half2
+
+# Experiment branch only: indexes in half precision (lab/exp-half) beside the same code in full
+# precision, the code before it, and hnswlib. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/half2.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  STEPS: "hp=459e23e fix=c6bc1d7 half=b7b3191"
+
+jobs:
+  tests:
+    name: tests (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: lab/exp-half
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: The half-precision tests, on this machine's kernels
+        shell: bash
+        run: |
+          grep -m1 "model name" /proc/cpuinfo || true
+          cargo test --release -p chassis-core --lib --test half_precision_tests --test model_tests --test huge_pages_tests
+
+  dims:
+    name: half (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [dbpedia-openai3-1536, gist-960, sift-128]
+        runner: [ubuntu-latest]
+        shard: [a, b, c, d]
+        include:
+          - { name: dbpedia-openai3-1536, sizes: "2000 20000 99000" }
+          - { name: gist-960, sizes: "20000 200000" }
+          - { name: sift-128, sizes: "20000 1000000" }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, sizes: "2000 20000 99000" }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: b, sizes: "2000 20000 99000" }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: a, sizes: "20000 200000" }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: b, sizes: "20000 200000" }
+          - { name: sift-128, runner: ubuntu-24.04-arm, shard: a, sizes: "20000 1000000" }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+          df -h / | tail -1
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build Chassis before and after
+        run: |
+          git fetch -q origin lab/exp-half
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          build() { # name, commit
+            (cd "$RUNNER_TEMP/src" && git checkout -q --detach "$2" \
+              && cp "$GITHUB_WORKSPACE/chassis-core/examples/lab.rs" chassis-core/examples/lab.rs \
+              && RUSTFLAGS="--cfg lab_hp $3" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t" \
+              && rm chassis-core/examples/lab.rs)
+            cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab-$1"
+          }
+          for step in $STEPS; do
+            name="${step%%=*}"
+            if [ "$name" = half ]; then build "$name" "${step#*=}" "--cfg lab_half"; else build "$name" "${step#*=}" ""; fi
+          done
+
+      - name: Search
+        run: |
+          L="$RUNNER_TEMP/lab-hp"
+          "$L" kernel base | tee -a results/lab.tsv
+          "$RUNNER_TEMP/hnsw_lab" kernel | tee -a results/lab.tsv
+          for n in ${{ matrix.sizes }}; do
+            truth="$RUNNER_TEMP/gt-$n.u32"
+            "$L" truth "$DATA" "$NAME" "$n" "$truth"
+            "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | sed 's/\tbase\t/\thp\t/' | tee -a results/lab.tsv
+            LAB_HALF=1 "$RUNNER_TEMP/lab-half" build "$DATA" "$NAME" "$RUNNER_TEMP/h-$n.chassis" "$n" | sed 's/\tbase\t/\thalf\t/' | tee -a results/lab.tsv
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
+            printf 'size\thp\t%s\tbytes\t0\t0\t%s\t0\n' "$n" "$(stat -c %s "$RUNNER_TEMP/c-$n.chassis")" | tee -a results/lab.tsv
+            printf 'size\thalf\t%s\tbytes\t0\t0\t%s\t0\n' "$n" "$(stat -c %s "$RUNNER_TEMP/h-$n.chassis")" | tee -a results/lab.tsv
+            C="search $DATA $NAME $RUNNER_TEMP/c-$n.chassis $truth"
+            F="search $DATA $NAME $RUNNER_TEMP/h-$n.chassis $truth"
+            H="search $RUNNER_TEMP/h-$n.bin $DATA/$NAME.train.f32 $DATA/$NAME.test.f32 $truth"
+            run() { # binary, index arguments, tag, env...
+              bin=$1; args=$2; tag=$3; shift 3
+              env "$@" "$RUNNER_TEMP/lab-$bin" $args "$tag" 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+            }
+            for round in 1 2 3; do
+              "$RUNNER_TEMP/hnsw_lab" $H native 2>> results/pages.txt | tee -a results/lab.tsv
+              run hp "$C" hp LAB_X=1
+              run half "$C" full LAB_X=1
+              run half "$F" half LAB_HALF=1
+              run hp "$C" hp+huge LAB_HUGE=1
+              run half "$F" half+huge LAB_HALF=1 LAB_HUGE=1
+            done
+          done
+          # One-thread builds, which run the same loop and the pruning.
+          for round in 1 2; do
+            "$RUNNER_TEMP/lab-hp" seq "$DATA" "$NAME" 20000 hp | tee -a results/lab.tsv
+            "$RUNNER_TEMP/lab-fix" seq "$DATA" "$NAME" 20000 fix | tee -a results/lab.tsv
+            "$RUNNER_TEMP/lab-half" seq "$DATA" "$NAME" 20000 full | tee -a results/lab.tsv
+            LAB_HALF=1 "$RUNNER_TEMP/lab-half" seq "$DATA" "$NAME" 20000 half | tee -a results/lab.tsv
+          done
+          {
+            echo '```'
+            cat results/lab.tsv
+            sort -u results/pages.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: half2-${{ matrix.name }}-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/

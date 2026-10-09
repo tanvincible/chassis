@@ -339,6 +339,12 @@ fn options(ef_search: usize) -> IndexOptions {
     if std::env::var_os("LAB_HUGE").is_some() {
         options.huge_pages = true;
     }
+    // LAB_HALF=1 creates and opens indexes in half precision, in a build that has it
+    // (`--cfg lab_half`).
+    #[cfg(lab_half)]
+    if std::env::var_os("LAB_HALF").is_some() {
+        options.precision = chassis_core::Precision::Half;
+    }
     options
 }
 
