@@ -34,6 +34,7 @@
 - [ADR-0013: Prefetching into L2, a Leaner Search Loop, and a Smaller Fill (Proposed)](./adr/013-prefetching-and-a-leaner-search-loop.md)
 - [ADR-0014: Packed Heap Entries, Squared Distances, and a Search Loop That Inlines (Proposed)](./adr/014-packed-heap-entries-and-squared-distances.md)
 - [ADR-0015: Prefetch Depth for Long Vectors (Proposed)](./adr/015-prefetch-depth-for-long-vectors.md)
+- [ADR-0016: Huge Pages for the Vectors, on Request (Proposed)](./adr/016-huge-pages-on-request.md)
 
 # Development
 

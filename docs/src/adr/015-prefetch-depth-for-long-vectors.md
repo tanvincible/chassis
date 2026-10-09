@@ -142,7 +142,8 @@ What would keep the gain and not the cost: readers, whose mappings are never wri
 for huge pages on everything; a writer asks for them on the vectors only, and only on the 2 MB
 stretches that a batch is about to fill or that are already committed, so that the stretch being
 appended to stays on small pages; and an option turns it off, for an index much larger than
-memory, where each miss would read 2 MB. That is its own change and its own ADR.
+memory, where each miss would read 2 MB. That is its own change and its own ADR: ADR-0016,
+which has readers ask for the vectors only, as writers do, since the pages are shared.
 
 ## What Was Tried and Left Out
 
