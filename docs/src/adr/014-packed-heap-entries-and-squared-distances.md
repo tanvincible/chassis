@@ -260,4 +260,5 @@ One thread, 100,000 vectors, in seconds: the best of two runs on each machine.
 * The search loop is compiled twice on x86, once per kernel, and the binary grows by that.
 * A packed entry holds a 32-bit slot. The format already limits an index to 2³² − 1 slots.
 * The upper layers' hints cost a small index 1 to 3% at a small `ef`.
-* The measurements are one dataset at 128 dimensions on shared runners.
+* The measurements are one dataset at 128 dimensions on shared runners (ADR-0015 has 960 and
+  1,536).
