@@ -1,0 +1,159 @@
+name: x86 buildprof
+
+# Experiment branch only: why a batch build of long vectors takes longer than hnswlib's on x86.
+# Builds timed with their user and kernel time, on disk and on tmpfs, and profiled by function.
+# Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/buildprof.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  CHASSIS: main
+jobs:
+  dims:
+    name: buildprof (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [dbpedia-openai3-1536, sift-128]
+        runner: [ubuntu-latest]
+        shard: [a, b, c]
+        include:
+          - { name: dbpedia-openai3-1536, n: 20000 }
+          - { name: sift-128, n: 200000 }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, n: 20000 }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+          df -h / | tail -1
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Install perf
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq time
+          sudo apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" \
+            || sudo apt-get install -y -qq linux-tools-common linux-tools-azure \
+            || sudo apt-get install -y -qq linux-tools-common linux-tools-generic
+          PERF=$(find /usr/lib -name perf -path '*tools*' 2>/dev/null | sort | tail -1)
+          PERF=$(readlink -f "${PERF:-/usr/bin/perf}")
+          echo "PERF=$PERF" >> "$GITHUB_ENV"
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+
+      - name: Build Chassis
+        run: |
+          git fetch -q origin "$CHASSIS"
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_half" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
+          cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
+          cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
+
+      - name: Builds, timed and profiled
+        env:
+          N: ${{ matrix.n }}
+        run: |
+          L="$RUNNER_TEMP/lab"; H="$RUNNER_TEMP/hnsw_lab"; T="$RUNNER_TEMP"
+          timed() { # tag, env..., then the command after --
+            tag=$1; shift; envs=()
+            while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
+            env "${envs[@]}" /usr/bin/time -f "time\t$tag\t%e\t%U\t%S\t%M\t%F\t%R\t%c\t%w" -o "$T/time.txt" "$@" > "$T/out.txt" 2>/dev/null || true
+            cat "$T/time.txt" | tee -a results/build.tsv
+            grep -E "build_(batch|seq)_s" "$T/out.txt" | sed "s/^/out\t$tag\t/" | tee -a results/build.tsv || true
+          }
+          echo -e "time\ttag\telapsed_s\tuser_s\tsys_s\tmaxrss_kb\tmajor\tminor\tinvoluntary\tvoluntary" | tee -a results/build.tsv
+          for round in 1 2; do
+            timed chassis-disk LAB_X=1 -- "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N"
+            timed chassis-tmpfs LAB_X=1 -- "$L" build "$DATA" "$NAME" /dev/shm/c.chassis "$N"
+            rm -f /dev/shm/c.chassis
+            timed chassis-huge LAB_HUGE=1 -- "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N"
+            timed chassis-half LAB_HALF=1 -- "$L" build "$DATA" "$NAME" "$T/h.chassis" "$N"
+            timed chassis-half-tmpfs LAB_HALF=1 -- "$L" build "$DATA" "$NAME" /dev/shm/h.chassis "$N"
+            rm -f /dev/shm/h.chassis
+            timed hnswlib LAB_X=1 -- "$H" build "$DATA/$NAME.train.f32" "$N" "$T/h.bin" "$(nproc)"
+            timed hnswlib-nothp LAB_NO_THP=1 -- "$H" build "$DATA/$NAME.train.f32" "$N" "$T/h.bin" "$(nproc)"
+          done
+          # One thread: the same work without the threads waiting on each other.
+          small=$(( N < 20000 ? N : 20000 ))
+          timed chassis-seq LAB_X=1 -- "$L" seq "$DATA" "$NAME" "$small" full
+          timed chassis-seq-half LAB_HALF=1 -- "$L" seq "$DATA" "$NAME" "$small" half
+          timed hnswlib-seq LAB_X=1 -- "$H" build "$DATA/$NAME.train.f32" "$small" "$T/h1.bin" 1
+          # Where the time goes, by function, kernel included.
+          prof() { # tag, env..., then the command after --
+            tag=$1; shift; envs=()
+            while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
+            env "${envs[@]}" "$PERF" record -q -e cpu-clock -F 999 -o "$T/$tag.data" "$@" > /dev/null 2>&1 || true
+            "$PERF" report -i "$T/$tag.data" --stdio --no-children --sort dso 2>/dev/null | grep -v "^#" | grep -v "^$" | head -12 | sed "s/^/dso\t$tag\t/" | tee -a results/prof.txt || true
+            "$PERF" report -i "$T/$tag.data" --stdio --no-children --sort symbol -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | head -40 | sed "s/^/sym\t$tag\t/" | tee -a results/prof.txt || true
+          }
+          prof chassis LAB_X=1 -- "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N"
+          prof chassis-half LAB_HALF=1 -- "$L" build "$DATA" "$NAME" "$T/h.chassis" "$N"
+          prof hnswlib LAB_X=1 -- "$H" build "$DATA/$NAME.train.f32" "$N" "$T/h.bin" "$(nproc)"
+          { echo '```'; cat results/build.tsv; echo; cat results/prof.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: buildprof-${{ matrix.name }}-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/

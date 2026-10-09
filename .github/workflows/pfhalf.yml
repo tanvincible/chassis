@@ -1,0 +1,126 @@
+name: x86 pfhalf
+
+# Experiment branch only: how much of a half-precision vector to ask for ahead, per CPU. The
+# policy was tuned for f32 vectors, which are twice as many lines. Runs when this file changes;
+# edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/pfhalf.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  CHASSIS: lab/exp-pfhalf
+jobs:
+  dims:
+    name: pfhalf (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [dbpedia-openai3-1536, gist-960]
+        runner: [ubuntu-latest]
+        shard: [a, b, c, d]
+        include:
+          - { name: dbpedia-openai3-1536, sizes: "2000 99000" }
+          - { name: gist-960, sizes: "200000" }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, sizes: "2000 99000" }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: b, sizes: "2000 99000" }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: a, sizes: "200000" }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: b, sizes: "200000" }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+          df -h / | tail -1
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build Chassis
+        run: |
+          git fetch -q origin "$CHASSIS"
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_half" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
+          cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
+          cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
+
+      - name: Sweep the prefetch policy over half-precision indexes
+        run: |
+          L="$RUNNER_TEMP/lab"
+          for n in ${{ matrix.sizes }}; do
+            truth="$RUNNER_TEMP/gt-$n.u32"
+            "$L" truth "$DATA" "$NAME" "$n" "$truth"
+            LAB_HALF=1 "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/h-$n.chassis" "$n" > /dev/null
+            H="search $DATA $NAME $RUNNER_TEMP/h-$n.chassis $truth"
+            for round in 1 2 3; do
+              LAB_HALF=1 "$L" $H default 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+              # near,lines: how many lines of a vector to ask for, and how many of them into L1.
+              for pf in 0,4 0,8 0,16 0,24 0,32 0,48 8,8 16,16 48,48; do
+                LAB_HALF=1 LAB_PF=$pf "$L" $H "pf-$pf" 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+              done
+            done
+          done
+          { echo '```'; cat results/lab.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pfhalf-${{ matrix.name }}-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/
