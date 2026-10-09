@@ -127,6 +127,11 @@ waits for memory, and an index of long vectors that fits in cache searches 19% m
 
 ## Not yet measured at all
 
+* Any engine but hnswlib with the current code. usearch was measured once, on one Mac, before the
+  performance work; FAISS, sqlite-vec, LanceDB and Annoy never.
+* Anything past a million vectors, or a file past about a gigabyte.
+* Why a batch build of long vectors in full precision takes 1.4 to 1.7 times as long as hnswlib's
+  on x86 (1,536 dimensions, 4 vCPUs), when at 128 dimensions it takes half to nine tenths.
 * A consumer x86 laptop or desktop. Every x86 figure is from a server CPU.
 * Apple silicon out of Low Power Mode, and more than one machine of it.
 * Real power loss; it is only simulated.
