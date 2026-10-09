@@ -165,9 +165,10 @@ class SqliteVec:
 
 
 class Lance:
-    """LanceDB with its IVF_HNSW_SQ index; the setting is nprobes."""
+    """LanceDB with its IVF_HNSW_SQ index, which keeps 8-bit vectors. The setting is ef; "256r"
+    also re-ranks ten times as many candidates by their full vectors."""
 
-    file, settings, queries = "lance", [10, 20, 50], 200
+    file, settings, queries = "lance", [32, 64, 128, 256, "256r"], 200
 
     def build(self, train, path):
         import lancedb
@@ -180,19 +181,26 @@ class Lance:
                 "vector": pa.FixedSizeListArray.from_arrays(flat, train.shape[1]),
             }
         )
+        from lancedb.index import IvfHnswSq
+
         table = lancedb.connect(str(path)).create_table("v", data=data, mode="overwrite")
-        table.create_index(metric="l2", vector_column_name="vector", index_type="IVF_HNSW_SQ")
+        table.create_index("vector", config=IvfHnswSq(distance_type="l2", m=16, ef_construction=200))
 
     def load(self, path, dims, n):
         import lancedb
 
         self.table = lancedb.connect(str(path)).open_table("v")
 
-    def search(self, queries, nprobes):
-        return rows(
-            self.table.search(q).nprobes(nprobes).limit(K).to_arrow()["id"].to_pylist()
-            for q in queries
-        )
+    def search(self, queries, setting):
+        def ask(q):
+            query = self.table.search(q).limit(K)
+            if setting == "256r":
+                query = query.ef(256).refine_factor(10)
+            else:
+                query = query.ef(setting)
+            return query.to_arrow()["id"].to_pylist()
+
+        return rows(ask(q) for q in queries)
 
 
 class ChassisPy:

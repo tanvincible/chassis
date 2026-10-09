@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
+  RUN: 2
   CHASSIS: main
 jobs:
   dims:
@@ -109,7 +109,7 @@ jobs:
       - name: Every engine on the same vectors
         env:
           N: ${{ matrix.n }}
-          CHASSIS_LIB_PATH: ${{ runner.temp }}/t/release/libchassis_ffi.so
+          CHASSIS_LIB_PATH: ${{ runner.temp }}/t/release
           PAGETOOL: ${{ runner.temp }}/pagetool
         run: |
           L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"; truth="$T/gt.u32"
