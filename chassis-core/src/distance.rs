@@ -77,27 +77,32 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 /// is inlined into it and chosen once, not per call (ADR-0013).
 pub(crate) trait Kernel {
     /// The squared L2 distance, which orders vectors as the distance does and leaves the square
-    /// root to whoever reports one.
+    /// root to whoever reports one. Or, if the sum over the first floats already reaches `limit`,
+    /// that sum: the rest could only add to it, and a caller that asks whether the distance is
+    /// under the limit has its answer without reading the rest of the vector (ADR-0017).
     ///
     /// # Safety
     ///
     /// The slices must be the same length, and the CPU must have what the kernel uses.
-    unsafe fn squared(a: &[f32], b: &[f32]) -> f32;
+    unsafe fn squared(a: &[f32], b: &[f32], limit: f32) -> f32;
 }
+
+/// How many floats a kernel adds up between looks at the limit: 1 KiB of a vector.
+const LOOK_EVERY: usize = 256;
 
 /// What every CPU of the target has: NEON on aarch64, plain arithmetic elsewhere.
 pub(crate) struct Portable;
 
 impl Kernel for Portable {
     #[inline(always)]
-    unsafe fn squared(a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn squared(a: &[f32], b: &[f32], limit: f32) -> f32 {
         #[cfg(target_arch = "aarch64")]
         {
             // SAFETY: every aarch64 CPU has NEON; the caller vouches for the lengths.
-            return unsafe { squared_neon(a, b) };
+            return unsafe { squared_neon::<true>(a, b, limit) };
         }
         #[allow(unreachable_code)]
-        squared_scalar(a, b)
+        squared_scalar::<true>(a, b, limit)
     }
 }
 
@@ -108,9 +113,9 @@ pub(crate) struct Avx2;
 #[cfg(target_arch = "x86_64")]
 impl Kernel for Avx2 {
     #[inline(always)]
-    unsafe fn squared(a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn squared(a: &[f32], b: &[f32], limit: f32) -> f32 {
         // SAFETY: the caller vouches for the CPU and the lengths.
-        unsafe { squared_avx2(a, b) }
+        unsafe { squared_avx2::<true>(a, b, limit) }
     }
 }
 
@@ -145,16 +150,20 @@ pub(crate) fn kernel() -> unsafe fn(&[f32], &[f32]) -> f32 {
 /// Scalar implementation (portable fallback)
 #[inline]
 pub fn euclidean_distance_scalar(a: &[f32], b: &[f32]) -> f32 {
-    squared_scalar(a, b).sqrt()
+    squared_scalar::<false>(a, b, f32::INFINITY).sqrt()
 }
 
+/// The sum of squared differences; with `LIMITED`, only until it reaches `limit`.
 #[inline]
-fn squared_scalar(a: &[f32], b: &[f32]) -> f32 {
+fn squared_scalar<const LIMITED: bool>(a: &[f32], b: &[f32], limit: f32) -> f32 {
     let mut sum = 0.0_f32;
 
     for i in 0..a.len() {
         let diff = a[i] - b[i];
         sum += diff * diff;
+        if LIMITED && (i + 1).is_multiple_of(LOOK_EVERY) && sum >= limit {
+            return sum;
+        }
     }
 
     sum
@@ -182,14 +191,26 @@ fn squared_scalar(a: &[f32], b: &[f32]) -> f32 {
 #[target_feature(enable = "avx2", enable = "fma")]
 unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
     // SAFETY: the caller's.
-    unsafe { squared_avx2(a, b) }.sqrt()
+    unsafe { squared_avx2::<false>(a, b, f32::INFINITY) }.sqrt()
 }
 
-/// `euclidean_distance_avx2` before the square root.
+/// The eight lanes of `v` added up.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2")]
+fn sum_of_lanes(v: std::arch::x86_64::__m256) -> f32 {
+    use std::arch::x86_64::*;
+    let sum128 = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+    _mm_cvtss_f32(_mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x55)))
+}
+
+/// `euclidean_distance_avx2` before the square root; with `LIMITED`, only until the sum reaches
+/// `limit`.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
+unsafe fn squared_avx2<const LIMITED: bool>(a: &[f32], b: &[f32], limit: f32) -> f32 {
     use std::arch::x86_64::*;
 
     let len = a.len();
@@ -229,6 +250,14 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
         sum3 = _mm256_fmadd_ps(diff3, diff3, sum3);
 
         i += 32;
+        // Every accumulator only grows, so a sum that has reached the limit stays past it.
+        if LIMITED && i.is_multiple_of(LOOK_EVERY) {
+            let so_far =
+                sum_of_lanes(_mm256_add_ps(_mm256_add_ps(sum0, sum1), _mm256_add_ps(sum2, sum3)));
+            if so_far >= limit {
+                return so_far;
+            }
+        }
     }
 
     // Tail loop: Process remaining 8-float chunks
@@ -241,19 +270,8 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
     }
 
     // Reduce accumulators: Combine the 4 independent sums
-    let sum_combined = _mm256_add_ps(_mm256_add_ps(sum0, sum1), _mm256_add_ps(sum2, sum3));
-
-    // Horizontal reduction: Sum 8 lanes into a scalar
-    // Extract high 128 bits and add to low 128 bits
-    let sum_high = _mm256_extractf128_ps(sum_combined, 1);
-    let sum_low = _mm256_castps256_ps128(sum_combined);
-    let sum128 = _mm_add_ps(sum_low, sum_high);
-
-    // Horizontal add within 128-bit register
-    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
-    let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x55));
-
-    let mut total = _mm_cvtss_f32(sum32);
+    let mut total =
+        sum_of_lanes(_mm256_add_ps(_mm256_add_ps(sum0, sum1), _mm256_add_ps(sum2, sum3)));
 
     // Scalar tail: Process remaining elements
     while i < len {
@@ -276,14 +294,25 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
 #[target_feature(enable = "neon")]
 unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
     // SAFETY: the caller's.
-    unsafe { squared_neon(a, b) }.sqrt()
+    unsafe { squared_neon::<false>(a, b, f32::INFINITY) }.sqrt()
 }
 
-/// `euclidean_distance_neon` before the square root.
+/// The four lanes of `v` added up.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
+fn sum_of_lanes(v: std::arch::aarch64::float32x4_t) -> f32 {
+    use std::arch::aarch64::*;
+    let pair = vpadd_f32(vget_low_f32(v), vget_high_f32(v));
+    vget_lane_f32(vpadd_f32(pair, pair), 0)
+}
+
+/// `euclidean_distance_neon` before the square root; with `LIMITED`, only until the sum reaches
+/// `limit`.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn squared_neon<const LIMITED: bool>(a: &[f32], b: &[f32], limit: f32) -> f32 {
     use std::arch::aarch64::*;
 
     let len = a.len();
@@ -320,6 +349,13 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
         sum3 = vfmaq_f32(sum3, diff3, diff3);
 
         i += 16;
+        // Every accumulator only grows, so a sum that has reached the limit stays past it.
+        if LIMITED && i.is_multiple_of(LOOK_EVERY) {
+            let so_far = sum_of_lanes(vaddq_f32(vaddq_f32(sum0, sum1), vaddq_f32(sum2, sum3)));
+            if so_far >= limit {
+                return so_far;
+            }
+        }
     }
 
     // Tail loop: Process remaining 4-float chunks
@@ -332,13 +368,7 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
     }
 
     // Reduce accumulators
-    let sum_combined = vaddq_f32(vaddq_f32(sum0, sum1), vaddq_f32(sum2, sum3));
-
-    // Horizontal reduction: Sum 4 lanes
-    let sum_pair = vpadd_f32(vget_low_f32(sum_combined), vget_high_f32(sum_combined));
-    let sum_total = vpadd_f32(sum_pair, sum_pair);
-
-    let mut total = vget_lane_f32(sum_total, 0);
+    let mut total = sum_of_lanes(vaddq_f32(vaddq_f32(sum0, sum1), vaddq_f32(sum2, sum3)));
 
     // Scalar tail
     while i < len {

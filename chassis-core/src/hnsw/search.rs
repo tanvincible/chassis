@@ -356,7 +356,8 @@ impl HnswGraph {
         // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
         // index's dimensions, and so does a query.
         let mut best_id = entry;
-        let mut best_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
+        let entry_vector = self.storage.get_vector_slice(entry)?;
+        let mut best_dist = unsafe { K::squared(query, entry_vector, f32::INFINITY) };
         let prefetch = Prefetch::detect().for_dims(query.len());
 
         let mut visited = Visited::take(self.node_count as usize);
@@ -377,7 +378,8 @@ impl HnswGraph {
             for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
                 if visited.0.visit(neighbor_id) {
                     let vector = self.storage.get_vector_slice(neighbor_id)?;
-                    let dist = unsafe { K::squared(query, vector) };
+                    // Only a nearer node matters, so the sum may stop at the best so far.
+                    let dist = unsafe { K::squared(query, vector, best_dist) };
 
                     if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
                         best_id = neighbor_id;
@@ -527,7 +529,8 @@ impl HnswGraph {
 
         // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
         // index's dimensions, and so does a query.
-        let entry_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
+        let entry_vector = self.storage.get_vector_slice(entry)?;
+        let entry_dist = unsafe { K::squared(query, entry_vector, f32::INFINITY) };
         candidates.push(Reverse(pack(entry_dist, entry)));
         if !excluded(entry)? {
             results.push(pack(entry_dist, entry));
@@ -558,7 +561,9 @@ impl HnswGraph {
                         None => return Ok(None),
                     };
                 }
-                let dist = unsafe { K::squared(query, vector) };
+                // A node at or past the worst result is not taken, however far past: the sum may
+                // stop there.
+                let dist = unsafe { K::squared(query, vector, as_distance(bound)) };
 
                 if u64::from(dist.to_bits()) < bound {
                     let found = pack(dist, neighbor_id);
@@ -612,6 +617,12 @@ fn worst_allowed(results: &BinaryHeap<u64>, ef: usize) -> u64 {
         Some(worst) if results.len() >= ef => worst >> 32,
         _ => u64::MAX,
     }
+}
+
+/// The squared distance whose bits `worst_allowed` returned; no limit while there is none.
+#[inline]
+fn as_distance(bound: u64) -> f32 {
+    u32::try_from(bound).map_or(f32::INFINITY, f32::from_bits)
 }
 
 #[cfg(test)]
