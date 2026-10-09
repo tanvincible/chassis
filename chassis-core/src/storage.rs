@@ -1201,11 +1201,11 @@ impl Storage {
 
     #[inline]
     fn lab_want(&self, at: u64, len: usize) {
+        // One request for the whole span if any page of it is new.
         let page = lab::lab().page;
-        for p in at / page..=(at + len as u64 - 1) / page {
-            if lab::first_time(p) {
-                lab::advise(&self.file, p * page, page);
-            }
+        let (first, last) = (at / page, (at + len as u64 - 1) / page);
+        if (first..=last).fold(false, |new, p| lab::first_time(p) | new) {
+            lab::advise(&self.file, first * page, (last + 1 - first) * page);
         }
     }
 
