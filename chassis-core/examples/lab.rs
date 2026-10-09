@@ -347,6 +347,11 @@ fn options(ef_search: usize) -> IndexOptions {
     if std::env::var_os("LAB_HALF").is_some() {
         options.precision = chassis_core::Precision::Half;
     }
+    // LAB_WARMOPT=1 opens with `IndexOptions::warm`, in a build that has it (`--cfg lab_warm`).
+    #[cfg(lab_warm)]
+    if std::env::var_os("LAB_WARMOPT").is_some() {
+        options.warm = true;
+    }
     options
 }
 

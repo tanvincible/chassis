@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 2
-  CHASSIS: lab/exp-cold
+  RUN: 3
+  CHASSIS: lab/exp-warm
 
 jobs:
   dims:
@@ -96,7 +96,7 @@ jobs:
           git fetch -q origin "$CHASSIS"
           git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
           cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
-          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_half" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_half --cfg lab_warm" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
           cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
           cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
 
@@ -135,16 +135,13 @@ jobs:
               env LAB_READER=1 "$@" "$L" cold "$DATA" "$NAME" "$file" "$truth" "$state-$tag" | tee -a results/cold.tsv
             fi
           }
-          # The experiment build: as it ships, asking for a node's neighbors at once (LAB_BATCH), and
-          # reading the whole index in on another thread from the moment it opens (LAB_WARM).
+          # As it ships, and opened with `IndexOptions::warm`.
           for round in 1 2 3 4; do
             for state in cold warm; do
               run $state full "$T/full.chassis"
-              run $state batch "$T/full.chassis" LAB_BATCH=1
-              run $state warm "$T/full.chassis" LAB_WARM=willneed+touch
+              run $state warm "$T/full.chassis" LAB_WARMOPT=1
               run $state c-half "$T/half.chassis"
-              run $state c-half-batch "$T/half.chassis" LAB_BATCH=1
-              run $state c-half-warm "$T/half.chassis" LAB_WARM=willneed+touch
+              run $state c-half-warm "$T/half.chassis" LAB_WARMOPT=1
               run $state hnsw "$T/hnsw.bin"
             done
           done
