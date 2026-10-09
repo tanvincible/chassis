@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
-  STEPS: "base=c46fb1c final=8ed8bca deep=422a5a6"
+  RUN: 2
+  STEPS: "base=c46fb1c final=8ed8bca deep=422a5a6 deep32=b882929"
 
 jobs:
   dims:
@@ -96,7 +96,7 @@ jobs:
 
       - name: Build Chassis before, after, and with the policy knob
         run: |
-          git fetch -q origin perf/high-dims
+          git fetch -q origin perf/high-dims lab/exp-deep32
           git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
           build() { # name, commit, rustflags
             (cd "$RUNNER_TEMP/src" && git checkout -q --detach "$2" \
@@ -121,7 +121,7 @@ jobs:
             H="search $RUNNER_TEMP/h-$n.bin $DATA/$NAME.train.f32 $DATA/$NAME.test.f32 $truth"
             for round in 1 2 3 4; do
               "$RUNNER_TEMP/hnsw_lab" $H native 2>> results/pages.txt | tee -a results/lab.tsv
-              for v in base final deep; do
+              for v in base final deep deep32; do
                 "$RUNNER_TEMP/lab-$v" $C $v 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
               done
             done
