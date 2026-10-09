@@ -5,7 +5,7 @@
 //! - Dense visited filter (no HashSet in hot path)
 //! - Zero-allocation neighbor iteration via `neighbors_iter_from_mmap()`
 //! - Zero-copy distance computation via `compute_distance_zero_copy()`
-//! - NaN-safe ordering with `f32::total_cmp`
+//! - NaN-safe ordering: a NaN distance sorts past every other
 //!
 //! # Safety Guarantees
 //!
@@ -14,6 +14,7 @@
 //! - Concurrent searches from many threads (`&self`)
 //! - Deterministic performance
 
+use crate::distance::{Kernel, Portable};
 use crate::hnsw::graph::HnswGraph;
 use crate::hnsw::node::NodeId;
 use crate::prefetch::Prefetch;
@@ -84,8 +85,10 @@ pub struct VisitedFilter {
     data: Vec<u64>,
     /// Capacity track to avoid checking len() bounds repeatedly
     capacity: usize,
-    /// Words with a bit set, so `reuse` clears only those.
+    /// The words with a bit set are `touched[..used]`, so `reuse` clears only those. One longer
+    /// than `data`: `visit` writes at `used` whether or not the word is new.
     touched: Vec<usize>,
+    used: usize,
 }
 
 thread_local! {
@@ -93,16 +96,25 @@ thread_local! {
     static VISITED: std::cell::Cell<VisitedFilter> = std::cell::Cell::new(VisitedFilter::new(0));
 }
 
-/// Runs `f` with an empty filter for `node_count` nodes. Reusing this thread's saves allocating
-/// and zeroing `node_count / 8` bytes per layer searched. It is taken out while in use, so a
-/// filter callback that searches, or a search from a destructor after the thread's storage is
-/// gone, starts from an empty one instead.
-fn with_visited<R>(node_count: usize, f: impl FnOnce(&mut VisitedFilter) -> R) -> R {
-    let mut visited = VISITED.try_with(std::cell::Cell::take).unwrap_or_default();
-    visited.reuse(node_count);
-    let result = f(&mut visited);
-    let _ = VISITED.try_with(|cell| cell.set(visited));
-    result
+/// This thread's filter, emptied and sized for `node_count` nodes, and given back when dropped.
+/// Reusing it saves allocating and zeroing `node_count / 8` bytes per layer searched. It is taken
+/// out while in use, so a filter callback that searches, or a search from a destructor after the
+/// thread's storage is gone, starts from an empty one instead.
+struct Visited(VisitedFilter);
+
+impl Visited {
+    fn take(node_count: usize) -> Self {
+        let mut filter = VISITED.try_with(std::cell::Cell::take).unwrap_or_default();
+        filter.reuse(node_count);
+        Self(filter)
+    }
+}
+
+impl Drop for Visited {
+    fn drop(&mut self) {
+        let filter = std::mem::take(&mut self.0);
+        let _ = VISITED.try_with(|cell| cell.set(filter));
+    }
 }
 
 impl VisitedFilter {
@@ -111,18 +123,26 @@ impl VisitedFilter {
     pub fn new(node_count: usize) -> Self {
         // Calculate number of u64s needed: ceil(N / 64)
         let num_u64s = node_count.div_ceil(64);
-        Self { data: vec![0; num_u64s], capacity: node_count, touched: Vec::new() }
+        Self {
+            data: vec![0; num_u64s],
+            capacity: node_count,
+            touched: vec![0; num_u64s + 1],
+            used: 0,
+        }
     }
 
     /// Empties the filter and sizes it for `node_count` nodes, clearing only the words in use.
     fn reuse(&mut self, node_count: usize) {
-        for &word in &self.touched {
+        for &word in &self.touched[..self.used] {
             self.data[word] = 0;
         }
-        self.touched.clear();
+        self.used = 0;
         let words = node_count.div_ceil(64);
         if self.data.len() < words {
             self.data.resize(words, 0);
+        }
+        if self.touched.len() <= self.data.len() {
+            self.touched.resize(self.data.len() + 1, 0);
         }
         self.capacity = node_count;
     }
@@ -141,25 +161,20 @@ impl VisitedFilter {
         }
 
         let word_idx = idx >> 6;
-        let bit_idx = idx & 63;
-        let mask = 1u64 << bit_idx;
+        let mask = 1u64 << (idx & 63);
 
         let word = unsafe { self.data.get_unchecked_mut(word_idx) };
-
-        if *word & mask != 0 {
-            false // Already visited (Return false to match old API)
-        } else {
-            if *word == 0 {
-                self.touched.push(word_idx);
-            }
-            *word |= mask; // Mark as visited
-            true // Newly visited (Success)
-        }
+        let before = *word;
+        *word = before | mask;
+        // A word joins the list when its first bit is set. Without a branch: on an index of
+        // thousands to hundreds of thousands of nodes a word is as likely empty as not, and the
+        // CPU would guess wrong half the time.
+        self.touched[self.used] = word_idx;
+        self.used += usize::from(before == 0);
+        before & mask == 0
     }
     /// Check if a node is visited without modifying state.
     #[inline]
-    #[allow(dead_code)]
-    /// Tested by test_visited_filter
     fn is_visited(&self, node_id: u64) -> bool {
         let idx = node_id as usize;
         if idx >= self.capacity {
@@ -311,34 +326,68 @@ impl HnswGraph {
         entry: NodeId,
         layer: usize,
     ) -> Result<NodeId> {
-        let kernel = crate::distance::kernel();
-        // SAFETY (here and below): a stored vector has the index's dimensions, and so does a query.
-        let distance = |slot| -> Result<f32> {
-            Ok(unsafe { kernel(query, self.storage.get_vector_slice(slot)?) })
-        };
+        #[cfg(target_arch = "x86_64")]
+        if crate::distance::has_avx2() {
+            // SAFETY: the CPU has AVX2 and FMA.
+            return unsafe { self.search_layer_greedy_avx2(query, entry, layer) };
+        }
+        self.search_layer_greedy_with::<Portable>(query, entry, layer)
+    }
+
+    /// `search_layer_greedy` compiled for AVX2 and FMA, with the kernel inlined.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2", enable = "fma")]
+    unsafe fn search_layer_greedy_avx2(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        layer: usize,
+    ) -> Result<NodeId> {
+        self.search_layer_greedy_with::<crate::distance::Avx2>(query, entry, layer)
+    }
+
+    #[inline(always)]
+    fn search_layer_greedy_with<K: Kernel>(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        layer: usize,
+    ) -> Result<NodeId> {
+        // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
+        // index's dimensions, and so does a query.
         let mut best_id = entry;
-        let mut best_dist = distance(entry)?;
+        let mut best_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
+        let prefetch = Prefetch::detect().for_dims(query.len());
 
-        with_visited(self.node_count as usize, |visited| {
-            visited.visit(entry);
-            let mut changed = true;
-            while changed {
-                changed = false;
+        let mut visited = Visited::take(self.node_count as usize);
+        visited.0.visit(entry);
+        let mut changed = true;
+        while changed {
+            changed = false;
 
-                for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
-                    if visited.visit(neighbor_id) {
-                        let dist = distance(neighbor_id)?;
+            // As on layer 0, ask for every unvisited neighbor's vector before computing a
+            // distance. Only hints, so a neighbor that can't be read is left for the loop below.
+            for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
+                if !visited.0.is_visited(neighbor_id)
+                    && let Ok(vector) = self.storage.get_vector_slice(neighbor_id)
+                {
+                    prefetch.vector(vector);
+                }
+            }
+            for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
+                if visited.0.visit(neighbor_id) {
+                    let vector = self.storage.get_vector_slice(neighbor_id)?;
+                    let dist = unsafe { K::squared(query, vector) };
 
-                        if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
-                            best_id = neighbor_id;
-                            best_dist = dist;
-                            changed = true;
-                        }
+                    if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
+                        best_id = neighbor_id;
+                        best_dist = dist;
+                        changed = true;
                     }
                 }
             }
-            Ok(best_id)
-        })
+        }
+        Ok(best_id)
     }
 
     /// Search within a single layer.
@@ -357,8 +406,8 @@ impl HnswGraph {
     ///    - No `Vec<f32>` allocation per distance calculation
     ///    - Direct mmap reads
     ///
-    /// 4. **NaN-safe ordering**: `f32::total_cmp`
-    ///    - No panics on NaN
+    /// 4. **NaN-safe ordering**: nodes packed into integers that order by distance, then slot
+    ///    - No panics on NaN, which sorts past every distance
     ///    - Deterministic behavior
     ///
     /// # Hot Path Analysis
@@ -406,6 +455,51 @@ impl HnswGraph {
         skip_deleted: bool,
         filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
     ) -> Result<Option<Vec<SearchResult>>> {
+        #[cfg(target_arch = "x86_64")]
+        if crate::distance::has_avx2() {
+            // SAFETY: the CPU has AVX2 and FMA.
+            return unsafe {
+                self.search_layer_avx2::<FILTERED>(query, entry, ef, layer, skip_deleted, filter)
+            };
+        }
+        self.search_layer_with::<Portable, FILTERED>(query, entry, ef, layer, skip_deleted, filter)
+    }
+
+    /// `search_layer` compiled for AVX2 and FMA, so that the kernel is inlined into the loop and
+    /// the loop itself can use them.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2", enable = "fma")]
+    #[allow(clippy::type_complexity)]
+    unsafe fn search_layer_avx2<const FILTERED: bool>(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+        skip_deleted: bool,
+        filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
+    ) -> Result<Option<Vec<SearchResult>>> {
+        self.search_layer_with::<crate::distance::Avx2, FILTERED>(
+            query,
+            entry,
+            ef,
+            layer,
+            skip_deleted,
+            filter,
+        )
+    }
+
+    #[inline(always)]
+    #[allow(clippy::type_complexity)]
+    fn search_layer_with<K: Kernel, const FILTERED: bool>(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+        skip_deleted: bool,
+        filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
+    ) -> Result<Option<Vec<SearchResult>>> {
         let excluded = |id| -> Result<bool> {
             if skip_deleted && self.is_deleted(id)? {
                 return Ok(true);
@@ -419,75 +513,104 @@ impl HnswGraph {
 
         // An `ef` of 0 would leave no worst result to compare with; callers truncate anyway.
         let ef = ef.max(1);
-        let kernel = crate::distance::kernel();
-        let prefetch = Prefetch::detect();
+        let prefetch = Prefetch::detect().for_dims(query.len());
 
         // Dense visited filter: O(n) space, O(1) time per check, reused across searches
-        with_visited(self.node_count as usize, |visited| {
-            let mut candidates = BinaryHeap::new();
-            let mut results = BinaryHeap::new();
-            // The unvisited neighbors of the node being expanded, each with its vector: located
-            // once, for the prefetch and for the distance.
-            let mut fresh: Vec<(NodeId, &[f32])> =
-                Vec::with_capacity(self.record_params.max_neighbors(layer));
+        let mut visited = Visited::take(self.node_count as usize);
+        // Both heaps hold packed nodes: `candidates` nearest first, `results` farthest first.
+        let mut candidates = BinaryHeap::new();
+        let mut results = BinaryHeap::new();
+        // The unvisited neighbors of the node being expanded, each with its vector: located
+        // once, for the prefetch and for the distance.
+        let mut fresh: Vec<(NodeId, &[f32])> =
+            Vec::with_capacity(self.record_params.max_neighbors(layer));
 
-            // SAFETY (here and below): a stored vector has the index's dimensions, and so does a
-            // query.
-            let entry_dist = unsafe { kernel(query, self.storage.get_vector_slice(entry)?) };
-            candidates.push(Reverse(SearchResult { id: entry, distance: entry_dist }));
-            if !excluded(entry)? {
-                results.push(SearchResult { id: entry, distance: entry_dist });
-            }
-            visited.visit(entry);
-            // The worst result's distance, read only while there are `ef` results.
-            let mut bound = results.peek().map_or(f32::INFINITY, |worst| worst.distance);
+        // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
+        // index's dimensions, and so does a query.
+        let entry_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
+        candidates.push(Reverse(pack(entry_dist, entry)));
+        if !excluded(entry)? {
+            results.push(pack(entry_dist, entry));
+        }
+        visited.0.visit(entry);
+        let mut bound = worst_allowed(&results, ef);
 
-            while let Some(Reverse(current)) = candidates.pop() {
-                // Early termination: current is further than worst result
-                if results.len() >= ef && current.distance.total_cmp(&bound).is_gt() {
-                    break;
-                }
-
-                // Start loading every unvisited neighbor's vector before computing any distance, so the
-                // cache misses overlap instead of each distance waiting on its own.
-                fresh.clear();
-                for neighbor_id in self.neighbors_iter_from_mmap(current.id, layer)? {
-                    if visited.visit(neighbor_id) {
-                        let vector = self.storage.get_vector_slice(neighbor_id)?;
-                        prefetch.vector(vector);
-                        fresh.push((neighbor_id, vector));
-                    }
-                }
-                for &(neighbor_id, vector) in &fresh {
-                    if FILTERED {
-                        budget = match budget.checked_sub(1) {
-                            Some(left) => left,
-                            None => return Ok(None),
-                        };
-                    }
-                    let dist = unsafe { kernel(query, vector) };
-
-                    if results.len() < ef || dist.total_cmp(&bound).is_lt() {
-                        candidates.push(Reverse(SearchResult { id: neighbor_id, distance: dist }));
-                        // It will most likely be expanded: have its neighbor list on the way.
-                        self.storage.prefetch_record(neighbor_id);
-                        if excluded(neighbor_id)? {
-                            continue;
-                        }
-                        results.push(SearchResult { id: neighbor_id, distance: dist });
-
-                        if results.len() > ef {
-                            results.pop();
-                        }
-                        bound = results.peek().map_or(bound, |worst| worst.distance);
-                    }
-                }
+        while let Some(Reverse(current)) = candidates.pop() {
+            // Early termination: current is further than worst result
+            if current >> 32 > bound {
+                break;
             }
 
-            let mut sorted: Vec<_> = results.into_iter().collect();
-            sorted.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-            Ok(Some(sorted))
-        })
+            // Start loading every unvisited neighbor's vector before computing any distance, so the
+            // cache misses overlap instead of each distance waiting on its own.
+            fresh.clear();
+            for neighbor_id in self.neighbors_iter_from_mmap(current & SLOT, layer)? {
+                if visited.0.visit(neighbor_id) {
+                    let vector = self.storage.get_vector_slice(neighbor_id)?;
+                    prefetch.vector(vector);
+                    fresh.push((neighbor_id, vector));
+                }
+            }
+            for &(neighbor_id, vector) in &fresh {
+                if FILTERED {
+                    budget = match budget.checked_sub(1) {
+                        Some(left) => left,
+                        None => return Ok(None),
+                    };
+                }
+                let dist = unsafe { K::squared(query, vector) };
+
+                if u64::from(dist.to_bits()) < bound {
+                    let found = pack(dist, neighbor_id);
+                    candidates.push(Reverse(found));
+                    // It will most likely be expanded: have its neighbor list on the way.
+                    self.storage.prefetch_record(neighbor_id);
+                    if excluded(neighbor_id)? {
+                        continue;
+                    }
+                    if results.len() < ef {
+                        results.push(found);
+                    } else if let Some(mut worst) = results.peek_mut() {
+                        // Nearer than the worst of `ef` results: it takes its place, in one walk
+                        // down the heap where a push and a pop would take three.
+                        *worst = found;
+                    }
+                    bound = worst_allowed(&results, ef);
+                }
+            }
+        }
+
+        let mut sorted = results.into_vec();
+        sorted.sort_unstable();
+        Ok(Some(sorted.into_iter().map(unpack).collect()))
+    }
+}
+
+/// The slot of a packed node.
+const SLOT: u64 = 0xffff_ffff;
+
+/// A node and its squared distance in one integer that orders by distance, then slot: the
+/// distance's bits above the slot. A sum of squares is never negative, so its bits order as its
+/// value does, and NaN lands past every distance. A heap of these is half the size of one of
+/// pairs, and each of its steps is one integer comparison.
+#[inline]
+fn pack(squared: f32, slot: NodeId) -> u64 {
+    debug_assert!(slot < SLOT);
+    (u64::from(squared.to_bits()) << 32) | slot
+}
+
+#[inline]
+fn unpack(packed: u64) -> SearchResult {
+    SearchResult { id: packed & SLOT, distance: f32::from_bits((packed >> 32) as u32).sqrt() }
+}
+
+/// What a distance's bits must be below for a search to take the node: the worst result's, once
+/// there are `ef` results.
+#[inline]
+fn worst_allowed(results: &BinaryHeap<u64>, ef: usize) -> u64 {
+    match results.peek() {
+        Some(worst) if results.len() >= ef => worst >> 32,
+        _ => u64::MAX,
     }
 }
 
@@ -537,6 +660,24 @@ mod tests {
     }
 
     #[test]
+    fn test_packed_nodes_order_by_distance_then_slot() {
+        let nearest_first = [
+            pack(0.0, 9),
+            pack(f32::MIN_POSITIVE, 3),
+            pack(0.5, 7),
+            pack(0.5, 8),
+            pack(1.0e30, 0),
+            pack(f32::INFINITY, 0),
+            pack(f32::NAN, 0),
+            pack(-f32::NAN, 0),
+        ];
+        assert!(nearest_first.is_sorted());
+        // What comes back is the distance, not its square.
+        let found = unpack(pack(6.25, 41));
+        assert_eq!((found.id, found.distance), (41, 2.5));
+    }
+
+    #[test]
     fn test_visited_filter() {
         let mut filter = VisitedFilter::new(10);
 
@@ -563,19 +704,22 @@ mod tests {
         // Each use sees no earlier visits, whatever sizes came before; 0, 63, 64 and 640 are in
         // different words.
         for nodes in [700, 700, 65, 5000] {
-            with_visited(nodes, |visited| {
-                for id in [0, 63, 64, 640] {
-                    assert_eq!(visited.visit(id), (id as usize) < nodes, "{id} of {nodes}");
-                    assert!(!visited.visit(id));
-                }
-            });
+            let mut visited = Visited::take(nodes);
+            for id in [0, 63, 64, 640] {
+                assert_eq!(visited.0.visit(id), (id as usize) < nodes, "{id} of {nodes}");
+                assert!(!visited.0.visit(id));
+            }
+        }
+        // Every node of a word, so most visits find it already listed; then none left behind.
+        for _ in 0..2 {
+            let mut visited = Visited::take(130);
+            assert!((0..130).all(|id| visited.0.visit(id)));
         }
         // A search started inside another on this thread gets its own filter.
-        with_visited(100, |outer| {
-            assert!(outer.visit(7));
-            with_visited(100, |inner| assert!(inner.visit(7)));
-            assert!(!outer.visit(7));
-        });
+        let mut outer = Visited::take(100);
+        assert!(outer.0.visit(7));
+        assert!(Visited::take(100).0.visit(7));
+        assert!(!outer.0.visit(7));
     }
 
     #[test]

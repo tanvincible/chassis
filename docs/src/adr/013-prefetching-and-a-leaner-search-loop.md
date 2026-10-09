@@ -149,7 +149,7 @@ Recall@10 at `ef` 32, 64, 128 and 256, over all the machines:
   measured but Zen 3, where it is within 6% on its own index, and Ice Lake, which the final code
   was not run on.
 * **In cache Chassis still trails hnswlib on x86**, by up to a fifth. What is left of the work
-  per neighbor is the next thing to look at there.
+  per neighbor is the next thing to look at there (ADR-0014).
 * **One-thread builds are 1.6 to 1.9 times faster** and level with hnswlib's on x86, where they
   took half as long again. Nearly all of that is the smaller fill.
 * **The smaller fill costs about 0.003 of recall at `ef = 32`, 0.002 at 64 and under 0.001
