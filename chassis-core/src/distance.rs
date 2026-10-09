@@ -54,7 +54,8 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") {
+        // The kernel uses FMA instructions too; a CPU with AVX2 but not FMA must not run it.
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             return unsafe { euclidean_distance_avx2(a, b) };
         }
     }
