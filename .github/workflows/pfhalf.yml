@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
+  RUN: 2
   CHASSIS: lab/exp-pfhalf
 jobs:
   dims:
@@ -24,14 +24,10 @@ jobs:
       matrix:
         name: [dbpedia-openai3-1536, gist-960]
         runner: [ubuntu-latest]
-        shard: [a, b, c, d]
+        shard: [a, b, c, d, e, f, g]
         include:
-          - { name: dbpedia-openai3-1536, sizes: "2000 99000" }
-          - { name: gist-960, sizes: "200000" }
-          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, sizes: "2000 99000" }
-          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: b, sizes: "2000 99000" }
-          - { name: gist-960, runner: ubuntu-24.04-arm, shard: a, sizes: "200000" }
-          - { name: gist-960, runner: ubuntu-24.04-arm, shard: b, sizes: "200000" }
+          - { name: dbpedia-openai3-1536, sizes: "2000 20000 99000" }
+          - { name: gist-960, sizes: "20000 200000" }
     env:
       DATA: bench/ann/data
       NAME: ${{ matrix.name }}
@@ -112,7 +108,7 @@ jobs:
             for round in 1 2 3; do
               LAB_HALF=1 "$L" $H default 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
               # near,lines: how many lines of a vector to ask for, and how many of them into L1.
-              for pf in 0,4 0,8 0,16 0,24 0,32 0,48 8,8 16,16 48,48; do
+              for pf in 0,8 0,24 0,48 8,8 24,24 48,48; do
                 LAB_HALF=1 LAB_PF=$pf "$L" $H "pf-$pf" 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
               done
             done
