@@ -84,6 +84,16 @@ struct SegmentLayout {
     bytes: usize,
 }
 
+/// Lab: LAB_MADV=vectors asks for huge pages on a segment's vectors only.
+#[allow(unused_variables)]
+fn lab_advise(region: &Region, layout: &SegmentLayout) {
+    #[cfg(all(lab_pf, target_os = "linux"))]
+    if std::env::var("LAB_MADV").is_ok_and(|v| v == "vectors") {
+        let bytes = layout.level0 - layout.vectors;
+        let _ = region.map.advise_range(memmap2::Advice::HugePage, layout.vectors, bytes);
+    }
+}
+
 impl Geometry {
     fn new(header: &FileHeader) -> Result<Self> {
         let params = NodeRecordParams::new(header.m, header.m0, header.max_layers);
@@ -242,7 +252,7 @@ impl Region {
         let map = map.with_context(|| format!("Failed to map {len} bytes at offset {offset}"))?;
         // Lab: LAB_MADV asks for huge pages on every mapping.
         #[cfg(all(lab_pf, target_os = "linux"))]
-        if std::env::var_os("LAB_MADV").is_some() {
+        if std::env::var("LAB_MADV").is_ok_and(|v| v != "vectors") {
             let _ = map.advise(memmap2::Advice::HugePage);
         }
         Ok(Self { map, offset })
@@ -633,6 +643,7 @@ impl Storage {
                 else {
                     break;
                 };
+                lab_advise(&region, &layout);
                 self.segments.push(Segment {
                     region,
                     vectors: layout.vectors,
@@ -863,6 +874,7 @@ impl Storage {
         while g.capacity(self.segments.len() as u64) <= slot {
             let layout = g.segment_layout(g.segment_slots(self.segments.len() as u64));
             let region = self.push_region(Table::Segments, layout.bytes)?;
+            lab_advise(&region, &layout);
             self.segments.push(Segment { region, vectors: layout.vectors, level0: layout.level0 });
             self.state.segments += 1;
             self.publish_regions();
