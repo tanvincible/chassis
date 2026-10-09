@@ -115,6 +115,22 @@ waits for memory, and an index of long vectors that fits in cache searches 19% m
 * **To validate**: try widening from wider loads, or SVE where a CPU has it, in the kernel
   benchmark.
 
+## Builds of long vectors on x86
+
+A batch build of 1,536-dimension vectors in full precision takes 1.4 to 1.7 times as long as
+hnswlib's on x86 with four cores, where at 128 dimensions it takes half to nine tenths, and in
+half precision it is level.
+
+* **Known**, from a profile on 2026-10-10 (20,000 vectors, EPYC 7763 and 9V74): it is not the
+  file. Kernel time is 1% of the build, and building on tmpfs takes as long as on disk. 64% of the
+  time is the search for a new node's neighbors and 29% the distances computed while choosing
+  which neighbors to keep; one thread spends 1.6 ms a vector where hnswlib spends 1.0 to 1.2. So
+  it is the same memory-bound distance work as a query, where full precision trails hnswlib on
+  these CPUs at the same `ef`. hnswlib builds 15 to 25% slower without its huge pages.
+* **To validate**: count distances per insert in both engines, to tell how much is more distances
+  and how much is slower ones; then try building with the vectors on huge pages from the first
+  write, which today gave 5%.
+
 ## Results nobody has explained
 
 * **Zen 5 gains nothing from half precision at 1,536 dimensions and 99,000 vectors** (1.02),
@@ -130,8 +146,6 @@ waits for memory, and an index of long vectors that fits in cache searches 19% m
 * Any engine but hnswlib with the current code. usearch was measured once, on one Mac, before the
   performance work; FAISS, sqlite-vec, LanceDB and Annoy never.
 * Anything past a million vectors, or a file past about a gigabyte.
-* Why a batch build of long vectors in full precision takes 1.4 to 1.7 times as long as hnswlib's
-  on x86 (1,536 dimensions, 4 vCPUs), when at 128 dimensions it takes half to nine tenths.
 * A consumer x86 laptop or desktop. Every x86 figure is from a server CPU.
 * Apple silicon out of Low Power Mode, and more than one machine of it.
 * Real power loss; it is only simulated.
