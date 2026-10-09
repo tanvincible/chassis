@@ -90,6 +90,21 @@ pub(crate) trait Kernel {
 /// How many floats a kernel adds up between looks at the limit: 1 KiB of a vector.
 const LOOK_EVERY: usize = 256;
 
+/// Lab: bytes of the stored vector a kernel asks for ahead of where it is reading (LAB_AHEAD, in
+/// lines), and whether limits are ignored (LAB_NOLIMIT).
+pub(crate) static LAB_AHEAD: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+pub(crate) static LAB_NOLIMIT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn lab_init() {
+    use std::sync::atomic::Ordering::Relaxed;
+    if let Ok(lines) = std::env::var("LAB_AHEAD") {
+        LAB_AHEAD.store(lines.parse::<usize>().unwrap() * 64, Relaxed);
+    }
+    LAB_NOLIMIT.store(std::env::var_os("LAB_NOLIMIT").is_some(), Relaxed);
+}
+
 /// What every CPU of the target has: NEON on aarch64, plain arithmetic elsewhere.
 pub(crate) struct Portable;
 
@@ -215,6 +230,8 @@ unsafe fn squared_avx2<const LIMITED: bool>(a: &[f32], b: &[f32], limit: f32) ->
 
     let len = a.len();
     let mut i = 0;
+    let ahead = if LIMITED { LAB_AHEAD.load(std::sync::atomic::Ordering::Relaxed) } else { 0 };
+    let stored = b.as_ptr().cast::<i8>();
 
     // Four independent accumulators to break dependency chains
     let mut sum0 = _mm256_setzero_ps();
@@ -225,6 +242,11 @@ unsafe fn squared_avx2<const LIMITED: bool>(a: &[f32], b: &[f32], limit: f32) ->
     // Main loop: Process 32 floats per iteration (4 vectors × 8 floats)
     // This keeps 4 FMA units busy, hiding latency
     while i + 32 <= len {
+        if ahead != 0 && i * 4 + ahead < len * 4 {
+            let line = stored.wrapping_add(i * 4 + ahead);
+            _mm_prefetch::<_MM_HINT_T0>(line);
+            _mm_prefetch::<_MM_HINT_T0>(line.wrapping_add(64));
+        }
         // Load and compute differences
         let va0 = unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
         let vb0 = unsafe { _mm256_loadu_ps(b.as_ptr().add(i)) };
@@ -317,6 +339,7 @@ unsafe fn squared_neon<const LIMITED: bool>(a: &[f32], b: &[f32], limit: f32) ->
 
     let len = a.len();
     let mut i = 0;
+    let ahead = if LIMITED { LAB_AHEAD.load(std::sync::atomic::Ordering::Relaxed) } else { 0 };
 
     // Four independent accumulators
     let mut sum0 = vdupq_n_f32(0.0);
@@ -326,6 +349,10 @@ unsafe fn squared_neon<const LIMITED: bool>(a: &[f32], b: &[f32], limit: f32) ->
 
     // Main loop: Process 16 floats per iteration (4 vectors × 4 floats)
     while i + 16 <= len {
+        if ahead != 0 && i * 4 + ahead < len * 4 {
+            let line = b.as_ptr().cast::<u8>().wrapping_add(i * 4 + ahead);
+            std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) line, options(nostack, preserves_flags, readonly));
+        }
         let va0 = vld1q_f32(a.as_ptr().add(i));
         let vb0 = vld1q_f32(b.as_ptr().add(i));
         let diff0 = vsubq_f32(va0, vb0);

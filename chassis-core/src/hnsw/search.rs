@@ -622,6 +622,9 @@ fn worst_allowed(results: &BinaryHeap<u64>, ef: usize) -> u64 {
 /// The squared distance whose bits `worst_allowed` returned; no limit while there is none.
 #[inline]
 fn as_distance(bound: u64) -> f32 {
+    if crate::distance::LAB_NOLIMIT.load(std::sync::atomic::Ordering::Relaxed) {
+        return f32::INFINITY;
+    }
     u32::try_from(bound).map_or(f32::INFINITY, f32::from_bits)
 }
 

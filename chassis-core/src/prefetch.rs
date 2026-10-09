@@ -19,7 +19,10 @@ impl Prefetch {
     /// The policy for this machine, chosen once.
     pub(crate) fn detect() -> Self {
         static POLICY: OnceLock<Prefetch> = OnceLock::new();
-        *POLICY.get_or_init(Self::for_this_cpu)
+        *POLICY.get_or_init(|| {
+            crate::distance::lab_init();
+            Self::for_this_cpu()
+        })
     }
 
     /// A node has up to 32 neighbors, so a search asks for up to 256 lines at once. Into L2 that
