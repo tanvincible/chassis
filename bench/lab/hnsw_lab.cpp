@@ -2,12 +2,15 @@
 //   hnsw_lab kernel
 //   hnsw_lab build <train.f32> <n> <index> <threads>
 //   hnsw_lab search <index> <train.f32> <test.f32> <truth.u32> <tag>
+//   hnsw_lab cold <index> <test.f32> <truth.u32> <tag>     load and search once through the queries,
+//                                                          timed from the start of the process
 #include "hnswlib/hnswlib.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <sys/resource.h>
 #include <thread>
 #include <vector>
 
@@ -46,7 +49,29 @@ static void huge_pages(const char *tag) {
     fprintf(stderr, "pages hnswlib %s:%s\n", tag, out.c_str());
 }
 
+// "cold hnswlib tag at_N ms major minor resident_mb read_mb", as examples/lab.rs prints it.
+static void mark(const char *tag, int at, double start) {
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+#ifdef __APPLE__
+    double resident = ru.ru_maxrss / 1e6;
+#else
+    double resident = ru.ru_maxrss / 1e3;
+#endif
+    double read = 0;
+    std::ifstream io("/proc/self/io");
+    for (std::string line; std::getline(io, line);)
+        if (line.rfind("read_bytes: ", 0) == 0) read = std::stod(line.substr(12));
+    printf("cold\thnswlib\t%s\tat_%d\t%.3f\t%ld\t%ld\t%.1f\t%.1f\n", tag, at, (now() - start) * 1e3,
+           (long)ru.ru_majflt, (long)ru.ru_minflt, resident, read / 1e6);
+}
+static double median(std::vector<double> v) {
+    std::sort(v.begin(), v.end());
+    return v.empty() ? 0 : v[v.size() / 2];
+}
+
 int main(int argc, char **argv) {
+    double start = now();
     std::string mode = argv[1];
 #ifdef __linux__
     // LAB_NO_THP=1: no transparent huge pages for this process, whatever the system setting.
@@ -84,6 +109,45 @@ int main(int argc, char **argv) {
         for (auto &th : pool) th.join();
         printf("hnswlib\tnative\t%zu\tbuild_%s_s\t0\t0\t%.1f\t0\n", n, threads == 1 ? "seq" : "batch", now() - t);
         index.saveIndex(argv[4]);
+        return 0;
+    }
+    if (mode == "cold") {
+        uint32_t qn, dims, gn, depth;
+        auto test = load<float>(argv[3], qn, dims);
+        auto gt = load<uint32_t>(argv[4], gn, depth);
+        const char *tag = argv[5];
+        size_t ef = getenv("LAB_EF") ? std::stoul(getenv("LAB_EF")) : 64;
+        hnswlib::L2Space space(dims);
+        double opening = now();
+        hnswlib::HierarchicalNSW<float> index(&space, argv[2]);
+        index.setEf(ef);
+        printf("cold\thnswlib\t%s\topen_ms\t%.3f\n", tag, (now() - opening) * 1e3);
+        mark(tag, 0, start);
+        std::vector<double> each; size_t hits = 0;
+        for (uint32_t q = 0; q < qn; q++) {
+            double asked = now();
+            auto found = index.searchKnn(test.data() + (size_t)q * dims, K);
+            each.push_back((now() - asked) * 1e3);
+            while (!found.empty()) {
+                uint32_t id = found.top().second; found.pop();
+                for (int j = 0; j < K; j++) hits += gt[(size_t)q * depth + j] == id;
+            }
+            if (q + 1 == 1 || q + 1 == 10 || q + 1 == 100 || q + 1 == 1000) mark(tag, q + 1, start);
+        }
+        printf("cold\thnswlib\t%s\tfirst_ms\t%.3f\n", tag, each[0]);
+        typedef std::pair<size_t, size_t> Range;
+        for (Range range : {Range(1, 10), Range(10, 100), Range(100, 1000)})
+            if (each.size() >= range.second)
+                printf("cold\thnswlib\t%s\tmedian_ms_%zu_%zu\t%.3f\n", tag, range.first + 1, range.second,
+                       median(std::vector<double>(each.begin() + range.first, each.begin() + range.second)));
+        std::vector<double> again;
+        for (uint32_t q = 0; q < qn; q++) {
+            double asked = now();
+            index.searchKnn(test.data() + (size_t)q * dims, K);
+            again.push_back((now() - asked) * 1e3);
+        }
+        printf("cold\thnswlib\t%s\tmedian_ms_again\t%.3f\n", tag, median(again));
+        printf("cold\thnswlib\t%s\trecall\t%.4f\n", tag, hits / double(qn * K));
         return 0;
     }
     if (mode == "search") {

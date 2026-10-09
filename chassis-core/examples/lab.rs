@@ -9,6 +9,8 @@
 //! lab flushes <data> <dataset> <index> <count> <tag>   add one vector and flush, count times
 //! lab ceiling <data> <dataset> <n> <truth>         exact search over the data as loaded, against truth
 //! lab halfbench                                    f32 and f16 kernels, in cache and out of it
+//! lab cold <data> <dataset> <index> <truth> <tag>  open and search once through the queries,
+//!                                                  timed from the start of the process
 //!
 //! LAB_ROUND16=1 rounds the stored vectors to half precision and back before anything but `truth`.
 
@@ -423,9 +425,94 @@ fn kernel(tag: &str) {
     }
 }
 
+/// Major faults, minor faults, peak resident megabytes and, on Linux, megabytes read from
+/// storage, by this process so far.
+#[cfg(unix)]
+fn usage() -> (i64, i64, f64, f64) {
+    // SAFETY: getrusage fills the struct it is given.
+    let ru = unsafe {
+        let mut ru: libc::rusage = std::mem::zeroed();
+        libc::getrusage(libc::RUSAGE_SELF, &mut ru);
+        ru
+    };
+    let resident = ru.ru_maxrss as f64 / if cfg!(target_os = "macos") { 1e6 } else { 1e3 };
+    let read = std::fs::read_to_string("/proc/self/io")
+        .ok()
+        .and_then(|io| io.lines().find_map(|l| l.strip_prefix("read_bytes: ")?.parse::<f64>().ok()))
+        .unwrap_or(0.0);
+    (ru.ru_majflt as i64, ru.ru_minflt as i64, resident, read / 1e6)
+}
+
+/// From the start of the process: open the index, then each query once, with where the time went.
+/// Lines are `cold engine tag metric value...`; an `at_N` line is milliseconds since the start once
+/// N queries are answered, then `usage()`.
+#[cfg(unix)]
+fn cold(start: Instant, args: &[String]) -> anyhow::Result<()> {
+    let (dir, name, tag) = (Path::new(&args[1]), &args[2], &args[5]);
+    let (dims, test) = read(&dir.join(format!("{name}.test.f32")), f32::from_le_bytes)?;
+    let queries: Vec<&[f32]> = test.chunks_exact(dims).collect();
+    let (depth, gt) = read(Path::new(&args[4]), u32::from_le_bytes)?;
+    let ef = std::env::var("LAB_EF").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
+    let ms = |since: Instant| since.elapsed().as_secs_f64() * 1e3;
+    let mark = |at: usize| {
+        let (major, minor, resident, read) = usage();
+        println!(
+            "cold\tchassis\t{tag}\tat_{at}\t{:.3}\t{major}\t{minor}\t{resident:.1}\t{read:.1}",
+            ms(start)
+        );
+    };
+
+    let opening = Instant::now();
+    let mut index = Handle::open(&args[3], dims as u32, options(ef))?;
+    println!("cold\tchassis\t{tag}\topen_ms\t{:.3}", ms(opening));
+    mark(0);
+    let (mut each, mut hits) = (Vec::with_capacity(queries.len()), 0);
+    for (i, query) in queries.iter().enumerate() {
+        let asked = Instant::now();
+        let found = index.search(query)?;
+        each.push(ms(asked));
+        let want = &gt[i * depth..i * depth + K];
+        hits += found.iter().filter(|r| want.contains(&(r.id as u32))).count();
+        if [1, 10, 100, 1000].contains(&(i + 1)) {
+            mark(i + 1);
+        }
+    }
+    let median = |of: &[f64]| {
+        let mut sorted = of.to_vec();
+        sorted.sort_by(f64::total_cmp);
+        sorted.get(sorted.len() / 2).copied().unwrap_or(f64::NAN)
+    };
+    println!("cold\tchassis\t{tag}\tfirst_ms\t{:.3}", each[0]);
+    for (from, to) in [(1, 10), (10, 100), (100, 1000)] {
+        if each.len() >= to {
+            println!(
+                "cold\tchassis\t{tag}\tmedian_ms_{}_{to}\t{:.3}",
+                from + 1,
+                median(&each[from..to])
+            );
+        }
+    }
+    let again: Vec<f64> = queries
+        .iter()
+        .map(|q| {
+            let asked = Instant::now();
+            index.search(q).map(|_| ms(asked))
+        })
+        .collect::<Result<_, _>>()?;
+    println!("cold\tchassis\t{tag}\tmedian_ms_again\t{:.3}", median(&again));
+    println!("cold\tchassis\t{tag}\trecall\t{:.4}", hits as f64 / (queries.len() * K) as f64);
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
+    let start = Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg = |i: usize| args.get(i).cloned().unwrap_or_default();
+    #[cfg(unix)]
+    if arg(0) == "cold" {
+        return cold(start, &args);
+    }
+    let _ = start;
     if arg(0) == "kernel" {
         kernel(&arg(1));
         return Ok(());

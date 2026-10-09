@@ -1,0 +1,150 @@
+name: x86 cold
+
+# Experiment branch only: from the start of a process to its first results, with the index file
+# out of memory and in it, Chassis (full and half precision) beside hnswlib. Runs when this file
+# changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/cold.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  CHASSIS: feat/half-precision
+
+jobs:
+  dims:
+    name: cold (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [dbpedia-openai3-1536, sift-128]
+        runner: [ubuntu-latest]
+        shard: [a, b, c]
+        include:
+          - { name: dbpedia-openai3-1536, n: 99000 }
+          - { name: sift-128, n: 1000000 }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, n: 99000 }
+          - { name: sift-128, runner: ubuntu-24.04-arm, shard: a, n: 1000000 }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+          df -h / | tail -1
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build Chassis and the page tool
+        run: |
+          git fetch -q origin "$CHASSIS"
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_half" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
+          cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
+          cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
+
+      - name: Cold and warm starts
+        env:
+          N: ${{ matrix.n }}
+        run: |
+          L="$RUNNER_TEMP/lab"; P="$RUNNER_TEMP/pagetool"; T="$RUNNER_TEMP"
+          truth="$T/gt.u32"
+          "$L" truth "$DATA" "$NAME" "$N" "$truth"
+          "$L" build "$DATA" "$NAME" "$T/full.chassis" "$N" > /dev/null
+          LAB_HALF=1 "$L" build "$DATA" "$NAME" "$T/half.chassis" "$N" > /dev/null
+          "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$N" "$T/hnsw.bin" "$(nproc)" > /dev/null
+          ls -la "$T"/full.chassis "$T"/half.chassis "$T"/hnsw.bin | tee -a results/disk.txt
+          {
+            findmnt -T "$T" || true
+            lsblk -o NAME,SIZE,ROTA,MODEL,RA || true
+            grep . /sys/block/*/queue/read_ahead_kb || true
+            cat /sys/kernel/mm/transparent_hugepage/enabled
+            free -m
+          } 2>&1 | tee -a results/disk.txt
+          # The disk on its own: uncached reads at random offsets, one at a time and many at once.
+          "$P" evict "$T/full.chassis"
+          for threads in 1 4 16 32; do "$P" randread "$T/full.chassis" 8000 4096 $threads | tee -a results/disk.txt; done
+          # The whole file asked for at once, and read through a mapping in order.
+          "$P" evict "$T/full.chassis"; "$P" willneed "$T/full.chassis" | tee -a results/disk.txt
+          for threads in 1 4; do "$P" evict "$T/full.chassis"; "$P" touch "$T/full.chassis" $threads | tee -a results/disk.txt; done
+          "$P" touch "$T/full.chassis" 1 | sed 's/^touch/touch-in-memory/' | tee -a results/disk.txt
+          run() { # state, tag, file
+            if [ "$1" = cold ]; then "$P" evict "$3"; else cat "$3" > /dev/null; fi
+            "$P" resident "$3" | awk -v t="$1-$2" '{print "resident\t" t "\t" $5}' | tee -a results/cold.tsv
+            if [ "$2" = hnsw ]; then
+              "$RUNNER_TEMP/hnsw_lab" cold "$3" "$DATA/$NAME.test.f32" "$truth" "$1-$2" | tee -a results/cold.tsv
+            else
+              LAB_READER=1 "$L" cold "$DATA" "$NAME" "$3" "$truth" "$1-$2" | tee -a results/cold.tsv
+            fi
+          }
+          for round in 1 2 3 4 5; do
+            for state in cold warm; do
+              run $state full "$T/full.chassis"
+              run $state c-half "$T/half.chassis"
+              run $state hnsw "$T/hnsw.bin"
+            done
+          done
+          { echo '```'; cat results/disk.txt; grep -v "^cold.*at_" results/cold.tsv | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cold-${{ matrix.name }}-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/
