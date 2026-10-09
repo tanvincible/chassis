@@ -3,7 +3,7 @@ requires = ["setuptools>=80.10", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chassis"
+name = "chassisdb"
 version = "0.6.3"
 description = "Python bindings for Chassis vector storage engine"
 readme = "README.md"

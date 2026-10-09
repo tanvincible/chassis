@@ -12,6 +12,9 @@ High-performance Python bindings for the Chassis vector storage engine.
 
 ## Installation
 
+The package is named `chassisdb` and imported as `chassis`. It is not on PyPI yet; the `chassis`
+and `pychassis` packages there are other projects.
+
 ### Prerequisites
 
 1. Build the Chassis FFI library:
