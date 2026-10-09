@@ -8,21 +8,21 @@ The project is early-stage and focused on establishing a correct, stable storage
 
 ## Current Capabilities
 
-* **One file, in-process**: Vectors and an HNSW graph live in a single memory-mapped file. There is no server. The file grows by appending regions, so nothing is copied or remapped as it grows. Format version 3, or 4 for an index in half precision; files from earlier releases are migrated on first open ([file format](docs/src/architecture/file-format.md)).
-* **Search**: Approximate nearest neighbor search with HNSW, by Euclidean (L2) or cosine distance, chosen when the index is created.
-* **Half precision**: `IndexOptions::precision`, chosen when the index is created (`precision="half"` in Python, `chassis_open_with_precision` in C), keeps vectors as 16-bit floats: half the file and half the memory, with the same recall on the embeddings measured and faster searches once an index is too large for the CPU's caches ([ADR-0018](docs/src/adr/018-half-precision.md)).
-* **Filtered search**: `search_filtered(query, k, |id| ...)` returns the nearest vectors whose ids pass a filter, such as the ids your own database allows (`allowed=` in Python, `chassis_search_filtered` in C). When walking the graph would cost more, as when few vectors match, it checks every vector instead and is exact ([ADR-0009](docs/src/adr/009-filtered-search.md)).
-* **Parallel builds**: `add_batch(vectors)` links a batch on every core (`add_batch` in Python, `chassis_add_batch` in C) ([ADR-0010](docs/src/adr/010-parallel-batch-builds.md)).
-* **Compaction**: `compact()` rewrites the index without its deleted vectors and with a rebuilt graph, then swaps the file in; readers in other processes follow it ([ADR-0011](docs/src/adr/011-compaction.md)).
-* **Your ids and deletes**: `add_with_id(id, vector)` stores your own `u64` id, which search returns; `delete(id)` removes a vector. A delete and an add in the same `flush()` are all-or-nothing, so replacing a vector is safe ([ADR-0007](docs/src/adr/007-ids-and-deletes.md)).
-* **SIMD distance kernels**: AVX2 on x86_64 and NEON on aarch64, with a scalar fallback.
-* **Durability**: `flush()` fsyncs the data, then writes the other of two checksummed header copies. After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. Process kills are tested by [`crash_tests.rs`](chassis-core/tests/crash_tests.rs), and power loss is simulated by [`power_loss.rs`](chassis-core/src/power_loss.rs), where each disk sector keeps either its last synced or its latest contents; real hardware is not tested ([ADR-0008](docs/src/adr/008-format-v3-and-multi-process-readers.md), [ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
-* **Concurrency**: One writer per file, and any number of concurrent searches, from threads of the writer's process or from readers in other processes (`IndexReader`, `read_only=True` in Python, `chassis_open_reader` in C). Readers take no lock; each search sees the writer's newest `flush()` (a flush becomes visible to readers just before its final fsync, so one that then fails, or is lost to power loss, may already have been seen).
-* **Bindings**: A C ABI (`chassis-ffi`) that catches Rust panics at the boundary, and Python bindings (`pychassis/`, version tracks the Rust release, currently **v0.6.3**) with NumPy support. Build `chassis-ffi` (`cargo build --release -p chassis-ffi`), then run `pip install -e .` from `pychassis/`.
+* One memory-mapped file, used in-process, with no server
+* Approximate nearest-neighbor search (HNSW) by Euclidean or cosine distance
+* Filtered search, over the ids your application allows
+* Your own ids, and deletes
+* Batch builds on every core
+* Compaction, which drops deleted vectors and rebuilds the graph
+* Half-precision vectors, for half the file and half the memory
+* Durable `flush()`: after a crash, everything up to the last one is kept
+* One writer and any number of readers, in other processes too
+* AVX2 and NEON distance kernels, with a scalar fallback
+* Rust, C and Python APIs
 
 Not supported yet: storing metadata in the index.
 
-Performance numbers, the machine they were measured on and how to reproduce them are in [Performance](docs/src/architecture/performance.md).
+How to use these is in the [guide](docs/src/guide/getting-started.md) and, for Python, the [bindings' README](pychassis/README.md). How they work and what was measured is in the [architecture notes](docs/src/architecture/overview.md) and the [decision records](docs/src/adr). Performance numbers, the machine they were measured on and how to reproduce them are in [Performance](docs/src/architecture/performance.md).
 
 ## Design Principles
 
