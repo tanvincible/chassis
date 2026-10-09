@@ -421,6 +421,30 @@ size_t chassis_search_filtered(const struct ChassisIndex *ptr, const float *quer
 int chassis_flush(struct ChassisIndex *ptr);
 
 /**
+ * Ask the operating system to keep the index's vectors on huge pages
+ *
+ * On an index too large for the CPU's caches, searches are up to a quarter faster and batch
+ * builds a little faster. Only on Linux, and only where the kernel and filesystem keep files on huge
+ * pages (ext4 on Linux 6.17 does); elsewhere this does nothing. It is off unless asked for: with
+ * it a page not yet in memory is read 2 MB at a time, which an index much larger than memory
+ * pays for on every miss. Call it right after opening, on a writer's handle or a reader's.
+ *
+ * # Arguments
+ *
+ * - `ptr`: Non-NULL pointer to index
+ *
+ * # Returns
+ *
+ * - 0 on success
+ * - -1 on failure (check `chassis_last_error_message()`)
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_use_huge_pages(struct ChassisIndex *ptr);
+
+/**
  * Rewrite the index without its deleted vectors and with a newly built graph
  *
  * Reclaims the space of deleted vectors and replaces the index file with the copy. Ids don't

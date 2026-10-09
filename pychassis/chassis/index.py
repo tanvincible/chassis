@@ -34,12 +34,20 @@ class IndexOptions:
         metric: "euclidean" (L2) or "cosine" (1 - cosine similarity; vectors
             are stored at unit length and zero vectors are rejected). Fixed
             when the index is created. Default: "euclidean"
+        huge_pages: Ask the operating system to keep the vectors on huge
+            pages. On an index too large for the CPU's caches, searches are
+            up to a quarter faster. Only on Linux, and only where the kernel and
+            filesystem keep files on huge pages (ext4 on Linux 6.17 does);
+            elsewhere it does nothing. With it a page not yet in memory is
+            read 2 MB at a time, which an index much larger than memory pays
+            for on every miss. Default: False
     """
 
     max_connections: int = 16
     ef_construction: int = 200
     ef_search: int = 50
     metric: str = "euclidean"
+    huge_pages: bool = False
 
     def validate(self) -> None:
         """Validate configuration parameters.
@@ -182,6 +190,8 @@ class VectorIndex:
                 )
 
         self._ptr = ptr
+        if self._options.huge_pages:
+            _ffi._lib.chassis_use_huge_pages(ptr)
         # A reader takes the file's metric; say so rather than search by another.
         if options is not None and options.metric != (metric := self.metric):
             self.close()

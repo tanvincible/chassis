@@ -16,6 +16,7 @@ let options = IndexOptions {
     max_connections: 16,
     ef_construction: 200,
     ef_search: 50,
+    ..IndexOptions::default()
 };
 
 let mut index = VectorIndex::open("./data.chassis", 1536, options)?;
