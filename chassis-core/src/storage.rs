@@ -247,6 +247,22 @@ impl Region {
         self.map.len()
     }
 
+    /// Asks for huge pages under the file offsets `from..to`, which lie in this region. Only a
+    /// request: a kernel or filesystem that doesn't keep files on huge pages ignores it.
+    fn ask_for_huge_pages(&self, from: u64, to: u64) {
+        #[cfg(target_os = "linux")]
+        {
+            let (at, len) = ((from - self.offset) as usize, (to - from) as usize);
+            // A miss here reads its huge page and, unless told the reads are random, the next one
+            // too, which may be one `whole_huge_pages` left out.
+            if self.map.advise_range(memmap2::Advice::HugePage, at, len).is_ok() {
+                let _ = self.map.advise_range(memmap2::Advice::Random, at, len);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (from, to);
+    }
+
     #[inline]
     fn bytes(&self, at: usize, len: usize) -> &[u8] {
         assert!(at + len <= self.len(), "read past the end of a region");
@@ -287,6 +303,21 @@ struct Segment {
     region: Region,
     vectors: usize,
     level0: usize,
+    /// The file offset up to which huge pages were asked for under this segment's vectors.
+    huge: u64,
+}
+
+/// A huge page. The page cache keeps a file in pieces of this size at offsets that are multiples
+/// of it, where it keeps it on huge pages at all.
+const HUGE_PAGE: u64 = 2 << 20;
+
+/// The whole huge pages inside the file offsets `start..end`, if there are any. Bytes that share
+/// a huge page with bytes outside the range are left out: a page written through the mapping is
+/// written back whole, so what is still being written must not share one with what is asked for
+/// (ADR-0016).
+fn whole_huge_pages(start: u64, end: u64) -> Option<(u64, u64)> {
+    let (from, to) = (start.next_multiple_of(HUGE_PAGE), end / HUGE_PAGE * HUGE_PAGE);
+    (from < to).then_some((from, to))
 }
 
 /// Which table lists a region.
@@ -384,6 +415,9 @@ pub struct Storage {
     _replaced: Option<File>,
     /// In a writer, where committed nodes' lists are saved before they change.
     undo: Option<Undo>,
+    /// With `IndexOptions::huge_pages`, the slots whose vectors may be on huge pages: those
+    /// written for good, and those a batch is about to write.
+    huge_slots: Option<u64>,
 }
 
 impl Storage {
@@ -523,7 +557,42 @@ impl Storage {
             poisoned: false,
             _replaced: None,
             undo: None,
+            huge_slots: None,
         })
+    }
+
+    /// Asks for huge pages under the committed vectors, and from here on under vectors as they
+    /// are committed or written by a batch (`IndexOptions::huge_pages`, ADR-0016).
+    pub(crate) fn use_huge_pages(&mut self) {
+        self.huge_slots = Some(self.committed.count);
+        self.ask_for_huge_pages();
+    }
+
+    /// The vectors in slots below `slots` are written for good, or a batch is about to write
+    /// them: with huge pages in use, asks for them there.
+    pub(crate) fn huge_pages_up_to(&mut self, slots: u64) {
+        if self.huge_slots.is_some_and(|asked| asked < slots) {
+            self.huge_slots = Some(slots);
+            self.ask_for_huge_pages();
+        }
+    }
+
+    /// Asks for whatever `huge_slots` allows and hasn't been asked for yet.
+    fn ask_for_huge_pages(&mut self) {
+        let Some(slots) = self.huge_slots else { return };
+        let g = self.geometry;
+        for (k, segment) in self.segments.iter_mut().enumerate() {
+            let k = k as u64;
+            let slots = slots.saturating_sub(g.capacity(k)).min(g.segment_slots(k));
+            let start = segment.region.offset + segment.vectors as u64;
+            let end = start + slots * (4 * g.dims) as u64;
+            if let Some((from, to)) = whole_huge_pages(start, end)
+                && to > segment.huge
+            {
+                segment.region.ask_for_huge_pages(from.max(segment.huge), to);
+                segment.huge = to;
+            }
+        }
     }
 
     /// Opens an existing v3 file for writing.
@@ -632,6 +701,7 @@ impl Storage {
                     region,
                     vectors: layout.vectors,
                     level0: layout.level0,
+                    huge: 0,
                 });
             }
         }
@@ -713,6 +783,7 @@ impl Storage {
         self.map_regions(Some(live))?;
         let mapped = self.geometry.capacity(self.segments.len() as u64);
         self.count = routing.max(self.state.count).min(mapped);
+        self.huge_pages_up_to(self.committed.count);
         Ok(())
     }
 
@@ -858,9 +929,11 @@ impl Storage {
         while g.capacity(self.segments.len() as u64) <= slot {
             let layout = g.segment_layout(g.segment_slots(self.segments.len() as u64));
             let region = self.push_region(Table::Segments, layout.bytes)?;
-            self.segments.push(Segment { region, vectors: layout.vectors, level0: layout.level0 });
+            let (vectors, level0) = (layout.vectors, layout.level0);
+            self.segments.push(Segment { region, vectors, level0, huge: 0 });
             self.state.segments += 1;
             self.publish_regions();
+            self.ask_for_huge_pages();
         }
 
         let (k, i) = g.locate(slot);
@@ -1314,6 +1387,7 @@ impl Storage {
         self.sync()?;
         self.committed = state;
         self.restart_undo();
+        self.huge_pages_up_to(self.committed.count);
         Ok(())
     }
 
@@ -1672,6 +1746,19 @@ mod tests {
         }
         storage.commit().unwrap();
         assert_eq!(storage.get_vector(100).unwrap(), vec![3.0; 4]);
+    }
+
+    #[test]
+    fn test_only_whole_huge_pages_are_asked_for() {
+        const MB: u64 = 1 << 20;
+        assert_eq!(whole_huge_pages(0, 2 * MB), Some((0, 2 * MB)));
+        assert_eq!(whole_huge_pages(4 * MB, 8 * MB), Some((4 * MB, 8 * MB)));
+        // A page shared with bytes before the range, or after it, is left out.
+        assert_eq!(whole_huge_pages(1, 4 * MB), Some((2 * MB, 4 * MB)));
+        assert_eq!(whole_huge_pages(3 * MB, 9 * MB - 1), Some((4 * MB, 8 * MB)));
+        assert_eq!(whole_huge_pages(1, 2 * MB), None);
+        assert_eq!(whole_huge_pages(5 * MB, 6 * MB), None);
+        assert_eq!(whole_huge_pages(4 * MB, 4 * MB), None);
     }
 
     #[test]
