@@ -1966,6 +1966,53 @@ mod tests {
     }
 
     #[test]
+    fn test_warming_asks_for_what_was_written_and_nothing_past_it() {
+        let dir = tempdir().unwrap();
+        let mut storage = Storage::open(dir.path().join("index.chassis"), 8).unwrap();
+        assert!(storage.written().is_empty());
+        // Segments of 16, 32 and 64 slots here: the third is left with 40 written.
+        let written = 16 + 32 + 40;
+        for slot in 0..written {
+            storage.insert(&[slot as f32; 8]).unwrap();
+            // Every eighth node has lists above layer 0, in the heap.
+            let lists = vec![vec![]; if slot % 8 == 0 { 3 } else { 1 }];
+            storage.write_record(slot, &lists).unwrap();
+        }
+        storage.commit().unwrap();
+
+        let g = storage.geometry;
+        let ranges = storage.written();
+        let per_slot = SLOT_HEADER + g.vector_bytes() + g.level0_bytes();
+        // Heap chunks before the one in use are full; that one counts up to its last entry.
+        let (chunk, used) = (storage.state.heap_used >> 32, storage.state.heap_used & 0xffff_ffff);
+        let heap = (0..chunk).map(|c| g.chunk_bytes(c)).sum::<usize>() + used as usize;
+        assert!(heap > 0);
+        assert_eq!(ranges.iter().map(|r| r.1).sum::<usize>(), written as usize * per_slot + heap);
+        // Each range lies inside one mapped region, and the last segment's ends short of its end.
+        let regions: Vec<(usize, usize)> = (storage.segments.iter().map(|s| &s.region))
+            .chain(&storage.chunks)
+            .map(|r| (r.map.as_ptr() as usize, r.len()))
+            .collect();
+        for &(at, len) in &ranges {
+            assert!(regions.iter().any(|&(base, size)| base <= at && at + len <= base + size));
+        }
+        let (last, size) = regions[2];
+        let end = ranges.iter().filter(|r| r.0 >= last && r.0 < last + size).map(|r| r.0 + r.1);
+        assert!(end.max().unwrap() < last + size);
+
+        // Reading it in changes nothing, and a second request while one runs starts no other.
+        storage.warm();
+        storage.warm();
+        if let Some(warming) = storage.warming.take() {
+            warming.wait();
+        }
+        assert_eq!(storage.warming.is_some(), false);
+        assert_eq!(storage.get_vector(87).unwrap(), vec![87.0; 8]);
+        // Stopped part way by the drop, without waiting for the rest.
+        storage.warm();
+    }
+
+    #[test]
     fn test_roll_back_keeps_the_first_entry_saved_for_a_slot() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("index.chassis");

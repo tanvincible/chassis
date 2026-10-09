@@ -48,6 +48,10 @@ class IndexOptions:
             elsewhere it does nothing. With it a page not yet in memory is
             read 2 MB at a time, which an index much larger than memory pays
             for on every miss. Default: False
+        warm: Read the whole index into memory on another thread from the
+            moment it is opened, so that searches stop waiting for the disk
+            one page at a time. For an index that fits in memory. It does
+            nothing on Windows yet. Default: False
     """
 
     max_connections: int = 16
@@ -56,6 +60,7 @@ class IndexOptions:
     metric: str = "euclidean"
     precision: str = "full"
     huge_pages: bool = False
+    warm: bool = False
 
     def validate(self) -> None:
         """Validate configuration parameters.
@@ -205,6 +210,8 @@ class VectorIndex:
         self._ptr = ptr
         if self._options.huge_pages:
             _ffi._lib.chassis_use_huge_pages(ptr)
+        if self._options.warm:
+            _ffi._lib.chassis_warm(ptr)
         # A reader takes the file's metric; say so rather than search by another.
         if options is not None and options.metric != (metric := self.metric):
             self.close()
@@ -508,6 +515,21 @@ class VectorIndex:
         if result != 0:
             error_msg = _ffi.get_last_error()
             raise ChassisError(f"Flush failed: {error_msg or 'unknown error'}")
+
+    def warm(self) -> None:
+        """Start reading the whole index into memory on another thread.
+
+        Returns at once; searches go on meanwhile. Opening with
+        ``IndexOptions(warm=True)`` does the same from the start.
+
+        Raises:
+            ChassisError: If the index can't be used any more
+        """
+        self._check_closed()
+
+        if _ffi._lib.chassis_warm(self._ptr) != 0:
+            error_msg = _ffi.get_last_error()
+            raise ChassisError(f"Warm failed: {error_msg or 'unknown error'}")
 
     def compact(self) -> None:
         """Rewrite the index without its deleted vectors, with a newly built graph.

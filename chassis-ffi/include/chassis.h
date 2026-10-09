@@ -464,6 +464,29 @@ int chassis_flush(struct ChassisIndex *ptr);
 int chassis_use_huge_pages(struct ChassisIndex *ptr);
 
 /**
+ * Start reading the whole index into memory on another thread
+ *
+ * Returns at once; searches go on meanwhile and stop waiting for the disk one page at a time as
+ * the index arrives. For an index that fits in memory: one much larger would push everything
+ * else out. What is read is what the index holds when this is called. It does nothing on Windows
+ * yet. Call it on a writer's handle or a reader's, right after opening or later.
+ *
+ * # Arguments
+ *
+ * - `ptr`: Non-NULL pointer to index
+ *
+ * # Returns
+ *
+ * - 0 on success
+ * - -1 on failure (check `chassis_last_error_message()`)
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_warm(struct ChassisIndex *ptr);
+
+/**
  * Rewrite the index without its deleted vectors and with a newly built graph
  *
  * Reclaims the space of deleted vectors and replaces the index file with the copy. Ids don't

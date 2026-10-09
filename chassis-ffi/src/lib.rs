@@ -1147,6 +1147,46 @@ pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int
     .unwrap_or(-1)
 }
 
+/// Start reading the whole index into memory on another thread
+///
+/// Returns at once; searches go on meanwhile and stop waiting for the disk one page at a time as
+/// the index arrives. For an index that fits in memory: one much larger would push everything
+/// else out. What is read is what the index holds when this is called. It does nothing on Windows
+/// yet. Call it on a writer's handle or a reader's, right after opening or later.
+///
+/// # Arguments
+///
+/// - `ptr`: Non-NULL pointer to index
+///
+/// # Returns
+///
+/// - 0 on success
+/// - -1 on failure (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_warm(ptr: *mut ChassisIndex) -> c_int {
+    ffi_guard(|| {
+        let Some(state) = (unsafe { state(ptr) }) else {
+            return -1;
+        };
+        let asked = match &state.inner {
+            Kind::Writer(lock) => lock.write().map(|mut index| index.warm()).is_ok(),
+            Kind::Reader(lock) => lock.lock().map(|mut reader| reader.warm()).is_ok(),
+        };
+        if asked {
+            clear_last_error();
+            0
+        } else {
+            set_last_error(POISONED);
+            -1
+        }
+    })
+    .unwrap_or(-1)
+}
+
 /// Rewrite the index without its deleted vectors and with a newly built graph
 ///
 /// Reclaims the space of deleted vectors and replaces the index file with the copy. Ids don't
@@ -1512,6 +1552,30 @@ mod tests {
         assert_eq!(unsafe { chassis_len(reader) }, 1);
         assert_eq!(unsafe { chassis_flush(writer) }, 0);
         assert_eq!(unsafe { chassis_len(reader) }, 2);
+
+        unsafe { chassis_free(reader) };
+        unsafe { chassis_free(writer) };
+    }
+
+    #[test]
+    fn test_ffi_warm_on_request() {
+        let (_dir, path) = temp_index_path();
+        let writer = unsafe { chassis_open(path.as_ptr(), 8) };
+        let vec = [0.5f32; 8];
+        assert_eq!(unsafe { chassis_add_with_id(writer, 7, vec.as_ptr(), 8) }, 0);
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+        assert_eq!(unsafe { chassis_warm(writer) }, 0);
+
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 8, 16, 50) };
+        assert_eq!(unsafe { chassis_warm(reader) }, 0);
+        let (mut ids, mut dists) = ([0u64; 1], [0.0f32; 1]);
+        for handle in [reader, writer] {
+            let found = unsafe {
+                chassis_search(handle, vec.as_ptr(), 8, 1, ids.as_mut_ptr(), dists.as_mut_ptr())
+            };
+            assert_eq!((found, ids[0]), (1, 7));
+        }
+        assert_eq!(unsafe { chassis_warm(ptr::null_mut()) }, -1);
 
         unsafe { chassis_free(reader) };
         unsafe { chassis_free(writer) };
