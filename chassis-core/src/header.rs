@@ -24,6 +24,8 @@ pub(crate) const MAX_TABLE_PAGES: usize = 512;
 
 /// Some slot's id differs from the slot number.
 pub(crate) const FLAG_CUSTOM_IDS: u8 = 1;
+/// A compacted copy is about to replace, or has replaced, this file at its path (ADR-0011).
+pub(crate) const FLAG_SUPERSEDED: u8 = 2;
 
 const CHECKSUM: std::ops::Range<usize> = 16..24;
 const FIXED_LEN: usize = 136;
@@ -71,12 +73,16 @@ pub(crate) struct FileHeader {
     pub segment_table: Vec<u64>,
     /// File offsets of the table pages listing heap chunk offsets.
     pub heap_table: Vec<u64>,
+    /// One past the largest id used before the last compaction, which removed the deleted slots
+    /// that showed it; 0 if never compacted. Stored after the tables.
+    pub next_id: u64,
 }
 
 impl FileHeader {
     /// Encodes this copy, checksum included.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut b = vec![0u8; FIXED_LEN + 8 * (self.segment_table.len() + self.heap_table.len())];
+        let tables = FIXED_LEN + 8 * (self.segment_table.len() + self.heap_table.len());
+        let mut b = vec![0u8; tables + 8];
         b[0..8].copy_from_slice(MAGIC);
         b[8..12].copy_from_slice(&VERSION.to_le_bytes()); // read version
         b[12..16].copy_from_slice(&VERSION.to_le_bytes()); // write version
@@ -109,6 +115,7 @@ impl FileHeader {
         for (i, offset) in self.segment_table.iter().chain(&self.heap_table).enumerate() {
             b[FIXED_LEN + 8 * i..FIXED_LEN + 8 * (i + 1)].copy_from_slice(&offset.to_le_bytes());
         }
+        b[tables..].copy_from_slice(&self.next_id.to_le_bytes());
         let checksum = xxh3_64(&b);
         b[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         b
@@ -145,11 +152,11 @@ impl FileHeader {
         }
 
         let (segment_pages, heap_pages) = (u32_at(128) as usize, u32_at(132) as usize);
-        // Bytes after the tables belong to a later write version; this release ignores them.
-        if segment_pages > MAX_TABLE_PAGES
-            || heap_pages > MAX_TABLE_PAGES
-            || len < FIXED_LEN + 8 * (segment_pages + heap_pages)
-        {
+        // After the tables comes `next_id`, absent from files written before it existed; bytes
+        // after that belong to a later write version, and this release ignores them.
+        let tables =
+            FIXED_LEN + 8 * (segment_pages.min(MAX_TABLE_PAGES) + heap_pages.min(MAX_TABLE_PAGES));
+        if segment_pages > MAX_TABLE_PAGES || heap_pages > MAX_TABLE_PAGES || len < tables {
             bail!("Corrupt file header: table page counts don't match its length");
         }
         let table = |start: usize, n: usize| (0..n).map(|i| u64_at(start + 8 * i)).collect();
@@ -182,6 +189,7 @@ impl FileHeader {
             heap_used: u64_at(120),
             segment_table: table(FIXED_LEN, segment_pages),
             heap_table: table(FIXED_LEN + 8 * segment_pages, heap_pages),
+            next_id: if len >= tables + 8 { u64_at(tables) } else { 0 },
         }))
     }
 
@@ -230,6 +238,7 @@ mod tests {
             heap_used: 960,
             segment_table: vec![196_608],
             heap_table: vec![262_144],
+            next_id: 9_000,
         }
     }
 
@@ -247,6 +256,19 @@ mod tests {
             torn[i] ^= 0x10;
             assert_eq!(FileHeader::from_bytes(&torn).unwrap(), None, "byte {i}");
         }
+    }
+
+    #[test]
+    fn test_a_header_from_before_next_id_reads_as_never_compacted() {
+        let mut bytes = sample().to_bytes();
+        bytes.truncate(bytes.len() - 8);
+        let len = bytes.len() as u32;
+        bytes[32..36].copy_from_slice(&len.to_le_bytes());
+        bytes[CHECKSUM].fill(0);
+        let checksum = xxh3_64(&bytes);
+        bytes[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
+        let header = FileHeader::from_bytes(&bytes).unwrap().unwrap();
+        assert_eq!(header, FileHeader { next_id: 0, ..sample() });
     }
 
     #[test]

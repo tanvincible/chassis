@@ -1048,6 +1048,46 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
     .unwrap_or(-1)
 }
 
+/// Rewrite the index without its deleted vectors and with a newly built graph
+///
+/// Reclaims the space of deleted vectors and replaces the index file with the copy. Ids don't
+/// change. Like `chassis_flush()`, it makes every add and delete so far durable. Takes as long
+/// as building the index, on every core, and needs free disk for a second copy of the live
+/// vectors. Readers in other processes keep searching and move to the new file by themselves.
+///
+/// # Returns
+///
+/// - `0` on success
+/// - `-1` on failure, with the index left as it was (check `chassis_last_error_message()`). On
+///   Windows it fails while another process has the index open.
+///
+/// # Thread Safety
+///
+/// Same as `chassis_flush()`: it holds the write lock, so searches on this handle wait.
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_compact(ptr: *mut ChassisIndex) -> c_int {
+    ffi_guard(|| {
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return -1;
+        };
+        match index.compact() {
+            Ok(()) => {
+                clear_last_error();
+                0
+            }
+            Err(e) => {
+                set_last_error(e);
+                -1
+            }
+        }
+    })
+    .unwrap_or(-1)
+}
+
 //
 //  INTROSPECTION
 //
@@ -1513,6 +1553,32 @@ mod tests {
         };
         assert_eq!(count, 1);
 
+        unsafe { chassis_free(ptr) };
+    }
+
+    #[test]
+    fn test_ffi_compact() {
+        let (_dir, path) = temp_index_path();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 2) };
+        for i in 0..100u64 {
+            assert_eq!(
+                unsafe { chassis_add_with_id(ptr, 500 + i, [i as f32, 0.0].as_ptr(), 2) },
+                0
+            );
+        }
+        for i in 0..50u64 {
+            assert_eq!(unsafe { chassis_delete(ptr, 500 + i * 2) }, 1);
+        }
+        assert_eq!(unsafe { chassis_compact(ptr) }, 0);
+        assert_eq!(unsafe { chassis_len(ptr) }, 50);
+        let (mut ids, mut dists) = ([0u64; 1], [0.0f32; 1]);
+        let query = [41.0f32, 0.0];
+        unsafe { chassis_search(ptr, query.as_ptr(), 2, 1, ids.as_mut_ptr(), dists.as_mut_ptr()) };
+        assert_eq!(ids[0], 541);
+        // Readers are read-only.
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+        assert_eq!(unsafe { chassis_compact(reader) }, -1);
+        unsafe { chassis_free(reader) };
         unsafe { chassis_free(ptr) };
     }
 

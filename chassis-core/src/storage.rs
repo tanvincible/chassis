@@ -11,7 +11,7 @@
 //! publishes what it adds since its last commit in the live page (ADR-0008, decision 5).
 
 use crate::distance::DistanceMetric;
-use crate::header::{FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES, REGIONS_START};
+use crate::header::{FLAG_SUPERSEDED, FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES, REGIONS_START};
 use crate::hnsw::node::NodeRecordParams;
 use crate::legacy::{LegacyIndex, is_legacy};
 use anyhow::{Context, Result, bail};
@@ -148,6 +148,7 @@ impl Geometry {
             heap_used: 0,
             segment_table: Vec::new(),
             heap_table: Vec::new(),
+            next_id: 0,
         };
         let entry = (usize::from(params.max_layers) - 1) * 4 * usize::from(params.m);
         header.heap_base_log2 =
@@ -488,6 +489,10 @@ impl Storage {
         if storage.state.pending_epoch != 0 {
             storage.recover()?;
         }
+        if storage.superseded() {
+            // A compaction stopped before its rename, so this file is still the index.
+            storage.set_superseded(false)?;
+        }
         // Readers must not route through slots a crashed writer left: the next adds reuse them.
         storage.publish_regions();
         storage.publish_routing(storage.state.count);
@@ -667,6 +672,40 @@ impl Storage {
         for (i, count) in counts.into_iter().enumerate() {
             h.u64_at(LIVE_COUNTS + 8 * i).store(count, Ordering::Release);
         }
+    }
+
+    /// Whether the newest header says a compacted copy replaces this file (ADR-0011).
+    pub(crate) fn superseded(&self) -> bool {
+        self.state.flags & FLAG_SUPERSEDED != 0
+    }
+
+    /// Commits whether a compacted copy is replacing this file at its path.
+    pub(crate) fn set_superseded(&mut self, superseded: bool) -> Result<()> {
+        self.state.flags =
+            (self.state.flags & !FLAG_SUPERSEDED) | if superseded { FLAG_SUPERSEDED } else { 0 };
+        self.commit_deleting(&[])
+    }
+
+    /// Whether this file is still the one at `path`.
+    pub(crate) fn is_at(&self, path: &Path) -> Result<bool> {
+        is_at(&self.file, path)
+    }
+
+    /// One past the largest id used before the last compaction; 0 if never compacted.
+    pub(crate) fn next_id(&self) -> u64 {
+        self.state.next_id
+    }
+
+    /// The last flush that committed deletes.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.state.epoch
+    }
+
+    /// In a compacted copy, what its source showed only through its deleted slots: the id
+    /// high-water mark, and a delete epoch past every snapshot of the source.
+    pub(crate) fn carry_over(&mut self, next_id: u64, epoch: u64) {
+        self.state.next_id = next_id;
+        self.state.epoch = epoch;
     }
 
     /// Lets readers route through slots below `count`, once their nodes and backlinks are written.
@@ -1020,6 +1059,12 @@ impl Storage {
         self.commit_deleting(&[])
     }
 
+    /// Makes every later commit fail: this file is no longer the index.
+    #[cfg(windows)]
+    pub(crate) fn poison(&mut self) {
+        self.poisoned = true;
+    }
+
     /// Commits `state`, deleting `deletes` in the same commit (ADR-0008, decision 6).
     pub(crate) fn commit_deleting(&mut self, deletes: &[u64]) -> Result<()> {
         if !self.writable {
@@ -1272,13 +1317,13 @@ fn is_at(_file: &File, _path: &Path) -> Result<bool> {
 }
 
 /// `path` with `.suffix` appended to its file name.
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".{suffix}"));
     path.with_file_name(name)
 }
 
-fn sync_dir(path: &Path) -> Result<()> {
+pub(crate) fn sync_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
@@ -1289,34 +1334,46 @@ fn sync_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Renames `temp` over `path` and makes the rename durable. On Windows nothing may have `path`
+/// open, this process included.
+#[cfg(unix)]
+pub(crate) fn rename_over(temp: &Path, path: &Path) -> Result<()> {
+    std::fs::rename(temp, path)?;
+    sync_dir(path)
+}
+
+/// `MoveFileExW` directly: `std::fs::rename` retries with POSIX semantics and would replace the
+/// file under other processes' handles.
+#[cfg(windows)]
+pub(crate) fn rename_over(temp: &Path, path: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
+    // SAFETY: both paths are NUL-terminated wide strings that outlive the call.
+    if unsafe { MoveFileExW(wide(temp).as_ptr(), wide(path).as_ptr(), flags) } == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("Another process has the index open, so its file can't be replaced");
+    }
+    Ok(())
+}
+
 /// Renames the migrated file over the original and makes the rename durable.
 #[cfg(unix)]
 fn replace(temp: &Path, path: &Path, original: File, storage: &mut Storage) -> Result<()> {
-    std::fs::rename(temp, path)?;
-    sync_dir(path)?;
+    rename_over(temp, path)?;
     // Releases before v3 don't re-check which file their lock is on, so hold the old one.
     storage._replaced = Some(original);
     Ok(())
 }
 
 /// Windows refuses to rename over a file with any open handle, so the original is closed first.
-/// `MoveFileExW` directly: `std::fs::rename` retries with POSIX semantics and would replace the
-/// file under other processes' handles.
 #[cfg(windows)]
 fn replace(temp: &Path, path: &Path, original: File, _storage: &mut Storage) -> Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    };
     drop(original);
-    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
-    let flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
-    // SAFETY: both paths are NUL-terminated wide strings that outlive the call.
-    if unsafe { MoveFileExW(wide(temp).as_ptr(), wide(path).as_ptr(), flags) } == 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("Another process opened the file during migration; reopen to retry");
-    }
-    Ok(())
+    rename_over(temp, path).context("Migration will retry when the index is next opened")
 }
 
 #[cfg(test)]

@@ -507,3 +507,27 @@ class TestAddBatch:
             index.add_batch([[2.0, 2.0, 2.0]])
         assert len(index) == 2
         index.close()
+
+
+class TestCompact:
+    """Reclaiming deleted vectors' space."""
+
+    def test_compact_keeps_live_ids_and_shrinks_the_file(self, tmp_path):
+        path = tmp_path / "c.chassis"
+        index = VectorIndex(path, dimensions=8)
+        rng = np.random.default_rng(3)
+        vectors = rng.random((3000, 8), dtype=np.float32)
+        index.add_batch(vectors)
+        # Keep one in three, few enough to need one segment less.
+        for i in range(3000):
+            if i % 3:
+                index.delete(i)
+        index.flush()
+        before = path.stat().st_size
+        index.compact()
+        assert len(index) == 1000
+        assert path.stat().st_size < before
+        assert index.search(vectors[0], k=1)[0].id == 0
+        assert index.search(vectors[1], k=1)[0].id != 1
+        assert index.add(vectors[1]) == 3000
+        index.close()

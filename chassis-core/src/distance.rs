@@ -48,9 +48,14 @@ pub(crate) fn unit(v: &[f32]) -> anyhow::Result<Vec<f32>> {
 /// - x86_64 + AVX2: Uses AVX2 intrinsics (runtime detection)
 /// - aarch64: Uses NEON intrinsics (always available)
 /// - Fallback: Portable scalar implementation
+///
+/// # Panics
+///
+/// Panics if the vectors differ in length.
 #[inline]
 pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
+    // The SIMD kernels read `a.len()` floats from both.
+    assert_eq!(a.len(), b.len(), "vectors differ in length");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -274,6 +279,12 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "differ in length")]
+    fn test_euclidean_distance_refuses_unequal_lengths() {
+        euclidean_distance(&[0.0; 64], &[0.0; 8]);
+    }
 
     #[test]
     fn test_euclidean_distance_basic() {

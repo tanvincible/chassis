@@ -31,13 +31,28 @@ fn live_after(batches: u64) -> u64 {
     batches * BATCH - batches.saturating_sub(1) * DELETES_PER_BATCH
 }
 
+/// Opens the index once its lock is free. A process another test forks holds a copy of every
+/// open handle until it execs, and with it the lock of an index this test has just closed.
+fn unlocked<T>(open: impl Fn() -> anyhow::Result<T>) -> T {
+    for _ in 0..400 {
+        match open() {
+            Err(e) if e.to_string().contains("already open") => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            opened => return opened.unwrap(),
+        }
+    }
+    panic!("the index stayed locked for two seconds")
+}
+
 /// The child half: only does work when the parent test spawns it with a path.
 #[test]
 fn crash_writer() {
     let Ok(path) = std::env::var("CHASSIS_CRASH_PATH") else { return };
-    let mut index = VectorIndex::open(&path, DIMS, options()).unwrap();
+    let mut index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
     let mut batch = (0..).find(|&b| live_after(b) == index.len()).unwrap();
     let add_batch = std::env::var("CHASSIS_CRASH_ADD_BATCH").is_ok();
+    let compact = std::env::var("CHASSIS_CRASH_COMPACT").is_ok();
     loop {
         let ids = batch * BATCH..(batch + 1) * BATCH;
         if add_batch {
@@ -55,30 +70,44 @@ fn crash_writer() {
         index.flush().unwrap();
         batch += 1;
         println!("flushed {batch}");
+        if compact && batch % 2 == 0 {
+            println!("compacting");
+            index.compact().unwrap();
+        }
     }
 }
 
 #[test]
 fn test_kill_at_random_points_keeps_flushed_data() {
-    kill_at_random_points(false);
+    kill_at_random_points(false, false);
 }
 
 /// The same, with each batch added by `add_batch`, so kills land while threads link it.
 #[test]
 fn test_kill_during_parallel_batches_keeps_flushed_data() {
-    kill_at_random_points(true);
+    kill_at_random_points(true, false);
 }
 
-fn kill_at_random_points(add_batch: bool) {
+/// The same, compacting after every second flush, so kills land while the copy is built, flagged
+/// and renamed. Compaction changes no vector or id, so every check on them still holds.
+#[test]
+fn test_kill_during_compaction_keeps_flushed_data() {
+    kill_at_random_points(false, true);
+}
+
+fn kill_at_random_points(add_batch: bool, compact: bool) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("crash.chassis");
-    let (mut flushed, mut batched) = (0, false);
+    let (mut flushed, mut batched, mut compacted) = (0, false, false);
 
     for _ in 0..ROUNDS {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command.args(["crash_writer", "--exact", "--nocapture"]).env("CHASSIS_CRASH_PATH", &path);
         if add_batch {
             command.env("CHASSIS_CRASH_ADD_BATCH", "1");
+        }
+        if compact {
+            command.env("CHASSIS_CRASH_COMPACT", "1");
         }
         let mut child = command.stdout(Stdio::piped()).spawn().unwrap();
         std::thread::sleep(Duration::from_millis(rand::random_range(50..500)));
@@ -88,12 +117,13 @@ fn kill_at_random_points(add_batch: bool) {
         for line in BufReader::new(child.stdout.take().unwrap()).lines() {
             let line = line.unwrap();
             batched |= line == "added with add_batch";
+            compacted |= line == "compacting";
             if let Some(n) = line.strip_prefix("flushed ") {
                 flushed = n.parse().unwrap();
             }
         }
 
-        let index = VectorIndex::open(&path, DIMS, options()).unwrap();
+        let index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
         let len = index.len();
         // A kill between flush() and the println leaves one batch more than was reported. Any
         // other count means a flush kept its adds but not its deletes, or the reverse.
@@ -114,7 +144,18 @@ fn kill_at_random_points(add_batch: bool) {
         }
         drop(index);
 
-        let storage = Storage::open(&path, DIMS).unwrap();
+        // Compaction moves vectors to other slots, so check them through the index instead.
+        if compact {
+            let index = unlocked(|| VectorIndex::open(&path, DIMS, options()));
+            assert!(!dir.path().join("crash.chassis.compacting").exists(), "a killed copy remains");
+            let deleted: Vec<u64> = (0..flushed).flat_map(deleted_by).collect();
+            for id in (0..flushed * BATCH).step_by(7) {
+                let found = index.search(&vector(id), 5).unwrap().iter().any(|h| h.id == id);
+                assert_eq!(found, !deleted.contains(&id), "id {id} after {flushed} batches");
+            }
+            continue;
+        }
+        let storage = unlocked(|| Storage::open(&path, DIMS));
         assert_eq!(storage.count(), flushed * BATCH);
         for id in 0..storage.count() {
             assert_eq!(storage.get_vector_slice(id).unwrap(), vector(id).as_slice(), "vector {id}");
@@ -122,4 +163,5 @@ fn kill_at_random_points(add_batch: bool) {
     }
     assert!(flushed > 0, "no round got as far as a flush");
     assert_eq!(batched, add_batch, "the writer didn't add the way this test asked");
+    assert_eq!(compacted, compact, "the writer didn't compact when this test asked");
 }
