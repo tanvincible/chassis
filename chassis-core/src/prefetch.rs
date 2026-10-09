@@ -55,7 +55,7 @@ impl Prefetch {
     /// (ADR-0015).
     #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
     fn for_this_cpu() -> Self {
-        Self { near: 0, lines: 16 }
+        Self { near: 0, lines: 32 }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
