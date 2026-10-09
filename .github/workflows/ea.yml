@@ -1,0 +1,155 @@
+name: x86 ea
+
+# Experiment branch only: long vectors. A distance that stops once it is past the worst result,
+# and a kernel that asks for the vector ahead of where it is reading, beside feat/huge-pages and
+# hnswlib. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/ea.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  STEPS: "base=c46fb1c hp=5ce725e ea=d7e592c eax=2d6b642"
+
+jobs:
+  dims:
+    name: ea (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [dbpedia-openai3-1536, gist-960, sift-128]
+        runner: [ubuntu-latest]
+        shard: [a, b, c, d]
+        include:
+          - { name: dbpedia-openai3-1536, sizes: "2000 20000 99000" }
+          - { name: gist-960, sizes: "20000 200000" }
+          - { name: sift-128, sizes: "20000 1000000" }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, sizes: "2000 20000 99000" }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: b, sizes: "2000 20000 99000" }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: a, sizes: "20000 200000" }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: b, sizes: "20000 200000" }
+          - { name: sift-128, runner: ubuntu-24.04-arm, shard: a, sizes: "20000 1000000" }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+          df -h / | tail -1
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data and hnswlib
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+          git clone -q --depth 1 --branch v0.8.0 https://github.com/nmslib/hnswlib "$RUNNER_TEMP/hnswlib"
+          g++ -std=c++17 -O3 -march=native -o "$RUNNER_TEMP/hnsw_lab" bench/lab/hnsw_lab.cpp -I "$RUNNER_TEMP/hnswlib" -lpthread
+
+      - name: Build Chassis before, after, and with the policy knob
+        run: |
+          git fetch -q origin feat/huge-pages perf/abandon lab/exp-ea
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          build() { # name, commit, rustflags
+            (cd "$RUNNER_TEMP/src" && git checkout -q --detach "$2" \
+              && cp "$GITHUB_WORKSPACE/chassis-core/examples/lab.rs" chassis-core/examples/lab.rs \
+              && RUSTFLAGS="$3" cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t$3" \
+              && rm chassis-core/examples/lab.rs)
+            cp "$RUNNER_TEMP/t$3/release/examples/lab" "$RUNNER_TEMP/lab-$1"
+          }
+          for step in $STEPS; do build "${step%%=*}" "${step#*=}" ""; done
+
+      - name: Search
+        run: |
+          L="$RUNNER_TEMP/lab-base"
+          "$L" kernel base | tee -a results/lab.tsv
+          "$RUNNER_TEMP/hnsw_lab" kernel | tee -a results/lab.tsv
+          for n in ${{ matrix.sizes }}; do
+            truth="$RUNNER_TEMP/gt-$n.u32"
+            "$L" truth "$DATA" "$NAME" "$n" "$truth"
+            "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/c-$n.chassis" "$n" | tee -a results/lab.tsv
+            "$RUNNER_TEMP/hnsw_lab" build "$DATA/$NAME.train.f32" "$n" "$RUNNER_TEMP/h-$n.bin" "$(nproc)" | tee -a results/lab.tsv
+            C="search $DATA $NAME $RUNNER_TEMP/c-$n.chassis $truth"
+            H="search $RUNNER_TEMP/h-$n.bin $DATA/$NAME.train.f32 $DATA/$NAME.test.f32 $truth"
+            X() { # tag, env...: the experiment build with its knobs
+              tag=$1; shift
+              env "$@" "$RUNNER_TEMP/lab-eax" $C "$tag" 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+            }
+            for round in 1 2 3; do
+              "$RUNNER_TEMP/hnsw_lab" $H native 2>> results/pages.txt | tee -a results/lab.tsv
+              for v in hp ea; do
+                "$RUNNER_TEMP/lab-$v" $C $v 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+              done
+              X nolimit LAB_NOLIMIT=1
+              X ahead4 LAB_NOLIMIT=1 LAB_AHEAD=4
+              X ahead8 LAB_NOLIMIT=1 LAB_AHEAD=8
+              X ahead16 LAB_NOLIMIT=1 LAB_AHEAD=16
+              X stop+ahead8 LAB_AHEAD=8
+            done
+          done
+          # One-thread builds, which run the same loop.
+          for round in 1 2; do
+            "$RUNNER_TEMP/lab-hp" seq "$DATA" "$NAME" 20000 hp | tee -a results/lab.tsv
+            "$RUNNER_TEMP/lab-ea" seq "$DATA" "$NAME" 20000 ea | tee -a results/lab.tsv
+          done
+          {
+            echo '```'
+            cat results/lab.tsv
+            sort -u results/pages.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ea-${{ matrix.name }}-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/
