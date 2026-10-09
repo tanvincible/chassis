@@ -1,0 +1,148 @@
+name: x86 half
+
+# Experiment branch only: what keeping vectors in half precision would give. The f32 and f16
+# kernels in cache and out of it on each machine, and recall over real vectors rounded to half
+# precision. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/half.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+
+jobs:
+  kernel:
+    name: kernel (${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest]
+        shard: [a, b, c, d, e, f]
+        include:
+          - { runner: ubuntu-24.04-arm, shard: a }
+          - { runner: ubuntu-24.04-arm, shard: b }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+
+      - name: Kernels
+        run: |
+          cargo build --release -p chassis-core --example lab
+          for round in 1 2 3; do
+            ./target/release/examples/lab halfbench | tee -a results/half.tsv
+          done
+          { echo '```'; cat results/half.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: half-kernel-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/
+
+  recall:
+    name: recall (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: dbpedia-openai3-1536, n: 99000 }
+          - { name: gist-960, n: 200000 }
+          - { name: sift-128, n: 1000000 }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+      N: ${{ matrix.n }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data
+        run: |
+          mkdir results
+          lscpu > results/lscpu.txt
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+
+      - name: Build Chassis as of feat/huge-pages with this harness
+        run: |
+          git fetch -q origin feat/huge-pages
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+          (cd "$RUNNER_TEMP/src" && cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
+          cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
+
+      - name: Recall with full and with half precision
+        run: |
+          L="$RUNNER_TEMP/lab"
+          truth="$RUNNER_TEMP/gt.u32"
+          "$L" truth "$DATA" "$NAME" "$N" "$truth"
+          "$L" ceiling "$DATA" "$NAME" "$N" "$truth" | sed 's/^ceiling/ceiling\tf32/' | tee -a results/half.tsv
+          LAB_ROUND16=1 "$L" ceiling "$DATA" "$NAME" "$N" "$truth" | sed 's/^ceiling/ceiling\tf16/' | tee -a results/half.tsv
+          # Batch builds differ from run to run, so two of each to see by how much.
+          for round in a b; do
+            "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/f32.chassis" "$N" > /dev/null
+            LAB_PASSES=1 "$L" search "$DATA" "$NAME" "$RUNNER_TEMP/f32.chassis" "$truth" "f32-$round" 2>/dev/null | grep -v first_pass | tee -a results/half.tsv
+            LAB_ROUND16=1 "$L" build "$DATA" "$NAME" "$RUNNER_TEMP/f16.chassis" "$N" > /dev/null
+            LAB_ROUND16=1 LAB_PASSES=1 "$L" search "$DATA" "$NAME" "$RUNNER_TEMP/f16.chassis" "$truth" "f16-$round" 2>/dev/null | grep -v first_pass | tee -a results/half.tsv
+          done
+          { echo '```'; cat results/half.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: half-recall-${{ matrix.name }}
+          path: results/
