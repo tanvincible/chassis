@@ -19,7 +19,14 @@ impl Prefetch {
     /// The policy for this machine, chosen once.
     pub(crate) fn detect() -> Self {
         static POLICY: OnceLock<Prefetch> = OnceLock::new();
-        *POLICY.get_or_init(Self::for_this_cpu)
+        // Experiment, never merged: LAB_PF=near,lines replaces this CPU's policy.
+        *POLICY.get_or_init(|| {
+            let asked = std::env::var("LAB_PF").ok().and_then(|v| {
+                let (near, lines) = v.split_once(',')?;
+                Some(Self { near: near.parse().ok()?, lines: lines.parse().ok()? })
+            });
+            asked.unwrap_or_else(Self::for_this_cpu)
+        })
     }
 
     /// A node has up to 32 neighbors, so a search asks for up to 256 lines at once. Into L2 that
