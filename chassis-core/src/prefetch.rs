@@ -1,6 +1,7 @@
-//! Software prefetching for graph search (ADR-0013). A search knows a node's neighbors before it
-//! needs their vectors, so it asks the CPU to start loading all of them, and their cache misses
-//! overlap instead of queuing. How many lines to ask for, and into which cache, depends on the CPU.
+//! Software prefetching for graph search (ADR-0013, ADR-0015). A search knows a node's neighbors
+//! before it needs their vectors, so it asks the CPU to start loading all of them, and their cache
+//! misses overlap instead of queuing. How many lines to ask for, and into which cache, depends on
+//! the CPU.
 
 use std::sync::OnceLock;
 
@@ -27,21 +28,34 @@ impl Prefetch {
     /// hints past that. Zen 5 tracks 124, and is a tenth faster or more with L1 (ADR-0013).
     #[cfg(target_arch = "x86_64")]
     fn for_this_cpu() -> Self {
-        Self::for_x86(amd_family())
+        Self::for_x86(amd())
     }
 
-    /// The policy for an x86 processor, given its CPUID family if it is AMD's.
+    /// The policy for an x86 processor, given its CPUID family and model if it is AMD's. Eight
+    /// lines are all of a 128-dimension vector. Of a longer one, Zen 4 does better with 32; Zen 3,
+    /// Zen 5 and the Xeons measured do worse with more than eight (ADR-0015).
     #[cfg(any(target_arch = "x86_64", test))]
-    fn for_x86(amd_family: Option<u32>) -> Self {
-        match amd_family {
-            Some(ZEN_5..) => Self { near: 8, lines: 8 },
+    fn for_x86(amd: Option<(u32, u32)>) -> Self {
+        match amd {
+            Some((ZEN_5.., _)) => Self { near: 8, lines: 8 },
+            Some((ZEN_3_AND_4, model)) if is_zen_4(model) => Self { near: 0, lines: 32 },
             _ => Self { near: 0, lines: 8 },
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    /// Apple's cores do far better with the whole vector on its way: 60% faster at 1,536
+    /// dimensions than with eight lines, and 10 to 20% faster than with two thirds of it. The
+    /// bound is 4,096 dimensions' worth (ADR-0015).
+    #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
     fn for_this_cpu() -> Self {
-        Self { near: 0, lines: 8 }
+        Self { near: 0, lines: 256 }
+    }
+
+    /// Sixteen lines was the setting that never lost on Neoverse-N2, at 960 and 1,536 dimensions
+    /// (ADR-0015).
+    #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+    fn for_this_cpu() -> Self {
+        Self { near: 0, lines: 16 }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -108,16 +122,28 @@ fn hint(line: *const u8, near: bool) {
 #[cfg(any(target_arch = "x86_64", test))]
 const ZEN_5: u32 = 0x1a;
 
-/// The CPUID family of an AMD processor.
+/// The CPUID family Zen 3 and Zen 4 share.
+#[cfg(any(target_arch = "x86_64", test))]
+const ZEN_3_AND_4: u32 = 0x19;
+
+/// Whether a model of family 19h is a Zen 4 core, by the ranges Linux tells them apart with.
+#[cfg(any(target_arch = "x86_64", test))]
+fn is_zen_4(model: u32) -> bool {
+    matches!(model, 0x10..=0x1f | 0x60..=0xaf)
+}
+
+/// The CPUID family and model of an AMD processor.
 #[cfg(target_arch = "x86_64")]
 #[allow(unused_unsafe)] // `__cpuid` is safe from Rust 1.89 on.
-fn amd_family() -> Option<u32> {
+fn amd() -> Option<(u32, u32)> {
     use std::arch::x86_64::__cpuid;
     // SAFETY: every x86-64 processor has CPUID.
     let (vendor, version) = unsafe { (__cpuid(0), __cpuid(1).eax) };
     // "AuthenticAMD", in EBX, EDX, ECX.
     let amd = (vendor.ebx, vendor.edx, vendor.ecx) == (0x6874_7541, 0x6974_6e65, 0x444d_4163);
-    amd.then_some(((version >> 8) & 0xf) + ((version >> 20) & 0xff))
+    let family = ((version >> 8) & 0xf) + ((version >> 20) & 0xff);
+    let model = ((version >> 4) & 0xf) | ((version >> 12) & 0xf0);
+    amd.then_some((family, model))
 }
 
 #[cfg(test)]
@@ -147,18 +173,25 @@ mod tests {
     #[test]
     fn test_each_measured_x86_processor_gets_its_policy() {
         let (into_l1, into_l2) = (Prefetch { near: 8, lines: 8 }, Prefetch { near: 0, lines: 8 });
-        // EPYC 7763 (Zen 3) and 9V74 (Zen 4) share a family; EPYC 9V45 is Zen 5; then Intel.
-        assert_eq!(Prefetch::for_x86(Some(0x19)), into_l2);
-        assert_eq!(Prefetch::for_x86(Some(0x1a)), into_l1);
+        let deeper = Prefetch { near: 0, lines: 32 };
+        // EPYC 7763 (Zen 3), 9V74 (Zen 4) and 9V45 (Zen 5), by family and model; then Intel.
+        assert_eq!(Prefetch::for_x86(Some((0x19, 0x01))), into_l2);
+        assert_eq!(Prefetch::for_x86(Some((0x19, 0x11))), deeper);
+        assert_eq!(Prefetch::for_x86(Some((0x1a, 0x02))), into_l1);
         assert_eq!(Prefetch::for_x86(None), into_l2);
-        // Not measured: earlier Zen cores, and whatever follows Zen 5.
-        assert_eq!(Prefetch::for_x86(Some(0x17)), into_l2);
-        assert_eq!(Prefetch::for_x86(Some(0x1b)), into_l1);
+        // Not measured: desktop Zen 3 and Zen 4, earlier Zen cores, and whatever follows Zen 5.
+        assert_eq!(Prefetch::for_x86(Some((0x19, 0x21))), into_l2);
+        assert_eq!(Prefetch::for_x86(Some((0x19, 0x61))), deeper);
+        assert_eq!(Prefetch::for_x86(Some((0x17, 0x31))), into_l2);
+        assert_eq!(Prefetch::for_x86(Some((0x1b, 0x00))), into_l1);
+        // A 128-dimension vector is eight lines whatever the policy.
+        assert_eq!(deeper.for_dims(128), into_l2);
     }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn test_amd_family_is_a_real_family() {
-        assert!(amd_family().is_none_or(|family| (0xf..0x100).contains(&family)));
+    fn test_amd_family_and_model_are_real() {
+        let real = |(family, model)| (0xf..0x100).contains(&family) && model < 0x100;
+        assert!(amd().is_none_or(real));
     }
 }
