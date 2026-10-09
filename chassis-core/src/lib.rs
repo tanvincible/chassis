@@ -48,6 +48,7 @@
 //! primitive, like SQLite for relational data.
 
 pub mod distance;
+mod half;
 mod header;
 mod hnsw;
 mod legacy;
@@ -61,6 +62,7 @@ mod power_loss;
 pub use hnsw::*;
 
 pub use distance::{DistanceMetric, cosine_distance, euclidean_distance};
+pub use half::Precision;
 pub use header::{MAGIC, VERSION};
 pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
 pub use storage::Storage;
@@ -85,6 +87,10 @@ pub struct IndexOptions {
     /// How vectors are compared. Set when the index is created; reopening needs the same one.
     pub metric: DistanceMetric,
 
+    /// What the file keeps of each component of a vector (ADR-0018). Set when the index is
+    /// created; reopening needs the same one. A reader takes it from the file.
+    pub precision: Precision,
+
     /// Ask the operating system to keep the vectors on huge pages (ADR-0016). On an index too
     /// large for the CPU's caches, searches are up to a quarter faster and batch builds a little
     /// faster. Only on Linux, and only where the kernel and filesystem keep files on huge
@@ -101,6 +107,7 @@ impl Default for IndexOptions {
             ef_construction: 200,
             ef_search: 50,
             metric: DistanceMetric::Euclidean,
+            precision: Precision::Full,
             huge_pages: false,
         }
     }
@@ -156,12 +163,25 @@ impl VectorIndex {
         // Compaction and migration rename a new file over this one: through a symlink that would
         // replace the link and leave the file it points to behind.
         let path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.as_ref().to_path_buf());
-        let storage = Storage::open_with(&path, dims, params.to_record_params(), options.metric)?;
+        let storage = Storage::open_with_precision(
+            &path,
+            dims,
+            params.to_record_params(),
+            options.metric,
+            options.precision,
+        )?;
         if storage.metric() != options.metric {
             anyhow::bail!(
                 "Index was created with {:?} distance but opened with {:?}",
                 storage.metric(),
                 options.metric
+            );
+        }
+        if storage.precision() != options.precision {
+            anyhow::bail!(
+                "Index was created with {:?} precision but opened with {:?}",
+                storage.precision(),
+                options.precision
             );
         }
         let graph = HnswGraph::open_no_reset(storage, params)?;
@@ -310,6 +330,10 @@ impl VectorIndex {
         if ids.is_empty() {
             return Ok(());
         }
+        // The whole batch before any of it is written: `append` would stop part way.
+        if self.graph.storage.precision() == Precision::Half {
+            half::check(vectors)?;
+        }
         let layers: Vec<usize> = ids.iter().map(|_| self.select_layer()).collect();
         let first = self.graph.node_count();
         let saved = (self.graph.entry_point, self.graph.max_layer);
@@ -429,6 +453,15 @@ impl VectorIndex {
         let slot = self.graph.node_count();
         self.graph.storage.truncate_logical(slot);
         let new_id = self.graph.storage.append(id, vector)?;
+        // In half precision the vector is linked as kept, which is not quite as given.
+        let kept;
+        let vector = match self.graph.storage.precision() {
+            Precision::Full => vector,
+            Precision::Half => {
+                kept = self.graph.storage.get_vector(new_id)?;
+                &kept[..]
+            }
+        };
 
         // STEP 2: Determine layer for new node
         let layer = self.select_layer();
@@ -557,7 +590,7 @@ impl VectorIndex {
             for slot in start..(start + chunk as u64).min(count) {
                 if !self.graph.is_deleted(slot)? {
                     ids.push(self.graph.id_of(slot)?);
-                    vectors.extend_from_slice(self.graph.storage.get_vector_slice(slot)?);
+                    vectors.extend_from_slice(&self.graph.storage.vector(slot)?);
                 }
             }
             let first = fresh.graph.node_count();
@@ -635,6 +668,11 @@ impl VectorIndex {
     /// The distance metric the index was created with
     pub fn metric(&self) -> DistanceMetric {
         self.graph.storage.metric()
+    }
+
+    /// What the file keeps of each component of a vector
+    pub fn precision(&self) -> Precision {
+        self.graph.storage.precision()
     }
 
     // Private helper methods
@@ -811,6 +849,11 @@ impl IndexReader {
     /// The distance metric the index was created with
     pub fn metric(&self) -> DistanceMetric {
         self.graph.storage.metric()
+    }
+
+    /// What the file keeps of each component of a vector
+    pub fn precision(&self) -> Precision {
+        self.graph.storage.precision()
     }
 
     /// Take a new snapshot without searching, so `len` reflects the writer's latest flush.

@@ -18,6 +18,8 @@
 //! This means `neighbors_per_layer` can only contain node IDs where `id < self.node_count`.
 //! Forward links to non-existent nodes are filtered out during linking.
 
+use crate::distance::Element;
+use crate::half::Precision;
 use crate::hnsw::graph::{HnswGraph, Linking};
 use crate::hnsw::node::{INVALID_NODE_ID, NodeId, NodeRecord};
 use crate::prefetch::Prefetch;
@@ -312,8 +314,8 @@ impl HnswGraph {
         let start = *top;
         let raises = (layer > start.1).then_some(top);
 
-        let vector = self.storage.get_vector_slice(slot)?;
-        let neighbors = self.find_neighbors(vector, slot, layer, start, ef)?;
+        let vector = self.storage.vector(slot)?;
+        let neighbors = self.find_neighbors(&vector, slot, layer, start, ef)?;
         {
             let _own = lock(slot);
             for (l, ids) in neighbors.iter().enumerate() {
@@ -354,23 +356,62 @@ impl HnswGraph {
         if candidates.len() <= max_count {
             return Ok(candidates.to_vec());
         }
+        let mut by_distance = match self.storage.precision() {
+            Precision::Full => self.distances_from::<f32>(base_node, candidates)?,
+            Precision::Half => self.distances_from::<u16>(base_node, candidates)?,
+        };
+        by_distance.sort_by(|a, b| a.1.total_cmp(&b.1));
+        self.select_diverse(&by_distance, max_count, priority_node)
+    }
 
-        let base_vector = self.storage.get_vector_slice(base_node)?;
-        let prefetch = Prefetch::detect().for_dims(base_vector.len());
-        let kernel = crate::distance::kernel();
+    /// Each candidate with its distance from `base_node`, over vectors kept as `E`s.
+    fn distances_from<E: Element>(
+        &self,
+        base_node: NodeId,
+        candidates: &[NodeId],
+    ) -> Result<Vec<(NodeId, f32)>> {
+        let mut scratch = Vec::new();
+        let base_vector = E::widened(self.storage.stored::<E>(base_node)?, &mut scratch);
+        let (kernel, prefetch) = (E::kernel(), Prefetch::detect().for_dims::<E>(base_vector.len()));
         // Start loading every candidate's vector first, so the cache misses overlap.
-        let vectors: Vec<Option<&[f32]>> = candidates
+        let vectors: Vec<Option<&[E]>> = candidates
             .iter()
-            .map(|&id| self.storage.get_vector_slice(id).ok().inspect(|v| prefetch.vector(v)))
+            .map(|&id| self.storage.stored::<E>(id).ok().inspect(|v| prefetch.vector(v)))
             .collect();
-        let mut by_distance: Vec<(NodeId, f32)> = candidates
+        Ok(candidates
             .iter()
             .zip(vectors)
             // SAFETY: stored vectors all have the index's dimensions.
             .map(|(&id, v)| (id, v.map_or(f32::MAX, |v| unsafe { kernel(base_vector, v) })))
-            .collect();
-        by_distance.sort_by(|a, b| a.1.total_cmp(&b.1));
-        self.select_diverse(&by_distance, max_count, priority_node)
+            .collect())
+    }
+
+    /// The candidates, nearest first and at most `max_count`, that are each closer to the base
+    /// node than to any candidate kept before it, over vectors kept as `E`s.
+    fn far_from_each_other<E: Element>(
+        &self,
+        by_distance: &[(NodeId, f32)],
+        max_count: usize,
+    ) -> Result<Vec<NodeId>> {
+        let kernel = E::kernel();
+        let mut scratch = Vec::new();
+
+        // Each (candidate, kept) pair is compared at most once, so there is nothing to cache.
+        let mut selected: Vec<(NodeId, &[E])> = Vec::with_capacity(max_count);
+        for &(candidate, distance) in by_distance {
+            if selected.len() >= max_count {
+                break;
+            }
+            let stored = self.storage.stored::<E>(candidate)?;
+            let vector = E::widened(stored, &mut scratch);
+            // SAFETY: stored vectors all have the index's dimensions.
+            let near_a_kept =
+                |&(_, kept): &(NodeId, &[E])| unsafe { kernel(vector, kept) } < distance;
+            if !selected.iter().any(near_a_kept) {
+                selected.push((candidate, stored));
+            }
+        }
+        Ok(selected.into_iter().map(|(id, _)| id).collect())
     }
 
     /// `select_neighbors_heuristic` for candidates whose distances to the base node are known,
@@ -384,23 +425,10 @@ impl HnswGraph {
         if by_distance.len() <= max_count {
             return Ok(by_distance.iter().map(|&(id, _)| id).collect());
         }
-        let kernel = crate::distance::kernel();
-
-        // Each (candidate, kept) pair is compared at most once, so there is nothing to cache.
-        let mut selected: Vec<(NodeId, &[f32])> = Vec::with_capacity(max_count);
-        for &(candidate, distance) in by_distance {
-            if selected.len() >= max_count {
-                break;
-            }
-            let vector = self.storage.get_vector_slice(candidate)?;
-            // SAFETY: stored vectors all have the index's dimensions.
-            let near_a_kept =
-                |&(_, kept): &(NodeId, &[f32])| unsafe { kernel(vector, kept) } < distance;
-            if !selected.iter().any(near_a_kept) {
-                selected.push((candidate, vector));
-            }
-        }
-        let mut selected: Vec<NodeId> = selected.into_iter().map(|(id, _)| id).collect();
+        let mut selected = match self.storage.precision() {
+            Precision::Full => self.far_from_each_other::<f32>(by_distance, max_count)?,
+            Precision::Half => self.far_from_each_other::<u16>(by_distance, max_count)?,
+        };
 
         // Vectors that lie along a line leave two diverse neighbors, and a chain breaks at its
         // first lost link, so a selection keeps at least a quarter of the list.

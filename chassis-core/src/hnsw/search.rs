@@ -14,7 +14,8 @@
 //! - Concurrent searches from many threads (`&self`)
 //! - Deterministic performance
 
-use crate::distance::{Kernel, Portable};
+use crate::distance::{Element, Kernel, Portable};
+use crate::half::Precision;
 use crate::hnsw::graph::HnswGraph;
 use crate::hnsw::node::NodeId;
 use crate::prefetch::Prefetch;
@@ -326,12 +327,24 @@ impl HnswGraph {
         entry: NodeId,
         layer: usize,
     ) -> Result<NodeId> {
-        #[cfg(target_arch = "x86_64")]
-        if crate::distance::has_avx2() {
-            // SAFETY: the CPU has AVX2 and FMA.
-            return unsafe { self.search_layer_greedy_avx2(query, entry, layer) };
+        match self.storage.precision() {
+            Precision::Full => {
+                #[cfg(target_arch = "x86_64")]
+                if crate::distance::has_avx2() {
+                    // SAFETY: the CPU has AVX2 and FMA.
+                    return unsafe { self.search_layer_greedy_avx2(query, entry, layer) };
+                }
+                self.search_layer_greedy_with::<f32, Portable>(query, entry, layer)
+            }
+            Precision::Half => {
+                #[cfg(target_arch = "x86_64")]
+                if crate::distance::has_f16c() {
+                    // SAFETY: the CPU has AVX2, FMA and F16C.
+                    return unsafe { self.search_layer_greedy_f16c(query, entry, layer) };
+                }
+                self.search_layer_greedy_with::<u16, Portable>(query, entry, layer)
+            }
         }
-        self.search_layer_greedy_with::<Portable>(query, entry, layer)
     }
 
     /// `search_layer_greedy` compiled for AVX2 and FMA, with the kernel inlined.
@@ -343,21 +356,33 @@ impl HnswGraph {
         entry: NodeId,
         layer: usize,
     ) -> Result<NodeId> {
-        self.search_layer_greedy_with::<crate::distance::Avx2>(query, entry, layer)
+        self.search_layer_greedy_with::<f32, crate::distance::Avx2>(query, entry, layer)
     }
 
-    #[inline(always)]
-    fn search_layer_greedy_with<K: Kernel>(
+    /// `search_layer_greedy_avx2` over vectors in half precision, compiled for F16C too.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+    unsafe fn search_layer_greedy_f16c(
         &self,
         query: &[f32],
         entry: NodeId,
         layer: usize,
     ) -> Result<NodeId> {
-        // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
-        // index's dimensions, and so does a query.
+        self.search_layer_greedy_with::<u16, crate::distance::F16c>(query, entry, layer)
+    }
+
+    #[inline(always)]
+    fn search_layer_greedy_with<E: Element, K: Kernel<E>>(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        layer: usize,
+    ) -> Result<NodeId> {
+        // SAFETY (here and below): the caller chose a kernel this CPU has, and `E` as the file
+        // keeps its vectors; a stored vector has the index's dimensions, and so does a query.
         let mut best_id = entry;
-        let mut best_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
-        let prefetch = Prefetch::detect().for_dims(query.len());
+        let mut best_dist = unsafe { K::squared(query, self.storage.stored::<E>(entry)?) };
+        let prefetch = Prefetch::detect().for_dims::<E>(query.len());
 
         let mut visited = Visited::take(self.node_count as usize);
         visited.0.visit(entry);
@@ -369,14 +394,14 @@ impl HnswGraph {
             // distance. Only hints, so a neighbor that can't be read is left for the loop below.
             for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
                 if !visited.0.is_visited(neighbor_id)
-                    && let Ok(vector) = self.storage.get_vector_slice(neighbor_id)
+                    && let Ok(vector) = self.storage.stored::<E>(neighbor_id)
                 {
                     prefetch.vector(vector);
                 }
             }
             for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
                 if visited.0.visit(neighbor_id) {
-                    let vector = self.storage.get_vector_slice(neighbor_id)?;
+                    let vector = self.storage.stored::<E>(neighbor_id)?;
                     let dist = unsafe { K::squared(query, vector) };
 
                     if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
@@ -455,14 +480,56 @@ impl HnswGraph {
         skip_deleted: bool,
         filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
     ) -> Result<Option<Vec<SearchResult>>> {
-        #[cfg(target_arch = "x86_64")]
-        if crate::distance::has_avx2() {
-            // SAFETY: the CPU has AVX2 and FMA.
-            return unsafe {
-                self.search_layer_avx2::<FILTERED>(query, entry, ef, layer, skip_deleted, filter)
-            };
+        match self.storage.precision() {
+            Precision::Full => {
+                #[cfg(target_arch = "x86_64")]
+                if crate::distance::has_avx2() {
+                    // SAFETY: the CPU has AVX2 and FMA.
+                    return unsafe {
+                        self.search_layer_avx2::<FILTERED>(
+                            query,
+                            entry,
+                            ef,
+                            layer,
+                            skip_deleted,
+                            filter,
+                        )
+                    };
+                }
+                self.search_layer_with::<f32, Portable, FILTERED>(
+                    query,
+                    entry,
+                    ef,
+                    layer,
+                    skip_deleted,
+                    filter,
+                )
+            }
+            Precision::Half => {
+                #[cfg(target_arch = "x86_64")]
+                if crate::distance::has_f16c() {
+                    // SAFETY: the CPU has AVX2, FMA and F16C.
+                    return unsafe {
+                        self.search_layer_f16c::<FILTERED>(
+                            query,
+                            entry,
+                            ef,
+                            layer,
+                            skip_deleted,
+                            filter,
+                        )
+                    };
+                }
+                self.search_layer_with::<u16, Portable, FILTERED>(
+                    query,
+                    entry,
+                    ef,
+                    layer,
+                    skip_deleted,
+                    filter,
+                )
+            }
         }
-        self.search_layer_with::<Portable, FILTERED>(query, entry, ef, layer, skip_deleted, filter)
     }
 
     /// `search_layer` compiled for AVX2 and FMA, so that the kernel is inlined into the loop and
@@ -479,7 +546,30 @@ impl HnswGraph {
         skip_deleted: bool,
         filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
     ) -> Result<Option<Vec<SearchResult>>> {
-        self.search_layer_with::<crate::distance::Avx2, FILTERED>(
+        self.search_layer_with::<f32, crate::distance::Avx2, FILTERED>(
+            query,
+            entry,
+            ef,
+            layer,
+            skip_deleted,
+            filter,
+        )
+    }
+
+    /// `search_layer_avx2` over vectors in half precision, compiled for F16C too.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+    #[allow(clippy::type_complexity)]
+    unsafe fn search_layer_f16c<const FILTERED: bool>(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+        skip_deleted: bool,
+        filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
+    ) -> Result<Option<Vec<SearchResult>>> {
+        self.search_layer_with::<u16, crate::distance::F16c, FILTERED>(
             query,
             entry,
             ef,
@@ -491,7 +581,7 @@ impl HnswGraph {
 
     #[inline(always)]
     #[allow(clippy::type_complexity)]
-    fn search_layer_with<K: Kernel, const FILTERED: bool>(
+    fn search_layer_with<E: Element, K: Kernel<E>, const FILTERED: bool>(
         &self,
         query: &[f32],
         entry: NodeId,
@@ -513,7 +603,7 @@ impl HnswGraph {
 
         // An `ef` of 0 would leave no worst result to compare with; callers truncate anyway.
         let ef = ef.max(1);
-        let prefetch = Prefetch::detect().for_dims(query.len());
+        let prefetch = Prefetch::detect().for_dims::<E>(query.len());
 
         // Dense visited filter: O(n) space, O(1) time per check, reused across searches
         let mut visited = Visited::take(self.node_count as usize);
@@ -522,12 +612,12 @@ impl HnswGraph {
         let mut results = BinaryHeap::new();
         // The unvisited neighbors of the node being expanded, each with its vector: located
         // once, for the prefetch and for the distance.
-        let mut fresh: Vec<(NodeId, &[f32])> =
+        let mut fresh: Vec<(NodeId, &[E])> =
             Vec::with_capacity(self.record_params.max_neighbors(layer));
 
-        // SAFETY (here and below): the caller chose a kernel this CPU has; a stored vector has the
-        // index's dimensions, and so does a query.
-        let entry_dist = unsafe { K::squared(query, self.storage.get_vector_slice(entry)?) };
+        // SAFETY (here and below): the caller chose a kernel this CPU has, and `E` as the file
+        // keeps its vectors; a stored vector has the index's dimensions, and so does a query.
+        let entry_dist = unsafe { K::squared(query, self.storage.stored::<E>(entry)?) };
         candidates.push(Reverse(pack(entry_dist, entry)));
         if !excluded(entry)? {
             results.push(pack(entry_dist, entry));
@@ -546,7 +636,7 @@ impl HnswGraph {
             fresh.clear();
             for neighbor_id in self.neighbors_iter_from_mmap(current & SLOT, layer)? {
                 if visited.0.visit(neighbor_id) {
-                    let vector = self.storage.get_vector_slice(neighbor_id)?;
+                    let vector = self.storage.stored::<E>(neighbor_id)?;
                     prefetch.vector(vector);
                     fresh.push((neighbor_id, vector));
                 }

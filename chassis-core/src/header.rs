@@ -10,8 +10,17 @@ use xxhash_rust::xxh3::xxh3_64;
 /// Magic bytes at the start of every Chassis file, in every format version.
 pub const MAGIC: &[u8; 8] = b"CHASSIS\0";
 
-/// The file format this release writes. It reads this version and migrates versions 1 and 2.
-pub const VERSION: u32 = 3;
+/// The newest file format this release reads and writes: half-precision vectors (ADR-0018). A
+/// file with full-precision vectors is written as format 3, which releases before it read too.
+/// Versions 1 and 2 are migrated.
+pub const VERSION: u32 = 4;
+
+/// The format of a file whose header says `precision`. A release that doesn't know half
+/// precision would read those vectors as f32s, so it has to refuse the file; a full-precision
+/// file stays one it can read and write.
+pub(crate) const fn version_of(precision: u8) -> u32 {
+    if precision == 0 { 3 } else { VERSION }
+}
 
 /// Distance between the two header copies.
 pub(crate) const HEADER_STRIDE: usize = 64 * 1024;
@@ -33,7 +42,8 @@ const FIXED_LEN: usize = 136;
 /// One header copy. Offsets are bytes, little-endian; see `docs/src/architecture/file-format.md`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileHeader {
-    /// As read; `to_bytes` always writes `VERSION`. Only a writer refuses a newer one.
+    /// As read; `to_bytes` writes the version `precision` needs. Only a writer refuses a newer
+    /// one.
     pub write_version: u32,
     pub sequence: u64,
     pub dims: u32,
@@ -42,6 +52,8 @@ pub(crate) struct FileHeader {
     pub max_layers: u8,
     /// 0: Euclidean; 1: cosine, over vectors stored at unit length.
     pub metric: u8,
+    /// 0: vectors are f32s; 1: 16-bit floats, in a file of format 4.
+    pub precision: u8,
     pub flags: u8,
     /// log2 of the first segment's slot count.
     pub segment_base_log2: u8,
@@ -83,9 +95,10 @@ impl FileHeader {
     pub fn to_bytes(&self) -> Vec<u8> {
         let tables = FIXED_LEN + 8 * (self.segment_table.len() + self.heap_table.len());
         let mut b = vec![0u8; tables + 8];
+        let version = version_of(self.precision);
         b[0..8].copy_from_slice(MAGIC);
-        b[8..12].copy_from_slice(&VERSION.to_le_bytes()); // read version
-        b[12..16].copy_from_slice(&VERSION.to_le_bytes()); // write version
+        b[8..12].copy_from_slice(&version.to_le_bytes()); // read version
+        b[12..16].copy_from_slice(&version.to_le_bytes()); // write version
         b[24..32].copy_from_slice(&self.sequence.to_le_bytes());
         let len = b.len() as u32;
         b[32..36].copy_from_slice(&len.to_le_bytes());
@@ -100,6 +113,7 @@ impl FileHeader {
         b[49] = self.doubling_segments;
         b[50] = self.heap_base_log2;
         b[51] = self.doubling_chunks;
+        b[52] = self.precision;
         b[56..64].copy_from_slice(&self.count.to_le_bytes());
         b[64..72].copy_from_slice(&self.entry_point.to_le_bytes());
         b[72..76].copy_from_slice(&self.max_layer.to_le_bytes());
@@ -163,6 +177,9 @@ impl FileHeader {
         if copy[45] > 1 {
             bail!("Unknown distance metric {} in file header", copy[45]);
         }
+        if copy[52] > 1 {
+            bail!("Unknown vector precision {} in file header", copy[52]);
+        }
         Ok(Some(Self {
             write_version,
             sequence: u64_at(24),
@@ -171,6 +188,7 @@ impl FileHeader {
             m0: u16_at(42),
             max_layers: copy[44],
             metric: copy[45],
+            precision: copy[52],
             flags: copy[46],
             table_page_log2: copy[47],
             segment_base_log2: copy[48],
@@ -231,13 +249,14 @@ mod tests {
 
     fn sample() -> FileHeader {
         FileHeader {
-            write_version: VERSION,
+            write_version: version_of(0),
             sequence: 7,
             dims: 768,
             m: 16,
             m0: 32,
             max_layers: 16,
             metric: 1,
+            precision: 0,
             flags: FLAG_CUSTOM_IDS,
             segment_base_log2: 10,
             doubling_segments: 6,
@@ -304,14 +323,37 @@ mod tests {
         let mut bytes = sample().to_bytes();
         bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
         assert_eq!(FileHeader::from_bytes(&bytes).unwrap(), None);
-        bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&(VERSION + 1).to_le_bytes());
+        assert!(FileHeader::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn test_only_a_half_precision_file_needs_format_4() {
+        let version = |bytes: &[u8]| (bytes[8..12].to_vec(), bytes[12..16].to_vec());
+        let three = 3u32.to_le_bytes().to_vec();
+        assert_eq!(version(&sample().to_bytes()), (three.clone(), three));
+
+        let half = FileHeader { precision: 1, write_version: 4, ..sample() };
+        let bytes = half.to_bytes();
+        let four = 4u32.to_le_bytes().to_vec();
+        assert_eq!(version(&bytes), (four.clone(), four));
+        assert_eq!(FileHeader::from_bytes(&bytes).unwrap(), Some(half));
+    }
+
+    #[test]
+    fn test_unknown_precision_is_an_error() {
+        let mut bytes = sample().to_bytes();
+        bytes[52] = 2;
+        bytes[CHECKSUM].fill(0);
+        let checksum = xxh3_64(&bytes);
+        bytes[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         assert!(FileHeader::from_bytes(&bytes).is_err());
     }
 
     #[test]
     fn test_a_newer_write_version_with_more_fields_still_reads() {
         let mut bytes = sample().to_bytes();
-        bytes[12..16].copy_from_slice(&4u32.to_le_bytes());
+        bytes[12..16].copy_from_slice(&(VERSION + 1).to_le_bytes());
         bytes.extend_from_slice(&[0xab; 16]);
         let len = bytes.len() as u32;
         bytes[32..36].copy_from_slice(&len.to_le_bytes());
@@ -319,7 +361,7 @@ mod tests {
         let checksum = xxh3_64(&bytes);
         bytes[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         let header = FileHeader::from_bytes(&bytes).unwrap().unwrap();
-        assert_eq!(header, FileHeader { write_version: 4, ..sample() });
+        assert_eq!(header, FileHeader { write_version: VERSION + 1, ..sample() });
     }
 
     #[test]

@@ -6,8 +6,8 @@
 //! so every check holds after one too.
 
 use chassis_core::{
-    DistanceMetric, IndexOptions, IndexReader, SearchResult, VectorIndex, cosine_distance,
-    euclidean_distance,
+    DistanceMetric, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
+    cosine_distance, euclidean_distance,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -55,17 +55,30 @@ impl State {
 struct Run {
     seed: u64,
     metric: DistanceMetric,
+    precision: Precision,
     step: usize,
     op: &'static str,
 }
 
 impl Run {
     fn options(&self) -> IndexOptions {
-        IndexOptions { ef_construction: 40, metric: self.metric, ..IndexOptions::default() }
+        IndexOptions {
+            ef_construction: 40,
+            metric: self.metric,
+            precision: self.precision,
+            ..IndexOptions::default()
+        }
     }
 
     fn at(&self) -> String {
-        format!("seed {} {:?} step {} ({})", self.seed, self.metric, self.step, self.op)
+        let Self { seed, metric, precision, step, op } = self;
+        format!("seed {seed} {metric:?} {precision:?} step {step} ({op})")
+    }
+
+    /// How far a reported distance may be from the one between the vectors as given. In half
+    /// precision the index measures to the vector it kept, each component rounded to 11 bits.
+    fn tolerance(&self) -> f32 {
+        if self.precision == Precision::Half { 3e-3 } else { 1e-3 }
     }
 
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
@@ -90,7 +103,7 @@ impl Run {
                 .unwrap_or_else(|| panic!("{}: returned id {}, which isn't live", self.at(), r.id));
             let want = self.distance(query, vector);
             assert!(
-                (r.distance - want).abs() < 1e-3,
+                (r.distance - want).abs() < self.tolerance(),
                 "{}: id {} at {} not {want}",
                 self.at(),
                 r.id,
@@ -129,10 +142,10 @@ fn open(path: &Path, run: &Run) -> VectorIndex {
 }
 
 /// One random history. Returns how many self-searches found their vector, of how many.
-fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
+fn history(seed: u64, metric: DistanceMetric, precision: Precision) -> (u64, u64) {
     let dir = tempdir().unwrap();
     let path = dir.path().join("model.chassis");
-    let mut run = Run { seed, metric, step: 0, op: "open" };
+    let mut run = Run { seed, metric, precision, step: 0, op: "open" };
     let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let mut index = open(&path, &run);
     index.flush().unwrap();
@@ -249,7 +262,17 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
                 let found = index.search_filtered(&query, k, |id| few.contains(&id)).unwrap();
                 let ids: Vec<u64> = found.iter().map(|r| r.id).collect();
                 let exact = run.exact(&query, &now, k, |id| few.contains(&id));
-                assert_eq!(ids, exact, "{}", run.at());
+                if precision == Precision::Full {
+                    assert_eq!(ids, exact, "{}", run.at());
+                } else {
+                    // Rounding may swap two vectors that are all but equally far.
+                    let far = |id: &u64| run.distance(&query, &now.live[id]);
+                    assert_eq!(ids.len(), exact.len(), "{}", run.at());
+                    for (found, exact) in ids.iter().zip(&exact) {
+                        let apart = (far(found) - far(exact)).abs();
+                        assert!(apart < run.tolerance(), "{}: {found} for {exact}", run.at());
+                    }
+                }
             }
             _ => {
                 run.op = "reader";
@@ -280,7 +303,8 @@ fn history(seed: u64, metric: DistanceMetric) -> (u64, u64) {
         for (&id, vector) in &now.live {
             let exact = index.search_filtered(vector, 1, |other| other == id).unwrap();
             assert_eq!(exact.len(), 1, "{}: id {id} is gone", run.at());
-            assert!(exact[0].distance.abs() < 1e-3, "{}: id {id} holds another vector", run.at());
+            let apart = exact[0].distance.abs();
+            assert!(apart < run.tolerance(), "{}: id {id} holds another vector", run.at());
         }
         index.compact().unwrap();
     }
@@ -296,8 +320,15 @@ fn test_random_histories_match_the_model() {
     let seeds = std::env::var("CHASSIS_MODEL_SEEDS").map_or(12, |s| s.parse().unwrap());
     let (mut found, mut searched) = (0, 0);
     for seed in 1..=seeds {
-        for metric in [DistanceMetric::Euclidean, DistanceMetric::Cosine] {
-            let (f, s) = history(seed, metric);
+        let metrics = [DistanceMetric::Euclidean, DistanceMetric::Cosine];
+        // Each metric in full precision, and one of them, by turns, in half.
+        let runs = [
+            (metrics[0], Precision::Full),
+            (metrics[1], Precision::Full),
+            (metrics[seed as usize % 2], Precision::Half),
+        ];
+        for (metric, precision) in runs {
+            let (f, s) = history(seed, metric, precision);
             found += f;
             searched += s;
         }
