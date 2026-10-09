@@ -38,7 +38,7 @@ impl Prefetch {
     fn for_x86(amd: Option<(u32, u32)>) -> Self {
         match amd {
             Some((ZEN_5.., _)) => Self { near: 8, lines: 8 },
-            Some((ZEN_3_AND_4, model)) if is_zen_4(model) => Self { near: 0, lines: 32 },
+            Some((ZEN_3_AND_4, model)) if is_zen_4(model) => Self { near: 0, lines: 64 },
             _ => Self { near: 0, lines: 8 },
         }
     }
@@ -55,7 +55,7 @@ impl Prefetch {
     /// (ADR-0015).
     #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
     fn for_this_cpu() -> Self {
-        Self { near: 0, lines: 16 }
+        Self { near: 0, lines: 64 }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
