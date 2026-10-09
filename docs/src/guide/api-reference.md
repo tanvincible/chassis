@@ -84,6 +84,21 @@ for match in results {
 
 **Returns**: `Vec<SearchResult>`, sorted by distance (nearest first), identified by the ids from `add`/`add_with_id`. Deleted vectors are never returned.
 
+#### Filtered search
+
+```rust
+// The ids your application allows, e.g. from `SELECT id FROM docs WHERE owner = ?`
+let allowed: HashSet<u64> = owner_doc_ids();
+let results = index.search_filtered(&query, 10, |id| allowed.contains(&id))?;
+```
+
+Only vectors whose id the filter accepts are returned. The filter is called with ids from
+`add`/`add_with_id`, many times per search, so it should be cheap. When the filter passes many
+vectors, the search walks the graph as usual; when it passes few, or its matches lie far from the
+query, walking the graph would visit most of the index to find them, so the search checks every
+vector instead and returns the exact nearest. Measured, a filtered search takes at most about twice an exact scan of the matching
+vectors ([ADR-0009](../adr/009-filtered-search.md)). `IndexReader` has the same method.
+
 #### Persistence
 
 ```rust

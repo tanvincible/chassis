@@ -311,7 +311,23 @@ impl VectorIndex {
     ///
     /// Returns an error if query dimensions don't match index dimensions
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        search_graph(&self.graph, query, k, self.options.ef_search)
+        search_graph(&self.graph, query, k, self.options.ef_search, None)
+    }
+
+    /// Like `search`, among only the vectors whose id `filter` accepts. When walking the graph
+    /// would cost more than checking every vector, as when few match, it checks every vector and
+    /// returns the exact nearest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if query dimensions don't match index dimensions
+    pub fn search_filtered(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: impl Fn(u64) -> bool,
+    ) -> Result<Vec<SearchResult>> {
+        search_graph(&self.graph, query, k, self.options.ef_search, Some(&filter))
     }
 
     /// Flush all changes to disk
@@ -467,16 +483,23 @@ fn search_graph(
     query: &[f32],
     k: usize,
     ef: usize,
+    filter: Option<&dyn Fn(u64) -> bool>,
 ) -> Result<Vec<SearchResult>> {
     let dims = graph.storage.dimensions() as usize;
     if query.len() != dims {
         anyhow::bail!("Query dimension mismatch: expected {}, got {}", dims, query.len());
     }
+    let search = |query: &[f32]| match filter {
+        None => graph.search(query, k, ef),
+        Some(filter) => graph.search_filtered(query, k, ef, &|slot| {
+            Ok(filter(if graph.custom_ids { graph.id_of(slot)? } else { slot }))
+        }),
+    };
     let mut results = match graph.storage.metric() {
-        DistanceMetric::Euclidean => graph.search(query, k, ef)?,
+        DistanceMetric::Euclidean => search(query)?,
         DistanceMetric::Cosine => {
             let query = distance::unit(query)?;
-            let mut results = graph.search(&query, k, ef)?;
+            let mut results = search(&query)?;
             for result in &mut results {
                 // Rounding can take antipodal vectors a hair past 2.
                 result.distance = (result.distance * result.distance / 2.0).min(2.0);
@@ -535,7 +558,23 @@ impl IndexReader {
     /// Returns an error if the query has other dimensions or the file is corrupt.
     pub fn search(&mut self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
         self.graph.refresh()?;
-        search_graph(&self.graph, query, k, self.ef_search)
+        search_graph(&self.graph, query, k, self.ef_search, None)
+    }
+
+    /// Like `search`, among only the vectors whose id `filter` accepts; see
+    /// `VectorIndex::search_filtered`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query has other dimensions or the file is corrupt.
+    pub fn search_filtered(
+        &mut self,
+        query: &[f32],
+        k: usize,
+        filter: impl Fn(u64) -> bool,
+    ) -> Result<Vec<SearchResult>> {
+        self.graph.refresh()?;
+        search_graph(&self.graph, query, k, self.ef_search, Some(&filter))
     }
 
     /// Get the dimensionality of vectors in this index
@@ -579,6 +618,74 @@ impl IndexReader {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+
+    fn random_vector(id: u64) -> Vec<f32> {
+        let mut x = id.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        (0..16)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 40) as f32 / (1u64 << 24) as f32
+            })
+            .collect()
+    }
+
+    /// 2,500 vectors: sampled every second slot, so a filter on odd slots meets an unjittered
+    /// sample nowhere.
+    fn filter_index(file: &NamedTempFile) -> VectorIndex {
+        let options = IndexOptions { ef_construction: 64, ..IndexOptions::default() };
+        let mut index = VectorIndex::open(file.path(), 16, options).unwrap();
+        for id in 0..2500 {
+            index.add(&random_vector(id)).unwrap();
+        }
+        index
+    }
+
+    #[test]
+    fn test_filtered_search_estimates_matches_and_picks_its_path() {
+        let file = NamedTempFile::new().unwrap();
+        let mut index = filter_index(&file);
+        let graph = &index.graph;
+        let estimate = |allow: &dyn Fn(u64) -> bool| graph.estimated_matches(&|s| Ok(allow(s)));
+        assert_eq!(estimate(&|_| true).unwrap(), 2500);
+        assert_eq!(estimate(&|_| false).unwrap(), 0);
+        let odd = estimate(&|slot| slot % 2 == 1).unwrap();
+        assert!((1000..=1500).contains(&odd), "odd slots estimated at {odd}");
+
+        let query = random_vector(99_999);
+        let nearest = index.search(&query, 1).unwrap()[0].id;
+        let path = |allow: &dyn Fn(u64) -> bool| {
+            index.graph.search_filtered_reporting(&query, 10, 50, &|s| Ok(allow(s))).unwrap()
+        };
+        let (found, scanned) = path(&|slot| slot != nearest);
+        assert!(!scanned && found.len() == 10, "a broad filter walks the graph");
+        let (found, scanned) = path(&|slot| slot % 250 == 7);
+        assert!(scanned && found.len() == 10, "a selective filter scans");
+
+        for slot in (0..2500).step_by(2) {
+            index.delete(slot).unwrap();
+        }
+        let live = index.graph.estimated_matches(&|_| Ok(true)).unwrap();
+        assert!((1000..=1500).contains(&live), "deleted slots counted as matches: {live}");
+    }
+
+    #[test]
+    fn test_filtered_scan_is_exact_with_a_nan_vector() {
+        let file = NamedTempFile::new().unwrap();
+        let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+        index.add(&[f32::NAN; 16]).unwrap();
+        for id in 1..300 {
+            index.add(&random_vector(id)).unwrap();
+        }
+        let allow = |slot: u64| slot.is_multiple_of(10);
+        let (found, scanned) = index
+            .graph
+            .search_filtered_reporting(&random_vector(150), 3, 50, &|s| Ok(allow(s)))
+            .unwrap();
+        assert!(scanned);
+        assert_eq!(found[0].id, 150, "{found:?}");
+    }
 
     #[test]
     fn test_vector_index_create_and_add() {

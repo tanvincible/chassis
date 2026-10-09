@@ -158,6 +158,19 @@ _lib.chassis_search.argtypes = [
 ]
 _lib.chassis_search.restype = ctypes.c_size_t
 
+# chassis_search_filtered
+_lib.chassis_search_filtered.argtypes = [
+    ChassisIndexPtr,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_uint64),  # allowed_ids
+    ctypes.c_size_t,  # allowed_len
+    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.POINTER(ctypes.c_float),
+]
+_lib.chassis_search_filtered.restype = ctypes.c_size_t
+
 # chassis_flush
 _lib.chassis_flush.argtypes = [ChassisIndexPtr]
 _lib.chassis_flush.restype = ctypes.c_int
