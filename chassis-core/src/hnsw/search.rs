@@ -624,6 +624,7 @@ impl HnswGraph {
         }
         visited.0.visit(entry);
         let mut bound = worst_allowed(&results, ef);
+        let lab_batch = crate::storage::lab::lab().batch;
 
         while let Some(Reverse(current)) = candidates.pop() {
             // Early termination: current is further than worst result
@@ -638,6 +639,9 @@ impl HnswGraph {
                 if visited.0.visit(neighbor_id) {
                     let vector = self.storage.stored::<E>(neighbor_id)?;
                     prefetch.vector(vector);
+                    if lab_batch {
+                        self.storage.lab_want_vector(neighbor_id);
+                    }
                     fresh.push((neighbor_id, vector));
                 }
             }
@@ -655,6 +659,9 @@ impl HnswGraph {
                     candidates.push(Reverse(found));
                     // It will most likely be expanded: have its neighbor list on the way.
                     self.storage.prefetch_record(neighbor_id);
+                    if lab_batch {
+                        self.storage.lab_want_record(neighbor_id);
+                    }
                     if excluded(neighbor_id)? {
                         continue;
                     }

@@ -59,6 +59,62 @@ mod sizes {
 }
 use sizes::*;
 
+/// Experiment, never merged: what a search asks the operating system for ahead of its page faults.
+/// `LAB_BATCH=1` asks for each page of a vector or neighbor list the first time a search is about
+/// to read it; `LAB_WARM=willneed`, `touch` or `willneed+touch` reads the whole index in on another
+/// thread from the moment it is opened.
+pub(crate) mod lab {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub(crate) struct Lab {
+        pub batch: bool,
+        pub warm: Option<String>,
+        pub page: u64,
+    }
+
+    pub(crate) fn lab() -> &'static Lab {
+        static LAB: OnceLock<Lab> = OnceLock::new();
+        LAB.get_or_init(|| Lab {
+            batch: std::env::var_os("LAB_BATCH").is_some(),
+            warm: std::env::var("LAB_WARM").ok(),
+            // SAFETY: sysconf only reads.
+            page: unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64,
+        })
+    }
+
+    /// Whether this is the first time `page` of the file is asked about: one bit a page.
+    #[inline]
+    pub(crate) fn first_time(page: u64) -> bool {
+        static ASKED: OnceLock<Vec<AtomicU64>> = OnceLock::new();
+        let bits = ASKED.get_or_init(|| (0..1 << 18).map(|_| AtomicU64::new(0)).collect());
+        let (word, mask) = (&bits[(page >> 6) as usize % bits.len()], 1 << (page & 63));
+        word.load(Ordering::Relaxed) & mask == 0
+            && word.fetch_or(mask, Ordering::Relaxed) & mask == 0
+    }
+
+    /// Asks for `len` bytes of the file at `offset` to be read in, without waiting for them.
+    pub(crate) fn advise(file: &std::fs::File, offset: u64, len: u64) {
+        use std::os::fd::AsRawFd;
+        #[cfg(target_os = "macos")]
+        // SAFETY: an advisory read of a range of an open file.
+        unsafe {
+            let advice = libc::radvisory { ra_offset: offset as i64, ra_count: len as i32 };
+            libc::fcntl(file.as_raw_fd(), libc::F_RDADVISE, &advice);
+        }
+        #[cfg(target_os = "linux")]
+        // SAFETY: advice about a range of an open file.
+        unsafe {
+            libc::posix_fadvise(
+                file.as_raw_fd(),
+                offset as i64,
+                len as i64,
+                libc::POSIX_FADV_WILLNEED,
+            );
+        }
+    }
+}
+
 const fn align(n: u64, to: u64) -> u64 {
     n.div_ceil(to) * to
 }
@@ -533,6 +589,7 @@ impl Storage {
         }
         let mut storage = Self::new(file, false, headers, header, 0)?;
         storage.refresh()?;
+        storage.lab_warm();
         Ok(storage)
     }
 
@@ -1122,6 +1179,68 @@ impl Storage {
                 Cow::Owned(widened)
             }
         })
+    }
+
+    /// lab: asks for the pages of `slot`'s vector that haven't been asked for.
+    #[inline]
+    pub(crate) fn lab_want_vector(&self, slot: u64) {
+        if let Ok((segment, i)) = self.segment(slot) {
+            let bytes = self.geometry.vector_bytes();
+            self.lab_want(segment.region.offset + (segment.vectors + i * bytes) as u64, bytes);
+        }
+    }
+
+    /// lab: asks for the pages of `slot`'s level-0 neighbor list that haven't been asked for.
+    #[inline]
+    pub(crate) fn lab_want_record(&self, slot: u64) {
+        if let Ok((segment, i)) = self.segment(slot) {
+            let bytes = self.geometry.level0_bytes();
+            self.lab_want(segment.region.offset + (segment.level0 + i * bytes) as u64, bytes);
+        }
+    }
+
+    #[inline]
+    fn lab_want(&self, at: u64, len: usize) {
+        let page = lab::lab().page;
+        for p in at / page..=(at + len as u64 - 1) / page {
+            if lab::first_time(p) {
+                lab::advise(&self.file, p * page, page);
+            }
+        }
+    }
+
+    /// lab: with `LAB_WARM`, another thread brings every segment and heap chunk into memory.
+    fn lab_warm(&self) {
+        let Some(mode) = lab::lab().warm.clone() else { return };
+        let regions: Vec<(usize, usize)> = self
+            .segments
+            .iter()
+            .map(|s| &s.region)
+            .chain(&self.chunks)
+            .map(|r| (r.map.as_ptr() as usize, r.len()))
+            .collect();
+        let page = lab::lab().page as usize;
+        // The maps outlive the thread only because the harness never closes the index.
+        std::thread::spawn(move || {
+            if mode.contains("willneed") {
+                for &(at, len) in &regions {
+                    // SAFETY: advice about a mapped range.
+                    unsafe { libc::madvise(at as *mut libc::c_void, len, libc::MADV_WILLNEED) };
+                }
+            }
+            if mode.contains("touch") {
+                let mut sum = 0u8;
+                for &(at, len) in &regions {
+                    for offset in (0..len).step_by(page) {
+                        // SAFETY: within a mapped region.
+                        sum = sum.wrapping_add(unsafe {
+                            std::ptr::read_volatile((at + offset) as *const u8)
+                        });
+                    }
+                }
+                std::hint::black_box(sum);
+            }
+        });
     }
 
     /// Asks the CPU to start loading the level-0 neighbor list of `slot`, which a search is about
