@@ -194,5 +194,5 @@ runners, was 4 to 13% slower.
 * New builds produce sparser graphs: recall at a given `ef` is lower by up to 0.003, and a caller
   that tuned `ef` to a recall target may have to raise it slightly.
 * A vector's lines past the first eight are left to the hardware prefetcher, as before. Nothing
-  here was measured above 128 dimensions.
+  here was measured above 128 dimensions (ADR-0015 does).
 * The measurements are one dataset on shared runners.
