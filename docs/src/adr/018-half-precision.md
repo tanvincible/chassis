@@ -189,6 +189,11 @@ and 280.
 ## What Was Left Out
 
 * **On by default.** Decision 6.
+* **Fewer level-0 neighbors for smaller files.** 24 instead of 32 (lab `m0.yml`, 2026-10-10, half
+  precision, on Neoverse-N2, a Xeon 8573C and an EPYC 9V74): files 7% smaller at 128 dimensions and
+  a million vectors, 3 to 4% at 384 and 1% at 1,536, and batch builds 9 to 18% faster, but searches
+  for 0.99 recall 6 to 15% slower at 128 dimensions and 7 to 16% at 384, and 0.97 to 1.04 times as
+  fast at 1,536. `max_connections: 12` gives the same, so there is nothing to build.
 * **A kernel for two stored vectors.** It would widen both sides of every distance where one
   side widened once serves a whole selection.
 * **Requiring F16C wherever AVX2 is used.** One code path fewer, but an x86 CPU or emulator with

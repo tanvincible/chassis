@@ -38,7 +38,9 @@ embeddings); OpenAI's text-embedding-3 models take a `dimensions` argument for i
 1,536 dimensions makes the index about a third of the size. Measure recall on your own queries
 first: OpenAI reports text-embedding-3-large at 256 dimensions doing better than ada-002 at 1,536,
 but a model not trained this way loses much more. Cut vectors yourself only with the `cosine`
-metric, or normalize them again.
+metric, or normalize them again. Lower `max_connections` saves less: 12 instead of 16 makes a
+128-dimension file in half precision 7% smaller and one of 1,536 dimensions 1%, and builds 7 to 18%
+faster, but searches for 0.99 recall at 128 and 384 dimensions take up to 14% longer.
 
 ## Batch Insertion Strategy
 
