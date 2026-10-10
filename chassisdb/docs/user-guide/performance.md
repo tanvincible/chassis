@@ -42,6 +42,13 @@ metric, or normalize them again. Lower `max_connections` saves less: 12 instead 
 128-dimension file in half precision 7% smaller and one of 1,536 dimensions 1%, and builds 7 to 18%
 faster, but searches for 0.99 recall at 128 and 384 dimensions take up to 14% longer.
 
+## Many Queries
+
+`search_batch(queries, k)` searches a `(count, dimensions)` array in one call and returns the ids
+and distances as two `(count, k)` arrays. A call from Python into the library costs 15 to 38 µs on
+the server CPUs measured, which `search` pays once per query and `search_batch` once per batch. On
+an Apple M5, 2,000 queries over 50,000 vectors of 128 dimensions ran 1.23 times as fast.
+
 ## Batch Insertion Strategy
 
 Calling `flush()` involves an `fsync` system call, which is expensive. For maximum write throughput:

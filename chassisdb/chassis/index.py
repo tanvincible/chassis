@@ -507,6 +507,64 @@ class VectorIndex:
 
         return results
 
+    def search_batch(
+        self,
+        queries: Union[Sequence[Sequence[float]], npt.NDArray[np.float32]],
+        k: int = 10,
+    ) -> tuple[npt.NDArray[np.uint64], npt.NDArray[np.float32]]:
+        """Search for the k nearest neighbors of many queries, in one call.
+
+        Faster than calling search once per query: the queries cross from
+        Python into the library together.
+
+        Args:
+            queries: A (count, dimensions) array, one query per row
+            k: Number of nearest neighbors per query (default: 10)
+
+        Returns:
+            (ids, distances), two (count, k) arrays. Row i holds query i's
+            results, nearest first; a row with fewer than k results is filled
+            out with id 2**64 - 1, which no vector has, and distance inf.
+
+        Raises:
+            ChassisError: If index is closed
+            DimensionMismatchError: If the queries aren't rows of the index's
+                dimensions; the message names a query that is wrong
+            InvalidArgumentError: If k < 1, or a query has a component that
+                isn't a finite number
+            ChassisError: For other errors
+
+        Thread Safety:
+            Safe from any thread. Runs concurrently with other searches, and a
+            write waits for the whole batch.
+        """
+        self._check_closed()
+        k = _check_int("k", k)
+        if k < 1:
+            raise InvalidArgumentError(
+                f"k is {k}, but has to be at least 1\nhelp: pass how many results to return per "
+                "query, such as k=10"
+            )
+        queries = _as_batch(queries, self._dimensions, "query", "search")
+        count = len(queries)
+        out_ids = np.empty((count, k), dtype=np.uint64)
+        out_dists = np.empty((count, k), dtype=np.float32)
+        if count == 0:
+            return out_ids, out_dists
+
+        done = _ffi._lib.chassis_search_batch(
+            self._ptr,
+            queries.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            count,
+            self._dimensions,
+            k,
+            out_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64)),
+            out_dists.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        )
+        if done != count:
+            raise _ffi.last_error("The search failed")
+        return out_ids, out_dists
+
     def flush(self) -> None:
         """Flush all changes to disk.
 
@@ -718,7 +776,7 @@ def _as_vector(value, dims: int, what: str) -> npt.NDArray[np.float32]:
     elif array.ndim == 2 and what == "vector":
         fix = "to add several, pass them to add_batch"
     elif array.ndim == 2:
-        fix = "search takes one query at a time; call it once per row"
+        fix = "search takes one query; to search several in one call, pass them to search_batch"
     elif array.ndim == 1:
         raise DimensionMismatchError(
             f"The {what} has {len(array)} components, but this index holds vectors of {dims}\n"
@@ -733,25 +791,25 @@ def _as_vector(value, dims: int, what: str) -> npt.NDArray[np.float32]:
     )
 
 
-def _as_batch(value, dims: int) -> npt.NDArray[np.float32]:
-    """`value` as a contiguous (count, dims) float32 array."""
+def _as_batch(value, dims: int, what: str = "vector", one: str = "add") -> npt.NDArray[np.float32]:
+    """`value` as a contiguous (count, dims) float32 array of `what`s, which `one` takes singly."""
     try:
         array = np.ascontiguousarray(value, dtype=np.float32)
     except (TypeError, ValueError) as e:
         raise TypeError(
-            f"The vectors have to be numbers, but can't be read as numbers: {e}\nhelp: pass a "
+            f"The {what}s have to be numbers, but can't be read as numbers: {e}\nhelp: pass a "
             f"(count, {dims}) numpy array, or a list of lists of {dims} floats"
         ) from None
     if array.ndim == 2 and array.shape[1] == dims:
         return array
     if array.ndim == 1 and len(array) == dims:
-        fix = "for one vector, pass [vector], or call add"
+        fix = f"for one {what}, pass [{what}], or call {one}"
     elif array.ndim == 2:
-        fix = (f"each vector has to have {dims} components: make them with the same model as the "
+        fix = (f"each {what} has to have {dims} components: make them with the same model as the "
                "index's vectors")
     else:
-        fix = f"pass a (count, {dims}) array, one vector per row"
+        fix = f"pass a (count, {dims}) array, one {what} per row"
     raise DimensionMismatchError(
-        f"The vectors are an array of shape {array.shape}, but have to be (count, {dims})\n"
+        f"The {what}s are an array of shape {array.shape}, but have to be (count, {dims})\n"
         f"help: {fix}"
     )

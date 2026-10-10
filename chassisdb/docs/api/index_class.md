@@ -5,8 +5,10 @@
         members:
             - __init__
             - add
+            - add_batch
             - delete
             - search
+            - search_batch
             - flush
             - close
             - len

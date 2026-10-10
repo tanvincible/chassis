@@ -293,6 +293,27 @@ Like `chassis_search`, returning only vectors whose id is in `allowed_ids`. Ids 
 are ignored; an empty list matches nothing. When walking the graph would cost more, as when few
 vectors match, every vector is checked instead and the results are exact.
 
+#### `chassis_search_batch`
+```c
+size_t chassis_search_batch(
+    const ChassisIndex* index,
+    const float* queries,
+    size_t count,
+    size_t dim,
+    size_t k,
+    uint64_t* out_ids,
+    float* out_dists
+);
+```
+Search for the k nearest neighbors of each of `count` queries, given one after another, `dim`
+floats each. `out_ids` and `out_dists` hold `count * k` values: row `i` is query `i`'s results,
+nearest first, and a row with fewer than `k` is filled out with id `UINT64_MAX`, which no vector
+has, and distance `INFINITY`. Returns `count`, or `0` on error or for an empty batch, which sets no
+error. An error names the query that failed, as in `Query 3 of the batch has NaN at component 0`.
+
+**Thread Safety**: Safe from any thread; runs concurrently with other searches, and a write waits
+for the whole batch
+
 #### `chassis_flush`
 ```c
 int chassis_flush(ChassisIndex* index);
