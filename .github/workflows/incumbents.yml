@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 4
-  CHASSIS: lab/exp-warm
+  RUN: 5
+  CHASSIS: main
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -125,7 +125,7 @@ jobs:
             "$PAGETOOL" evict "$T/c.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/c.chassis" "$truth" cold-full | tee -a results/cold.tsv
             "$PAGETOOL" evict "$T/h.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/h.chassis" "$truth" cold-half | tee -a results/cold.tsv
           done
-          for engine in chassis-py chassis-py-half chassis-py-warm chassis-py-half-warm hnswlib usearch usearch-view faiss annoy sqlitevec lancedb; do
+          for engine in chassis-py chassis-py-half hnswlib usearch faiss; do
             timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
             grep "^inc" "$T/inc.out" | tee -a results/inc.tsv || true
             grep -v "^inc" "$T/inc.out" | tail -5 >> results/inc.log || true
