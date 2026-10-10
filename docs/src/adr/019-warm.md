@@ -99,14 +99,20 @@ What it reads in is what was written: 38,124 of the file's 50,088 pages of 16 KB
 pages that hold written bytes, where opening without it brought in 5. The file's hash and time of
 change are the same after a writer read it in.
 
-On four Linux servers (GitHub's runners: EPYC 7763, 9V45 and 9V74, Neoverse-N2; disks reading 280
-to 660 MB/s in sequence and 5,600 to 11,600 random reads a second), on the same vectors read
-from their own disk, the hundredth result came after 1.3 to 1.7 s with it and 1.5 to 2.9 s
-without, and hnswlib's after 1.3 to 2.1 s; in half precision 0.56 to 1.1 s, from 0.62 to 1.3 s.
-On a million SIFT vectors of 128 dimensions it came after 1.37 s, from 1.56 to 1.87 s, and 0.75 s
-in half precision, from 0.94 to 1.1 s; hnswlib took 1.87 to 2.04 s. On a disk that slow, reading
-the file in takes about as long as the searches it would speed up, and the first result came up
-to 160 ms later with it in six of the eight runs, while the thread had the disk.
+On Linux, GitHub's runners (EPYC 7763, 9V45 and 9V74, Xeon 8573C, Neoverse-N2) were measured in
+two runs of four machines each, the first on an earlier commit that makes the same system calls.
+Their disks read 260 to 660 MB/s in sequence and 5,600 to 11,600 random reads a second one at a
+time. On the 1,536-dimension vectors read from their own disk, the hundredth result came after
+1.3 to 1.7 s with it and 1.5 to 2.9 s without, and hnswlib's after 1.3 to 2.1 s; in half
+precision after 0.55 to 1.1 s, from 0.62 to 1.3 s. On a million SIFT vectors of 128 dimensions it
+came after 1.37 to 1.38 s, from 1.56 to 2.07 s, and in half precision after 0.75 to 0.76 s, from
+0.94 to 1.3 s; hnswlib took 1.76 to 2.04 s. With the file already in memory the hundredth result
+came 8 to 39% sooner.
+
+On one runner whose disk read 263 MB/s in sequence, reading the 713 MB file in took longer than
+the searches took without it: the hundredth result came after 2.7 s with it and 2.6 s without,
+and the first 0.56 s later. Elsewhere the first result came up to 0.16 s later with it, while the
+thread had the disk, and on one machine sooner.
 
 ## What It Does Not Do
 
@@ -141,4 +147,6 @@ to 160 ms later with it in six of the eight runs, while the thread had the disk.
 * One more thread for the length of the reading, and a read-only mapping of the file while it
   lasts.
 * On Linux before 5.14 it reads in only some of the index.
+* On a disk that reads the file in more slowly than searches bring in what they need, it gains
+  nothing and the first result comes later.
 * An application that asks for it on an index much larger than memory pushes everything else out.

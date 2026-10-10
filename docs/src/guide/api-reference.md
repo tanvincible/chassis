@@ -229,7 +229,8 @@ what the index holds, at the disk's sequential speed, while searches go on
 vectors of 1,536 dimensions returned after 0.37 s with it and 1.9 s without; on Linux servers
 with slower disks, after 1.3 to 1.7 s where it took 1.5 to 2.9 s. It reads only what has been written, and changes
 nothing in the file. It is off by default because an index much larger than memory would push
-everything else out, itself included. It takes Linux 5.14 or later, or macOS; an older Linux reads
+everything else out, itself included, and on a slow disk reading the whole file can take longer
+than the searches would. It takes Linux 5.14 or later, or macOS; an older Linux reads
 in only some of the index, and Windows none. `VectorIndex::warm` and `IndexReader::warm` ask for
 it after opening and return at once; from then on the option is on, so a reader that opens the
 file again after a compaction reads the new one in too.
