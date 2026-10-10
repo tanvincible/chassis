@@ -1,0 +1,47 @@
+name: stack tests
+
+# Experiment branch only: the whole test suite, Rust and Python, on a branch that a pull request
+# into another branch's PR leaves without CI. Runs when this file changes; edit RUN or CHASSIS.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/stacktest.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  CHASSIS: feat/errors
+
+jobs:
+  tests:
+    name: tests (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHASSIS }}
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Rust tests
+        shell: bash
+        run: |
+          git log --oneline -1
+          cargo test --workspace --release 2>&1 | tee rust.txt | grep -E "^test result|FAILED|panicked" || true
+          grep -q "test result: FAILED\|error: test failed" rust.txt && exit 1 || true
+      - name: Python tests
+        shell: bash
+        run: |
+          pip install -q numpy pytest
+          cd pychassis
+          python -m pytest -o addopts="" -q tests 2>&1 | tail -15
