@@ -18,10 +18,18 @@ details and the commands.
 These came before distances were computed in groups ([ADR-0021](../adr/021-grouped-distances.md)),
 which made searches over vectors of a kilobyte or more another 11 to 60% faster out of cache.
 
-**Other engines**, on 2026-10-10, each through its Python package on one thread, 1,536 dims × 99k,
-also before grouped distances: on x86, FAISS's HNSW answered 1.6 to 1.9 times as many queries a
-second as Chassis in full precision and hnswlib 1.3 to 1.4 times; in half precision Chassis was
-level with hnswlib.
+**Through Python, with grouped distances**: each engine through its Python package on one thread,
+queries a second for 0.95 recall, Chassis over the other engine (2026-10-10, one run, one machine
+per CPU). Zen 3 at 128 dims in full precision was 0.87 to 0.93 times hnswlib over four runs, where
+the measurements from Rust above start at 1.2; Python's own cost per search explains only a few
+percent of that.
+
+| Vectors | Over hnswlib | Over FAISS's HNSW |
+| --- | --- | --- |
+| 128 dims × 1M | Zen 3 0.91×, Zen 5 1.73×, N2 2.64× | Zen 3 0.80×, Zen 5 1.45×, N2 1.22× |
+| 128 dims × 1M, half | Zen 3 1.19×, Zen 5 1.90×, N2 2.96× | Zen 3 1.04×, Zen 5 1.59×, N2 1.37× |
+| 1,536 dims × 99k | Zen 4 0.99×, Xeon 0.99×, N2 2.50× | Zen 4 0.69×, Xeon 0.87×, N2 0.94× |
+| 1,536 dims × 99k, half | Zen 4 1.48×, Xeon 1.61×, N2 2.73× | Zen 4 1.04×, Xeon 1.41×, N2 1.02× |
 
 **From a cold start** ([ADR-0019](../adr/019-warm.md), Apple M5, 99,000 × 1,536 dims, the file not
 in memory): the first result came 0.11 s after the process started, where hnswlib, which loads its
