@@ -57,7 +57,7 @@ impl HnswParams {
     pub const fn to_record_params(&self) -> NodeRecordParams {
         NodeRecordParams::new(
             self.max_connections,
-            self.max_connections * 2, // m0 = 2 * M
+            self.max_connections * 3 / 2, // lab: m0 = 1.5 M
             self.max_layers,
         )
     }
