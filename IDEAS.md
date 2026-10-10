@@ -124,16 +124,6 @@ A vector costs its own bytes plus 160: a 24-byte slot header, an 8-byte head wor
 neighbors of 4 bytes. That is 38% of a 128-dimension half-precision file and 5% of a
 1,536-dimension one. hnswlib keeps about 140 bytes a vector, pgvector about 288.
 
-### Fewer level-0 neighbors
-
-24 instead of 32 saves 32 bytes a vector: 8% of a 128-dimension half-precision file, 1% at 1,536.
-
-* **Known**: on 99,000 OpenAI vectors of 1,536 dimensions at M=16, level-0 lists hold 27.7
-  neighbors of 32 on average, and 22% are full (2026-10-10), so a cap of 24 drops real edges.
-  M=12 already gives 24, with 12 instead of 16 above level 0.
-* **To validate**: running in the lab (`m0.yml`): 24 at M=16 and M=12 against main, in half
-  precision at 128, 384 and 1,536 dimensions: size, build time, and speed at the same recall.
-
 ### A narrower slot header
 
 The header is an id, a metadata reference and a deleted epoch, 8 bytes each. Nothing uses the
@@ -164,6 +154,18 @@ cut its graph up to 30%; Meta's lossless id coding takes HNSW links from 32 to a
   read-only from then on, which Chassis doesn't have. With a reordering (above) the differences,
   and so the lists, get smaller.
 * **To validate**: whether anyone wants an index that is built once and then only read.
+
+## Fewer neighbors for long vectors
+
+At 1,536 dimensions, 24 level-0 neighbors instead of 32 searched 1.07 to 1.19 times as fast for
+0.90 and 0.95 recall, 0.97 to 1.04 for 0.99, and built 9 to 14% faster (lab `m0.yml`,
+2026-10-10, half precision, on Neoverse-N2, a Xeon 8573C and an EPYC 9V74). The longer the
+vector, the more each distance skipped saves. M=12 did the same.
+
+* **Known**: one dataset of long vectors, in half precision only. At 128 and 384 dimensions the
+  same change was up to 16% slower for 0.99 recall (ADR-0018, "What Was Left Out").
+* **To validate**: full precision, 768 and 3,072 dimensions and another dataset; if it holds, a
+  default M that depends on the dimensions.
 
 ## Builds of long vectors on x86
 
