@@ -367,7 +367,8 @@ def report(dirs: list[Path]) -> None:
         print()
 
     print("## Planted outcomes\n")
-    checks = [("sift", "i8-dim", "all", lambda v: v >= 0.995, "at least 0.995")]
+    # Amended after the SIFT job (see quant-plan.md): half precision holds SIFT's integers exactly.
+    checks = [("sift", "half", None, lambda v: v == 1.0, "exactly 1")]
     checks += [(c, "shuffled", None, lambda v: v <= 0.01, "at most 0.01") for c in configs]
     for prefix, scheme, calib, ok, want in checks:
         got = [r["recall"] for r in rows

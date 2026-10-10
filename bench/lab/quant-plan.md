@@ -112,3 +112,15 @@ after it. The known loss was first "i4-dim/all at r=1 on openai3-1536 is at most
 is a guess and not a certainty, and the smoke test had it at 0.946. A planted failure has to be
 certain, so it is now the shuffled ranking, and the i4 guess is prediction 9, unchanged, already
 seen failing at 8,000 vectors. No other prediction, and not the decision rule, changed.
+
+## Amendment, written after results were seen
+
+The SIFT job finished first, and the known pass failed: i8-dim/all in stage 1 at r=1 was 0.9933,
+not at least 0.995. Recall by distance was the same, so it was not ties. The expectation was
+wrong, not the harness: i8-dim keeps a vector only if each dimension spans exactly 255, and
+SIFT's 200,000 vectors span 138 to 212 (none 255), so its steps of 0.54 to 0.83 miss the integers
+by up to 0.42. Run on the same split on a laptop, i8-dim/all gave 0.9933 again, and a mapping that
+is lossless on these integers (a fixed [0, 255] in steps of 1) gave 1.0000. Half precision, which
+holds integers up to 2,048 exactly, gave 1.0000 in the run itself. The known pass is now that:
+half precision on SIFT, recall@10 exactly 1. This is the second planted check that was a guess
+and not a certainty; both were replaced, and both are recorded here. Nothing else changed.
