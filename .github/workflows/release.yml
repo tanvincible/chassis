@@ -47,19 +47,23 @@ jobs:
     name: crates.io
     needs: build
     runs-on: ubuntu-latest
+    # crates.io trusts this workflow to publish chassis-core (trusted publishing), and hands it a
+    # token that lasts for the run. A CARGO_REGISTRY_TOKEN secret, while one is set, is used instead.
+    permissions:
+      id-token: write
+    env:
+      SECRET: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-      - env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
-            echo "::notice::No CARGO_REGISTRY_TOKEN secret, so chassis-core is not published"
-            exit 0
-          fi
-          cargo publish -p chassis-core
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+        if: env.SECRET == ''
+      - run: cargo publish -p chassis-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.SECRET || steps.auth.outputs.token }}
 
   github:
     name: GitHub release

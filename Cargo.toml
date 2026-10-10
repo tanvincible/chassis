@@ -4,7 +4,7 @@ resolver = "3"
 members = ["chassis-core", "chassis-ffi"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Tanvi Pooranmal Meena (tanvipm19@gmail.com)"]

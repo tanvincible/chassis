@@ -23,7 +23,7 @@ Chassis is intentionally limited in scope to ensure correctness and performance.
 
 ## Current Status
 
-The latest release is **v0.7.0**: deletes and your own ids, filtered search, compaction, readers
+The latest release is **v0.7.1**: deletes and your own ids, filtered search, compaction, readers
 in other processes, half precision and more, in a new file format that v0.6.3 can't open. Opening
 an older file for writing converts it. Search, the C API and the Python bindings work end to end.
 Measured numbers are in the [decision records](./adr) and on the
