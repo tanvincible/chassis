@@ -10,7 +10,7 @@ rust-version = "1.88"
 authors = ["Tanvi Pooranmal Meena (tanvipm19@gmail.com)"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tanvincible/chassis"
-description = "An embeddable, on-disk vector storage engine."
+description = "An embedded vector index for local semantic search: one file, in your process, no server."
 
 [workspace.dependencies]
 chassis-core = { path = "./chassis-core" }

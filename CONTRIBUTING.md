@@ -1,16 +1,16 @@
 # Contributing to Chassis
 
-Thank you for looking at this project. Chassis is built to be a simple, stable, and high-performance foundation for vector search, and it only stays that way through careful work. 
+Thank you for looking at this project. Chassis is a small embedded vector index for local semantic search: one file, in your process, no server. It stays small, correct and fast only through careful work.
 
 Whether you are fixing a bug in the Rust core, improving the Python bindings, or helping someone else with a question, your help is appreciated.
 
-If you like what we are doing but do not have the time to write code or documentation, you can still help by starring the repository or mentioning the project to others who might find a local vector engine useful.
+If you like what we are doing but do not have the time to write code or documentation, you can still help by starring the repository or mentioning the project to others who might find a local vector index useful.
 
 ## I Have a Question
 
 We maintain two primary sources of documentation:
-1. **[The Chassis Book](https://tanvincible.github.io/chassis/)**: Architecture, design decisions, and internal storage formats.
-2. **[Python API Docs](https://tanvincible.github.io/chassis/pychassis)**: Usage guides and API reference for the `pychassis` Python package.
+1. **[The Chassis book](docs/src/SUMMARY.md)**: guides, the API and error references, architecture, the file format, and the decision records.
+2. **[Python docs](pychassis/docs/index.md)**: usage guides and API reference for the Python package (`chassisdb`, imported as `chassis`).
 
 Before asking a question, please check these resources. If the answer isn't there, search the existing [issues](https://github.com/tanvincible/chassis/issues) on GitHub.
 
@@ -39,7 +39,7 @@ If you discover a security vulnerability (e.g., memory safety issue in the FFI b
 
 ### Suggesting Enhancements
 
-Chassis is intentionally small and focused. If you have an idea for a new feature, please consider whether it fits the project’s goal of being a simple storage primitive.
+Chassis is intentionally small and focused. If you have an idea for a new feature, please consider whether it fits the project’s goal: local semantic search in one file, in your process, with no server.
 
 We prefer features that benefit most users rather than specialized functionality that can be built on top of Chassis by the host application.
 
@@ -47,13 +47,13 @@ We prefer features that benefit most users rather than specialized functionality
 
 Chassis is a monorepo containing three distinct components:
 
-* `chassis-core`: The storage engine (Rust).
-* `chassis-ffi`: The C-compatible Interface (Rust).
-* `pychassis`: The Python client (Python/Ctypes).
+* `chassis-core`: The index itself: storage, graph and search (Rust).
+* `chassis-ffi`: The C API (Rust).
+* `pychassis`: The Python package, `chassisdb` (Python, over the C API with ctypes).
 
 #### 1. Rust Development (Core & FFI)
 
-You will need a stable Rust toolchain.
+You will need Rust 1.88 or later.
 
 ```bash
 # Build the entire workspace
@@ -62,13 +62,15 @@ cargo build
 # Run all tests (Core + FFI)
 cargo test --workspace
 
-# Check for linting errors
-cargo clippy --workspace -- -D warnings
+# Check for linting errors, as CI does on Linux x86
+cargo clippy --all-features --all-targets -- -D warnings
 ```
+
+On ARM, clippy currently stops at known warnings in the NEON kernels in `chassis-core/src/distance.rs`.
 
 #### 2. Python Development (`pychassis`)
 
-To work on the Python bindings, you need the FFI library built first.
+To work on the Python bindings, you need the C library built first. The package finds it in `target/release`, or wherever `CHASSIS_LIB_PATH` points.
 
 ```bash
 # 1. Build the shared library
@@ -79,8 +81,8 @@ cd pychassis
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 
-# 3. Install in editable mode with dev dependencies
-pip install -e ".[dev,docs]"
+# 3. Install in editable mode with dev dependencies (add `docs` to build the docs)
+pip install -e ".[dev]"
 
 # 4. Run Python tests
 pytest

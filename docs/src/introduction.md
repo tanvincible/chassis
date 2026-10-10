@@ -1,17 +1,17 @@
 # Introduction
 
-Chassis is an embeddable, on-disk vector storage engine written in Rust. It is designed to be the local storage primitive for embedding-based search applications, running directly within your process without external dependencies.
+Chassis is an embedded vector index for local semantic search, written in Rust. It keeps an index in one file and runs inside your process, with no server to run or connect to.
 
 ## What Chassis Does
 
-Chassis provides a complete engine for storing and searching high-dimensional vectors. It manages a single memory-mapped file that contains both the raw vector data and a persistent HNSW graph index.
+Chassis stores vectors under your ids and searches them. It manages a single memory-mapped file that holds both the vectors and a persistent HNSW graph over them.
 
 ### Key Capabilities
 
 * **Vector Similarity Search**: Performs approximate nearest neighbor (ANN) search using a fully persistent HNSW graph.
 * **High-Level Orchestration**: The `VectorIndex` facade manages the complexity of coordinate storage, graph topology, and search logic.
 * **Crash Consistency**: After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
-* **Zero-Copy Access**: Vectors are accessed directly from the OS page cache via memory mapping, providing nanosecond-level read latency.
+* **Memory-Mapped Access**: Searches read vectors straight from the operating system's page cache, so opening an index loads nothing and takes about a millisecond.
 
 ## What Chassis Does Not Do
 
@@ -23,9 +23,12 @@ Chassis is intentionally limited in scope to ensure correctness and performance.
 
 ## Current Status
 
-**v0.6.3.** Storage, HNSW search, the C ABI and the Python bindings work end to end through
-`VectorIndex`. Deleting or updating vectors is not supported yet. Measured numbers are on the
-[Performance](./architecture/performance.md) page.
+The last release is **v0.6.3**. `main` has much more since, not released yet: deletes and your
+own ids, filtered search, compaction, readers in other processes, half precision and more, in a
+new file format that v0.6.3 can't open. Search, the C API and the Python bindings work end to end.
+Measured numbers are in the [decision records](./adr) and on the
+[Performance](./architecture/performance.md) page. To replace a vector, delete its id and add it
+again.
 
 ## Requirements
 

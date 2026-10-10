@@ -1,6 +1,6 @@
 # PyChassis - Python Bindings for Chassis
 
-High-performance Python bindings for the Chassis vector storage engine.
+Python bindings for Chassis, an embedded vector index for local semantic search: one file, in your process, no server.
 
 ## Features
 

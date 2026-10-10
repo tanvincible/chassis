@@ -1,6 +1,6 @@
 # Chassis FFI - C Bindings for Chassis Vector Storage
 
-This crate provides a C-compatible shared library interface to the Chassis vector storage engine.
+This crate provides a C-compatible shared library interface to Chassis, an embedded vector index.
 
 ## Features
 
