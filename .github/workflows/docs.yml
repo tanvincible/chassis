@@ -7,9 +7,9 @@ on:
     branches: ["main"]
     paths:
       - "docs/**"
-      - "pychassis/docs/**"
-      - "pychassis/mkdocs.yml"
-      - "pychassis/chassis/**"
+      - "chassisdb/docs/**"
+      - "chassisdb/mkdocs.yml"
+      - "chassisdb/chassis/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -39,11 +39,11 @@ jobs:
       - name: Build the book and the Python docs
         run: |
           (cd docs && mdbook build)
-          pip install "./pychassis[docs]"
-          (cd pychassis && mkdocs build)
+          pip install "./chassisdb[docs]"
+          (cd chassisdb && mkdocs build)
           mkdir site
           cp -r docs/book/. site/
-          cp -r pychassis/site site/python
+          cp -r chassisdb/site site/python
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4

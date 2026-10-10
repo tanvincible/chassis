@@ -1,4 +1,4 @@
-# PyChassis - Python Bindings for Chassis
+# chassisdb
 
 Python bindings for Chassis, an embedded vector index for local semantic search: one file, in your process, no server.
 
@@ -31,11 +31,11 @@ pip install -e ".[dev]"
 pytest
 
 # Type checking
-mypy pychassis
+mypy chassis
 
 # Formatting
-black pychassis tests
-ruff check pychassis tests
+black chassis tests
+ruff check chassis tests
 ```
 
 ## Quick Start
@@ -305,7 +305,7 @@ with ThreadPoolExecutor() as pool:
 
 ## Library Location
 
-PyChassis looks for `libchassis_ffi` in this order:
+chassisdb looks for `libchassis_ffi` in this order:
 
 1. `CHASSIS_LIB_PATH` environment variable
 2. Next to the Python package
@@ -331,7 +331,7 @@ See the `examples/` directory for complete examples:
 pytest
 
 # Run with coverage
-pytest --cov=pychassis --cov-report=html
+pytest --cov=chassis --cov-report=html
 
 # Run specific test
 pytest tests/test_index.py::test_add_and_search

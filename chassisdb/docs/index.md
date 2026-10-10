@@ -1,6 +1,6 @@
-# PyChassis
+# chassisdb
 
-**PyChassis** provides Python bindings for **Chassis**, an embedded vector index for local semantic search: one file, in your process, no server.
+**chassisdb** provides Python bindings for **Chassis**, an embedded vector index for local semantic search: one file, in your process, no server.
 
 It combines the safety and raw speed of Rust with the ease of use of Python. Unlike many vector libraries that run primarily in-memory, Chassis is designed for **embedded, on-disk persistence** first.
 
@@ -24,7 +24,7 @@ The package is named `chassisdb` and imported as `chassis`. To build it from a c
 repository instead, which needs Rust:
 
 ```bash
-pip install ./pychassis
+pip install ./chassisdb
 ```
 
 ## The "Hello World" of Vector Search

@@ -34,7 +34,7 @@ It is not a database server or a distributed system, and it stores vectors and i
 
 ## Learn More
 
-* [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](pychassis/README.md)
+* [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](chassisdb/README.md)
 * [How it works](docs/src/architecture/overview.md), and why, in the [decision records](docs/src/adr)
 * [Benchmarks](docs/src/architecture/performance.md), and what is [planned](ROADMAP.md)
 

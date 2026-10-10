@@ -59,7 +59,7 @@ jobs:
         run: cargo build --release -p chassis-ffi
 
       - name: Run the Python tests
-        working-directory: pychassis
+        working-directory: chassisdb
         env:
           CHASSIS_LIB_PATH: ${{ github.workspace }}/target/release
           PYTHONPATH: .

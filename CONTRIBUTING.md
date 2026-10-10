@@ -10,7 +10,7 @@ If you like what we are doing but do not have the time to write code or document
 
 We maintain two primary sources of documentation:
 1. **[The Chassis book](docs/src/SUMMARY.md)**: guides, the API and error references, architecture, the file format, and the decision records.
-2. **[Python docs](pychassis/docs/index.md)**: usage guides and API reference for the Python package (`chassisdb`, imported as `chassis`).
+2. **[Python docs](chassisdb/docs/index.md)**: usage guides and API reference for the Python package (`chassisdb`, imported as `chassis`).
 
 Before asking a question, please check these resources. If the answer isn't there, search the existing [issues](https://github.com/tanvincible/chassis/issues) on GitHub.
 
@@ -49,7 +49,7 @@ Chassis is a monorepo containing three distinct components:
 
 * `chassis-core`: The index itself: storage, graph and search (Rust).
 * `chassis-ffi`: The C API (Rust).
-* `pychassis`: The Python package, `chassisdb` (Python, over the C API with ctypes).
+* `chassisdb`: The Python package, imported as `chassis` (Python, over the C API with ctypes).
 
 #### 1. Rust Development (Core & FFI)
 
@@ -68,7 +68,7 @@ cargo clippy --all-features --all-targets -- -D warnings
 
 On ARM, clippy currently stops at known warnings in the NEON kernels in `chassis-core/src/distance.rs`.
 
-#### 2. Python Development (`pychassis`)
+#### 2. Python Development (`chassisdb`)
 
 To work on the Python bindings, you need the C library built first. The package finds it in `target/release`, or wherever `CHASSIS_LIB_PATH` points.
 
@@ -77,7 +77,7 @@ To work on the Python bindings, you need the C library built first. The package 
 cargo build --release -p chassis-ffi
 
 # 2. Setup Python environment
-cd pychassis
+cd chassisdb
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 
@@ -96,7 +96,7 @@ pytest
 - **Python**: We use `black` and `ruff`.
 
 ```bash
-# Inside pychassis/
+# Inside chassisdb/
 black .
 ruff check . --fix
 mypy .
@@ -125,7 +125,7 @@ For larger changes, you may include a message body after a blank line with addit
 Documentation is as important as code.
 
 * **Architecture Docs**: Located in [`docs`](https://github.com/tanvincible/chassis/tree/main/docs) (built with `mdbook`).
-* **Python Docs**: Located in [`pychassis/docs/`](https://github.com/tanvincible/chassis/tree/main/pychassis/docs) (built with `mkdocs`).
+* **Python Docs**: Located in [`chassisdb/docs/`](https://github.com/tanvincible/chassis/tree/main/chassisdb/docs) (built with `mkdocs`).
 
 If you find a typo or unclear explanation, please feel free to submit a pull request.
 
