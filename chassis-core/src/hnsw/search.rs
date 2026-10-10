@@ -691,17 +691,17 @@ impl HnswGraph {
                 }
                 Ok(true)
             };
-            let mut groups = fresh.chunks_exact(W);
-            for group in &mut groups {
-                let vectors = std::array::from_fn(|j| group[j].1);
-                let dists = unsafe { K::squared_group::<W>(query, vectors) };
+            let (groups, rest) = fresh.as_chunks::<W>();
+            for group in groups {
+                let dists =
+                    unsafe { K::squared_group::<W>(query, group.map(|(_, vector)| vector)) };
                 for (&(neighbor_id, _), dist) in group.iter().zip(dists) {
                     if !take(neighbor_id, dist)? {
                         return Ok(None);
                     }
                 }
             }
-            for &(neighbor_id, vector) in groups.remainder() {
+            for &(neighbor_id, vector) in rest {
                 if !take(neighbor_id, unsafe { K::squared(query, vector) })? {
                     return Ok(None);
                 }
