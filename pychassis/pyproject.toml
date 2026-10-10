@@ -109,3 +109,15 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
+
+# Wheels for each platform (.github/workflows/build.yml): one per platform serves every Python
+# from 3.13 on, so only 3.13 builds them; each is then installed and tested.
+[tool.cibuildwheel]
+build = "cp313-*"
+skip = "*-musllinux_*"
+test-requires = ["pytest", "numpy"]
+test-command = "python -c \"import chassis._ffi as f, pathlib; assert pathlib.Path(f._lib_path).parent == pathlib.Path(f.__file__).parent, f._lib_path\" && pytest {package}/tests --import-mode=importlib -o addopts= -q"
+
+[tool.cibuildwheel.linux]
+before-all = "curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
+environment = { PATH = "$HOME/.cargo/bin:$PATH" }

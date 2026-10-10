@@ -1,0 +1,73 @@
+name: Build
+
+# What a release ships, built on every pull request and push to main: the C library with its
+# header, and a chassisdb wheel per platform with the library inside, each installed and tested.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  library:
+    name: C library (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build
+
+      - name: Build
+        run: cargo build --release -p chassis-ffi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chassis-ffi-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            target/release/libchassis_ffi.so
+            target/release/libchassis_ffi.dylib
+            target/release/chassis_ffi.dll
+            target/release/chassis_ffi.dll.lib
+            chassis-ffi/include/chassis.h
+          if-no-files-found: error
+
+  wheels:
+    name: Python wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Linux builds in a manylinux container, which installs its own Rust (pyproject.toml).
+      - uses: dtolnay/rust-toolchain@v1
+        if: runner.os != 'Linux'
+        with:
+          toolchain: stable
+
+      - uses: pypa/cibuildwheel@v4.3.0
+        with:
+          package-dir: pychassis
+          output-dir: wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chassisdb-${{ runner.os }}-${{ runner.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
