@@ -5,7 +5,7 @@
 
 use crate::header::MAGIC;
 use crate::hnsw::node::{NodeId, NodeRecord, NodeRecordParams};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use memmap2::Mmap;
 use std::fs::File;
 
@@ -42,10 +42,20 @@ impl LegacyIndex {
         let u32_at = |at: usize| u32::from_le_bytes(map[at..at + 4].try_into().expect("4 bytes"));
         let u64_at = |at: usize| u64::from_le_bytes(map[at..at + 8].try_into().expect("8 bytes"));
         if map.len() < HEADER_SIZE || !is_legacy(&map) {
-            bail!("File is not a valid Chassis index");
+            crate::error::fail!(
+                NotAnIndex,
+                "The file is not a Chassis index: it doesn't begin with a Chassis header\nhelp: \
+                 check the path; to create a new index, give a path where no file exists yet"
+            );
         }
         if u32_at(12) != dims {
-            bail!("Dimension mismatch: file has {}, requested {dims}", u32_at(12));
+            crate::error::fail!(
+                DimensionMismatch,
+                "The index holds vectors of {} dimensions, not {dims}\nhelp: open it with {} \
+                 dimensions, or create a new index at another path",
+                u32_at(12),
+                u32_at(12)
+            );
         }
         let stored = u64_at(16);
 
@@ -60,7 +70,11 @@ impl LegacyIndex {
 
         let Some(graph) = graph.filter(|g| g.iter().any(|&b| b != 0)) else {
             if stored > 0 {
-                bail!("File has {stored} vectors but no graph: it was truncated or corrupted");
+                crate::error::fail!(
+                    Corrupt,
+                    "The file has {stored} vectors but no graph: it was cut short or damaged\nhelp: \
+                     restore it from a backup, or rebuild it from its vectors"
+                );
             }
             let params = NodeRecordParams::default();
             return Ok(Self {
@@ -76,7 +90,10 @@ impl LegacyIndex {
             });
         };
         if graph[0..4] != *b"HNSW" || u32::from_le_bytes(graph[4..8].try_into()?) != 1 {
-            bail!("Corrupted graph header");
+            crate::error::fail!(
+                Corrupt,
+                "Corrupted graph header\nhelp: restore the index from a backup, or rebuild it from its vectors"
+            );
         }
         let g64 = |at: usize| u64::from_le_bytes(graph[at..at + 8].try_into().expect("8 bytes"));
         let g16 = |at: usize| u16::from_le_bytes(graph[at..at + 2].try_into().expect("2 bytes"));
@@ -85,7 +102,11 @@ impl LegacyIndex {
         let graph_start = graph_start.expect("graph header found above");
 
         if stored < count {
-            bail!("Index corruption: graph has {count} nodes but storage only {stored} vectors");
+            crate::error::fail!(
+                Corrupt,
+                "The graph has {count} nodes but only {stored} vectors are stored: the file is \
+                 damaged\nhelp: restore it from a backup, or rebuild it from its vectors"
+            );
         }
         let graph_end = usize::try_from(count)
             .ok()
@@ -93,7 +114,10 @@ impl LegacyIndex {
             .and_then(|n| n.checked_add(graph_start + GRAPH_HEADER_SIZE))
             .context("Graph size overflow")?;
         if graph_end > map.len() || HEADER_SIZE + count as usize * dims as usize * 4 > map.len() {
-            bail!("File truncated: it ends inside the graph");
+            crate::error::fail!(
+                Corrupt,
+                "File truncated: it ends inside the graph\nhelp: restore the index from a backup, or rebuild it from its vectors"
+            );
         }
 
         let entry = g64(8);

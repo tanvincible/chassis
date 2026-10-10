@@ -164,6 +164,28 @@ fails, or is lost to power loss, may already have been seen. `len()` reports the
 `search` takes `&mut self`: open one reader per thread. The file must exist in the current format;
 open it once with `VectorIndex::open` to create or migrate it.
 
+## Errors
+
+`VectorIndex` and `IndexReader` return `chassis_core::Result<T>`, whose error says what was wrong,
+with the value, and on a line starting `help:` what to do instead. `Error::kind()` is an
+`ErrorKind` to act on ([Errors](./errors.md) lists them, with causes and fixes):
+
+```rust
+use chassis_core::{ErrorKind, IndexOptions, IndexReader, VectorIndex};
+
+match VectorIndex::open("embeddings.chassis", 768, IndexOptions::default()) {
+    Ok(index) => { /* write */ }
+    // One writer at a time; a reader searches while it writes.
+    Err(e) if e.kind() == ErrorKind::Locked => {
+        let reader = IndexReader::open("embeddings.chassis", 768, IndexOptions::default())?;
+    }
+    Err(e) => return Err(e.into()),
+}
+```
+
+`chassis_core::Error` converts into `anyhow::Error` and `Box<dyn std::error::Error>`, so `?` works
+in functions that return those.
+
 ## Configuration
 
 ### `IndexOptions`

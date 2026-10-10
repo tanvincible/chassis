@@ -33,10 +33,10 @@ fn live_after(batches: u64) -> u64 {
 
 /// Opens the index once its lock is free. A process another test forks holds a copy of every
 /// open handle until it execs, and with it the lock of an index this test has just closed.
-fn unlocked<T>(open: impl Fn() -> anyhow::Result<T>) -> T {
+fn unlocked<T>(open: impl Fn() -> chassis_core::Result<T>) -> T {
     for _ in 0..400 {
         match open() {
-            Err(e) if e.to_string().contains("already open") => {
+            Err(e) if e.kind() == chassis_core::ErrorKind::Locked => {
                 std::thread::sleep(Duration::from_millis(5));
             }
             opened => return opened.unwrap(),
@@ -215,7 +215,7 @@ fn kill_at_random_points(add_batch: bool, compact: bool) {
             }
             continue;
         }
-        let storage = unlocked(|| Storage::open(&path, DIMS));
+        let storage = unlocked(|| Ok(Storage::open(&path, DIMS)?));
         assert_eq!(storage.count(), flushed * BATCH);
         for id in 0..storage.count() {
             assert_eq!(storage.get_vector_slice(id).unwrap(), vector(id).as_slice(), "vector {id}");

@@ -21,6 +21,73 @@
 #include <stdlib.h>
 
 /**
+ * No error: what `chassis_last_error_code` returns after a call that succeeded.
+ */
+#define CHASSIS_OK 0
+
+/**
+ * An argument is out of range or malformed: a NULL pointer, dimensions, an option, an id, a
+ * vector with a component that isn't a finite number.
+ */
+#define CHASSIS_ERROR_INVALID_ARGUMENT 1
+
+/**
+ * A vector or query has another number of components than the index's vectors, or the file
+ * holds vectors of other dimensions than asked for.
+ */
+#define CHASSIS_ERROR_DIMENSION_MISMATCH 2
+
+/**
+ * The file was created with another metric or precision than the one asked for.
+ */
+#define CHASSIS_ERROR_OPTIONS_MISMATCH 3
+
+/**
+ * There is no index at the path, or its directory doesn't exist.
+ */
+#define CHASSIS_ERROR_NOT_FOUND 4
+
+/**
+ * The file is not a Chassis index.
+ */
+#define CHASSIS_ERROR_NOT_AN_INDEX 5
+
+/**
+ * The id is already in use.
+ */
+#define CHASSIS_ERROR_ID_IN_USE 6
+
+/**
+ * Another writer has the index open.
+ */
+#define CHASSIS_ERROR_LOCKED 7
+
+/**
+ * The handle is a reader, which only searches.
+ */
+#define CHASSIS_ERROR_READ_ONLY 8
+
+/**
+ * The file is damaged.
+ */
+#define CHASSIS_ERROR_CORRUPT 9
+
+/**
+ * The index can hold no more.
+ */
+#define CHASSIS_ERROR_FULL 10
+
+/**
+ * The operating system refused: permissions, a full disk, a failed read or write.
+ */
+#define CHASSIS_ERROR_IO 11
+
+/**
+ * Anything else, a panic included.
+ */
+#define CHASSIS_ERROR_OTHER 12
+
+/**
  * Opaque handle to a Chassis index (C-compatible)
  *
  * This is a zero-sized type that serves as an opaque handle for C.
@@ -629,6 +696,25 @@ int chassis_precision(const struct ChassisIndex *ptr);
  * ```
  */
 const char *chassis_last_error_message(void);
+
+/**
+ * What the last error on this thread was, for a program to act on
+ *
+ * # Returns
+ *
+ * One of the `CHASSIS_ERROR_` constants, or `CHASSIS_OK` (0) if the last call succeeded or set
+ * no error. `chassis_last_error_message` says the same in words, with what to do instead.
+ *
+ * # Example (C)
+ *
+ * ```c
+ * ChassisIndex* index = chassis_open("vectors.chassis", 768);
+ * if (index == NULL && chassis_last_error_code() == CHASSIS_ERROR_LOCKED) {
+ *     index = chassis_open_reader("vectors.chassis", 768, 16, 50);
+ * }
+ * ```
+ */
+int chassis_last_error_code(void);
 
 /**
  * Get the Chassis library version

@@ -31,7 +31,7 @@ fn test_dimension_mismatch() {
     // Try to open with different dimensions
     let result = Storage::open(path, 256);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Dimension mismatch"));
+    assert!(result.unwrap_err().to_string().contains("holds vectors of 128 dimensions, not 256"));
 }
 
 #[test]

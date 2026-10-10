@@ -197,7 +197,7 @@ fn test_migration_keeps_the_original_parameters() {
     // Old files hold raw vectors, so they stay Euclidean.
     let cosine = IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() };
     let error = VectorIndex::open(&path, DIMS, cosine).unwrap_err().to_string();
-    assert!(error.contains("Euclidean"), "{error}");
+    assert!(error.contains("opened with euclidean distance too, not cosine"), "{error}");
     let index = VectorIndex::open(&path, DIMS, IndexOptions::default()).unwrap();
     assert_eq!(index.len(), 6);
     assert_eq!(index.metric(), DistanceMetric::Euclidean);
