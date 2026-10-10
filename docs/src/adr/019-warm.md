@@ -35,14 +35,21 @@ its last entry. What lies past them was never written, and in a sparse file is a
 under way, asking again does nothing; once it is done, asking again reads what the index holds
 then.
 
-### 3. Through a read-only view of its own
+### 3. Through the index's own mappings, except a writer's off Linux
 
-The thread maps the file read-only and gives the system advice about that mapping, never about the
-index's own. On macOS, advice to read pages in through a writable shared mapping, which a writer
-has, marks every page it reads as changed, and the system then writes them all back to the disk.
-A view of its own also outlives any mapping the index replaces, as a reader does when a restarted
-writer has laid the file out differently; advice about an address that is no longer mapped is an
-error, but about one mapped again it acts on whatever is there.
+The thread gives the system advice about the index's own mappings, which then have the pages
+mapped as well as in memory: on a file already in memory that alone made the first hundred
+searches three times as fast on the M5. A reader's mappings are read-only. A writer's are
+writable, and on macOS advice to read pages in through a writable shared mapping marks every page
+it reads as changed, so the system writes them all back: 309 MB written for 320 MB read, on the
+half-precision file. So a writer off Linux, where only Linux promises to leave such pages clean,
+maps the file read-only for the thread and gives the advice about that view instead.
+
+A reader unmaps a region when a restarted writer has laid the file out differently. It stops the
+thread first: advice about an address that is no longer mapped is an error, but about one that
+has been mapped again it acts on whatever is there now, and on macOS read untouched anonymous
+memory in, 64 MB of it in a test. Dropping or replacing an index stops the thread before its
+mappings go.
 
 ### 4. Each system asked in its own way
 
@@ -53,8 +60,9 @@ yet.
 
 ### 5. In steps, so that it can be stopped
 
-The thread asks for 8 MiB at a time and checks between requests whether to stop. Dropping or
-replacing the index stops it and waits for it, which is at most one request.
+The thread asks for 8 MiB at a time and checks between requests whether to stop; stopping waits
+for at most one request. A forked child that drops an index whose parent was reading it in does
+not wait for a thread it does not have.
 
 ### 6. Off unless asked for
 
@@ -63,7 +71,42 @@ already in memory gains nothing. Whether a file is in memory is the application'
 
 ## Measurements
 
-⟪MEASUREMENTS⟫
+On an Apple M5 in Low Power Mode, 2026-10-10, 99,000 OpenAI embeddings of 1,536 dimensions
+(an 821 MB file in full precision, 421 MB in half), `ef` 64, each run a fresh process opening the
+index as a reader and searching 1,000 queries; milliseconds from the start of the process, medians
+of three to five rounds:
+
+| File out of memory | First result | 100 results | 1,000 results |
+| --- | --- | --- | --- |
+| Full precision | 110 | 1,890 | 2,400 |
+| Full, with `warm` | 110 | 365 | 864 |
+| Half precision | 100 | 976 | 1,298 |
+| Half, with `warm` | 81 | 198 | 517 |
+| hnswlib | 499 | 705 | 2,571 |
+
+| File in memory | First result | 100 results | 1,000 results |
+| --- | --- | --- | --- |
+| Full precision | 9 | 252 | 732 |
+| Full, with `warm` | 9 | 85 | 571 |
+| Half precision | 6 | 94 | 423 |
+| Half, with `warm` | 6 | 53 | 370 |
+
+A writer, on a copy of the full-precision file out of memory, returned its hundredth result after
+523 ms with `warm` and 1,912 ms without; through a view of the file it gains nothing when the file
+is already in memory. Once a search's pages are in, it takes as long either way: 0.52 to 0.55 ms.
+
+What it reads in is what was written: 38,124 of the file's 50,088 pages of 16 KB, exactly the
+pages that hold written bytes, where opening without it brought in 5. The file's hash and time of
+change are the same after a writer read it in.
+
+On four Linux servers (GitHub's runners: EPYC 7763, 9V45 and 9V74, Neoverse-N2; disks reading 280
+to 660 MB/s in sequence and 5,600 to 11,600 random reads a second), on the same vectors read
+from their own disk, the hundredth result came after 1.3 to 1.7 s with it and 1.5 to 2.9 s
+without, and hnswlib's after 1.3 to 2.1 s; in half precision 0.56 to 1.1 s, from 0.62 to 1.3 s.
+On a million SIFT vectors of 128 dimensions it came after 1.37 s, from 1.56 to 1.87 s, and 0.75 s
+in half precision, from 0.94 to 1.1 s; hnswlib took 1.87 to 2.04 s. On a disk that slow, reading
+the file in takes about as long as the searches it would speed up, and the first result came up
+to 160 ms later with it in six of the eight runs, while the thread had the disk.
 
 ## What It Does Not Do
 
@@ -88,7 +131,9 @@ already in memory gains nothing. Whether a file is in memory is the application'
 
 ### Positive
 
-* ⟪POSITIVE⟫
+* On a file out of memory the hundredth search returns five times as soon on the M5, and sooner
+  than hnswlib's; on slower Linux disks, up to two fifths sooner.
+* A reader's searches on a file already in memory start up to three times as fast.
 * Nothing changes for an index opened without it: no thread is started and no advice given.
 
 ### Negative

@@ -15,6 +15,7 @@ The project is early-stage and focused on establishing a correct, stable storage
 * Batch builds on every core
 * Compaction, which drops deleted vectors and rebuilds the graph
 * Half-precision vectors, for half the file and half the memory
+* An index read into memory in the background, on request
 * Durable `flush()`: after a crash, everything up to the last one is kept
 * One writer and any number of readers, in other processes too
 * AVX2 and NEON distance kernels, with a scalar fallback

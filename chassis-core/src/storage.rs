@@ -312,9 +312,9 @@ impl Region {
 /// How much the warming thread asks the system for at a time, so that it can be stopped between.
 const WARM_STEP: usize = 8 << 20;
 
-/// A thread reading the index into memory (`IndexOptions::warm`, ADR-0019), through a read-only
-/// view of the file of its own. Advice through a writer's writable mapping would leave macOS
-/// writing every page back, and the view outlives any mapping the index replaces.
+/// A thread reading the index into memory (`IndexOptions::warm`, ADR-0019). It hands the system
+/// address ranges and never reads them itself. It has to be stopped before any of them is
+/// unmapped: the system would take the same advice about whatever is mapped there next.
 #[derive(Debug)]
 struct Warming {
     stop: Arc<AtomicBool>,
@@ -329,17 +329,18 @@ impl std::panic::UnwindSafe for Warming {}
 impl std::panic::RefUnwindSafe for Warming {}
 
 impl Warming {
-    /// Starts reading the `ranges` of (offset, length) of `view` in, in order; `None` if no thread
-    /// could be started.
-    fn start(view: Mmap, ranges: Vec<(usize, usize)>) -> Option<Self> {
+    /// Starts reading `ranges` of (address, length) in, in order, holding `view` mapped until it
+    /// is done; `None` if no thread could be started.
+    fn start(ranges: Vec<(usize, usize)>, view: Option<Mmap>) -> Option<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
         let work = move || {
+            let _view = view;
             for (at, len) in steps(ranges) {
                 if stopped.load(Ordering::Relaxed) {
                     return;
                 }
-                read_in(&view, at, len);
+                read_in(at, len);
             }
         };
         let thread = std::thread::Builder::new().name("chassis-warm".into()).spawn(work).ok()?;
@@ -372,21 +373,37 @@ fn steps(ranges: Vec<(usize, usize)>) -> impl Iterator<Item = (usize, usize)> {
     })
 }
 
-/// Asks the system to read the `len` bytes at `at` in `view` into memory.
+/// Asks the system to read the pages of the `len` bytes at address `at` into memory.
 #[cfg(unix)]
-fn read_in(view: &Mmap, at: usize, len: usize) {
-    use memmap2::Advice;
-    // Reads the pages in, as touching each would. Linux 5.14 and later; before that, the request
-    // below, which the kernel honors only in part.
+fn read_in(at: usize, len: usize) {
+    let at = at as *mut libc::c_void;
+    // SAFETY (both calls): advice about an address range, which nothing here reads or writes.
+    // `Warming` is stopped before a range it was given is unmapped.
     #[cfg(target_os = "linux")]
-    if view.advise_range(Advice::PopulateRead, at, len).is_ok() {
+    // Reads the pages in and maps them, as touching each would, and leaves them clean. Linux 5.14
+    // and later; before that, the request below, which the kernel honors only in part.
+    if unsafe { libc::madvise(at, len, libc::MADV_POPULATE_READ) } == 0 {
         return;
     }
-    let _ = view.advise_range(Advice::WillNeed, at, len);
+    unsafe { libc::madvise(at, len, libc::MADV_WILLNEED) };
 }
 
 #[cfg(not(unix))]
-fn read_in(_: &Mmap, _: usize, _: usize) {}
+fn read_in(_: usize, _: usize) {}
+
+/// The `len` bytes at `at` from the start of their first page of `page` bytes: the system takes
+/// advice about whole pages.
+fn from_page_start(page: usize, (at, len): (usize, usize)) -> (usize, usize) {
+    (at / page * page, len + at % page)
+}
+
+fn page_size() -> usize {
+    #[cfg(unix)]
+    // SAFETY: sysconf only reads.
+    return unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    #[cfg(not(unix))]
+    4096
+}
 
 #[derive(Debug)]
 struct Segment {
@@ -476,7 +493,8 @@ impl Undo {
 /// Storage engine for one index file.
 #[derive(Debug)]
 pub struct Storage {
-    /// The thread reading the index into memory, if `warm` started one.
+    /// The thread reading the index into memory, if `warm` started one. First, so that a drop
+    /// stops it before the regions it was told about are unmapped.
     warming: Option<Warming>,
     /// File handle (owns the file lock)
     file: File,
@@ -677,27 +695,41 @@ impl Storage {
         if self.warming.as_ref().is_some_and(Warming::running) {
             return;
         }
-        let ranges = self.written();
-        if !cfg!(unix) || ranges.is_empty() {
+        if !cfg!(unix) || self.written(None).is_empty() {
             return;
         }
-        // SAFETY: nothing reads through the view; it is only named in advice.
-        if let Ok(view) = unsafe { Mmap::map(&self.file) } {
-            self.warming = Warming::start(view, ranges);
-        }
+        // Asked to read pages in through a writable mapping, macOS marks them all as written to,
+        // and writes them back. A writer there asks through a read-only view of the file instead,
+        // whose pages its own mappings then fault in.
+        let view = match self.writable && !cfg!(target_os = "linux") {
+            // SAFETY: nothing reads through the view; it is only named in advice.
+            true => match unsafe { Mmap::map(&self.file) } {
+                Ok(view) => Some(view),
+                Err(_) => return,
+            },
+            false => None,
+        };
+        let page = page_size();
+        let ranges = self.written(view.as_ref()).into_iter().map(|r| from_page_start(page, r));
+        self.warming = Warming::start(ranges.collect(), view);
     }
 
-    /// The file ranges of what has been written: each segment's three arrays up to the last
-    /// slot counted, the heap chunks before the one in use, and that one up to its last entry.
-    /// What lies past them was never written, and in a sparse file is a hole. A reader counts
-    /// slots its writer hasn't committed, and not their heap entries.
-    fn written(&self) -> Vec<(usize, usize)> {
+    /// The address ranges, in the index's mappings or else in `view` of the whole file, of what
+    /// has been written: each segment's three arrays up to the last slot counted, the heap chunks
+    /// before the one in use, and that one up to its last entry. What lies past them was never
+    /// written, and in a sparse file is a hole. A reader counts slots its writer hasn't committed,
+    /// and not their heap entries.
+    fn written(&self, view: Option<&Mmap>) -> Vec<(usize, usize)> {
+        let start = |region: &Region| match view {
+            Some(view) => view.as_ptr() as usize + region.offset as usize,
+            None => region.map.as_ptr() as usize,
+        };
         let g = self.geometry;
         let mut ranges = Vec::new();
         for (k, segment) in self.segments.iter().enumerate() {
             let k = k as u64;
             let slots = self.count.saturating_sub(g.capacity(k)).min(g.segment_slots(k)) as usize;
-            let base = segment.region.offset as usize;
+            let base = start(&segment.region);
             let arrays = [
                 (0, SLOT_HEADER),
                 (segment.vectors, g.vector_bytes()),
@@ -713,7 +745,7 @@ impl Storage {
                 std::cmp::Ordering::Equal => used,
                 std::cmp::Ordering::Greater => 0,
             };
-            ranges.push((chunk.offset as usize, len));
+            ranges.push((start(chunk), len));
         }
         ranges.retain(|&(_, len)| len > 0);
         ranges
@@ -847,6 +879,8 @@ impl Storage {
             let committed = k < u64::from(self.state.segments);
             let Some(offset) = self.table_entry(Table::Segments, k) else { break };
             if self.segments.get(k as usize).is_some_and(|s| s.region.offset != offset) {
+                // What this unmaps, the warming thread may still have to ask for.
+                self.warming = None;
                 self.segments.truncate(k as usize);
             }
             if self.segments.len() as u64 == k {
@@ -869,6 +903,7 @@ impl Storage {
             let committed = c < u64::from(self.state.heap_chunks);
             let Some(offset) = self.table_entry(Table::Chunks, c) else { break };
             if self.chunks.get(c as usize).is_some_and(|chunk| chunk.offset != offset) {
+                self.warming = None;
                 self.chunks.truncate(c as usize);
             }
             if self.chunks.len() as u64 == c {
@@ -1970,7 +2005,7 @@ mod tests {
     fn test_warming_asks_for_what_was_written_and_nothing_past_it() {
         let dir = tempdir().unwrap();
         let mut storage = Storage::open(dir.path().join("index.chassis"), 8).unwrap();
-        assert!(storage.written().is_empty());
+        assert!(storage.written(None).is_empty());
         // Segments of 16, 32 and 64 slots here: the third is left with 40 written.
         let written = 16 + 32 + 40;
         for slot in 0..written {
@@ -1982,7 +2017,7 @@ mod tests {
         storage.commit().unwrap();
 
         let g = storage.geometry;
-        let ranges = storage.written();
+        let ranges = storage.written(None);
         let per_slot = SLOT_HEADER + g.vector_bytes() + g.level0_bytes();
         // Heap chunks before the one in use count whole; that one up to its last entry.
         let (chunk, used) = (storage.state.heap_used >> 32, storage.state.heap_used & 0xffff_ffff);
@@ -1992,13 +2027,13 @@ mod tests {
         // Each range lies inside one region, and the last segment's arrays end at its last slot.
         let regions: Vec<(usize, usize)> = (storage.segments.iter().map(|s| &s.region))
             .chain(&storage.chunks)
-            .map(|r| (r.offset as usize, r.len()))
+            .map(|r| (r.map.as_ptr() as usize, r.len()))
             .collect();
         for &(at, len) in &ranges {
             assert!(regions.iter().any(|&(base, size)| base <= at && at + len <= base + size));
         }
         let last = &storage.segments[2];
-        let at = last.region.offset as usize;
+        let at = last.region.map.as_ptr() as usize;
         for (start, per_slot) in [
             (at, SLOT_HEADER),
             (at + last.vectors, g.vector_bytes()),
@@ -2025,6 +2060,22 @@ mod tests {
         let pieces: Vec<_> = steps(vec![(5, 2 * WARM_STEP + 1), (9, 3)]).collect();
         let step = WARM_STEP;
         assert_eq!(pieces, [(5, step), (5 + step, step), (5 + 2 * step, 1), (9, 3)]);
+        // From the start of a range's first page to where it ended.
+        assert_eq!(from_page_start(4096, (3 * 4096 + 24, 100)), (3 * 4096, 124));
+        assert_eq!(from_page_start(16384, (16384, 5)), (16384, 5));
+        // Through a view of the file, the same ranges at the same offsets in it.
+        let view = unsafe { Mmap::map(&storage.file) }.unwrap();
+        let base = view.as_ptr() as usize;
+        let offsets = (storage.segments.iter().map(|s| &s.region))
+            .chain(&storage.chunks)
+            .map(|r| (r.map.as_ptr() as usize, r.offset as usize));
+        let to_view = |at: usize| {
+            let (mapped, offset) =
+                offsets.clone().filter(|&(mapped, _)| mapped <= at).max().unwrap();
+            base + offset + (at - mapped)
+        };
+        let through_view: Vec<_> = ranges.iter().map(|&(at, len)| (to_view(at), len)).collect();
+        assert_eq!(storage.written(Some(&view)), through_view);
     }
 
     /// A stand-in for a warming thread: it works until it is told to stop, or for ten seconds,
@@ -2191,6 +2242,7 @@ mod tests {
         }
         reader.refresh().unwrap();
         assert_eq!(reader.segments.len(), 2);
+        reader.warm();
         drop(writer);
         // The next writer puts a heap chunk's table page where that segment was, and the segment
         // after it.
@@ -2203,6 +2255,8 @@ mod tests {
         writer.publish_routing(20);
         reader.refresh().unwrap();
         assert_eq!(reader.get_vector(19).unwrap(), vec![3.0; 4]);
+        // Its warming thread was told about the segment that went, and was stopped for that.
+        assert!(reader.warming.is_none());
     }
 
     #[test]
