@@ -427,6 +427,48 @@ class TestReadOnly:
         assert not (tmp_path / "missing.chassis").exists()
 
 
+class TestSearchBatch:
+    """Many queries in one call: each row is what search returns for its query."""
+
+    def test_rows_are_searches(self, tmp_path):
+        rng = np.random.default_rng(0)
+        index = VectorIndex(tmp_path / "batch.chassis", dimensions=8)
+        index.add_batch(rng.standard_normal((50, 8), dtype=np.float32))
+        queries = rng.standard_normal((6, 8), dtype=np.float32)
+        ids, distances = index.search_batch(queries, k=5)
+        assert ids.shape == distances.shape == (6, 5)
+        assert ids.dtype == np.uint64 and distances.dtype == np.float32
+        for row, query in enumerate(queries):
+            results = index.search(query, k=5)
+            assert list(ids[row]) == [r.id for r in results]
+            assert list(distances[row]) == [r.distance for r in results]
+        index.close()
+
+    def test_short_rows_are_filled_out(self, simple_index):
+        simple_index.add([1.0, 0.0, 0.0])
+        simple_index.add([0.0, 1.0, 0.0])
+        ids, distances = simple_index.search_batch([[1.0, 0.0, 0.0]], k=4)
+        assert list(ids[0][:2]) == [0, 1]
+        assert list(ids[0][2:]) == [2**64 - 1] * 2
+        assert np.isinf(distances[0][2:]).all()
+
+    def test_empty_batch(self, simple_index):
+        ids, distances = simple_index.search_batch(np.empty((0, 3), dtype=np.float32), k=2)
+        assert ids.shape == distances.shape == (0, 2)
+
+    def test_reader(self, tmp_path):
+        path = tmp_path / "shared.chassis"
+        writer = VectorIndex(path, dimensions=3)
+        writer.add_batch(np.eye(3, dtype=np.float32))
+        writer.flush()
+        reader = VectorIndex(path, dimensions=3, read_only=True)
+        queries = np.eye(3, dtype=np.float32)
+        for got, want in zip(reader.search_batch(queries, k=2), writer.search_batch(queries, k=2)):
+            assert (got == want).all()
+        reader.close()
+        writer.close()
+
+
 class TestCosine:
     """Cosine distance."""
 
