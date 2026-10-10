@@ -454,6 +454,24 @@ class TestCosine:
         for handle in (reader, plain, index):
             handle.close()
 
+    def test_warming_changes_no_result(self, tmp_path):
+        path = tmp_path / "warm.chassis"
+        index = VectorIndex(path, dimensions=4, options=IndexOptions(warm=True))
+        for i in range(50):
+            index.add([float(i), 1.0, 2.0, 3.0])
+        index.flush()
+        index.warm()
+        reader = VectorIndex(path, dimensions=4, options=IndexOptions(warm=True), read_only=True)
+        plain = VectorIndex(path, dimensions=4, read_only=True)
+        plain.warm()
+        query = [17.2, 1.0, 2.0, 3.0]
+        assert [r.id for r in index.search(query, k=3)] == [17, 18, 16]
+        assert reader.search(query, k=3) == plain.search(query, k=3) == index.search(query, k=3)
+        for handle in (reader, plain, index):
+            handle.close()
+        with pytest.raises(ChassisError):
+            index.warm()
+
     def test_unknown_metric_is_rejected(self, tmp_path):
         with pytest.raises(ValueError):
             VectorIndex(tmp_path / "x.chassis", dimensions=2, options=IndexOptions(metric="dot"))
