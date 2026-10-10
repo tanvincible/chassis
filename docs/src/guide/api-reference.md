@@ -4,7 +4,7 @@
 
 ### `VectorIndex`
 
-The primary entry point for Chassis. `VectorIndex` orchestrates the storage engine, graph topology, and search index into a single, crash-consistent unit.
+The primary entry point for Chassis. `VectorIndex` orchestrates the storage layer, graph topology, and search index into a single, crash-consistent unit.
 
 #### Opening an Index
 

@@ -1,8 +1,8 @@
-//! Chassis - Embeddable on-disk vector storage engine
+//! Chassis - an embedded vector index for local semantic search
 //!
-//! Chassis is a local-first vector storage engine designed for embedding-based
-//! search in edge devices, mobile apps, and local-first software. It's built
-//! in Rust and runs anywhere from a Raspberry Pi to a data center.
+//! Chassis keeps an index of vectors in one file and searches it inside your
+//! process, with no server. You store vectors under your own ids; the records
+//! they stand for stay in your application's storage.
 //!
 //! # Features
 //!
@@ -44,8 +44,8 @@
 //! - A distributed system
 //! - A query engine
 //!
-//! These concerns are left to the application layer. Chassis is a storage
-//! primitive, like SQLite for relational data.
+//! These concerns are left to the application. Chassis is embedded the way
+//! SQLite is: a library in your process, with everything in one file.
 
 pub mod distance;
 mod error;

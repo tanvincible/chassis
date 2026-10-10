@@ -1,6 +1,6 @@
 # PyChassis
 
-**PyChassis** provides high-performance Python bindings for the **Chassis** vector storage engine.
+**PyChassis** provides Python bindings for **Chassis**, an embedded vector index for local semantic search: one file, in your process, no server.
 
 It combines the safety and raw speed of Rust with the ease of use of Python. Unlike many vector libraries that run primarily in-memory, Chassis is designed for **embedded, on-disk persistence** first.
 

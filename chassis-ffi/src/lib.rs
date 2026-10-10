@@ -1,6 +1,6 @@
 //! FFI bindings for Chassis vector index
 //!
-//! This module provides a C-compatible interface to the Chassis vector storage engine.
+//! This module provides a C-compatible interface to Chassis, an embedded vector index.
 //! All functions are panic-safe and use thread-local error reporting.
 //!
 //! # Safety Guarantees

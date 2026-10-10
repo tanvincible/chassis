@@ -1,4 +1,4 @@
-/* Chassis Vector Storage Engine - C API */
+/* Chassis, an embedded vector index - C API */
 /* Version 0.1.0 */
 
 /* Thread Safety: */

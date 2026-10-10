@@ -1,8 +1,8 @@
 """
-Chassis - Python bindings for Chassis vector storage engine
+Chassis - Python bindings for Chassis, an embedded vector index
 
-This package provides a Pythonic interface to the Chassis vector storage engine,
-which is built in Rust and exposed via FFI.
+Chassis keeps an index of vectors in one file and searches it inside your
+process, with no server. It is written in Rust; this package calls its C API.
 
 Example:
     >>> import chassis

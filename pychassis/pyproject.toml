@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "chassisdb"
 version = "0.6.3"
-description = "Python bindings for Chassis vector storage engine"
+description = "Python bindings for Chassis, an embedded vector index for local semantic search"
 readme = "README.md"
 requires-python = ">=3.13"
 license = {text = "MIT OR Apache-2.0"}

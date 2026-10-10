@@ -1,5 +1,36 @@
 # Performance Guide
 
+## Where Chassis stands
+
+Measured from 2026-10-08 to 2026-10-10, one thread searching, on GitHub's server runners (AMD EPYC
+Zen 3, 4 and 5, Intel Xeon, Arm Neoverse-N2) and an Apple M5. The decision records hold the
+details and the commands.
+
+**Against hnswlib, at the same recall**: queries a second, Chassis over hnswlib
+([ADR-0017](../adr/017-equal-recall-and-long-vectors.md), [ADR-0018](../adr/018-half-precision.md)).
+
+| Vectors | x86 | Neoverse-N2 |
+| --- | --- | --- |
+| 128 dims × 1M | 1.2–2.6× | 3.1–4.4× |
+| 960 dims × 200k | 0.86–1.05×; in half precision 1.0–2.1× | 1.65–1.77×; half 2.3–2.5× |
+| 1,536 dims × 99k | 0.82–1.13×; in half precision 1.0–1.7× | 1.85–2.33×; half 2.45–2.93× |
+
+These came before distances were computed in groups ([ADR-0021](../adr/021-grouped-distances.md)),
+which made searches over vectors of a kilobyte or more another 11 to 60% faster out of cache.
+
+**Other engines**, on 2026-10-10, each through its Python package on one thread, 1,536 dims × 99k,
+also before grouped distances: on x86, FAISS's HNSW answered 1.6 to 1.9 times as many queries a
+second as Chassis in full precision and hnswlib 1.3 to 1.4 times; in half precision Chassis was
+level with hnswlib.
+
+**From a cold start** ([ADR-0019](../adr/019-warm.md), Apple M5, 99,000 × 1,536 dims, the file not
+in memory): the first result came 0.11 s after the process started, where hnswlib, which loads its
+file first, gave its first at 0.5 to 0.8 s. With `warm()`, the hundredth result came at 0.37 s
+instead of 1.9 s.
+
+The sections below are earlier measurements, from 2026-10-03 to 2026-10-05 on the M5 and mostly
+of file format 2: they show how Chassis got here, not where it is now.
+
 Measured on 2026-10-03 to 2026-10-05 on an Apple M5 (10 cores, 24 GiB) running macOS 26.6 on APFS,
 with rustc 1.99.0 and release builds, on a machine that was also running other applications. Numbers
 on other machines will differ, so the commands to reproduce them are at the end. Search and build

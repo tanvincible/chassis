@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The foundational engine for the Chassis vector storage primitive."
+description = "The core of Chassis, an embedded vector index for local semantic search."
 
 [dependencies]
 anyhow = { workspace = true }
