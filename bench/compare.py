@@ -138,7 +138,7 @@ def report(directory: str) -> int:
     high = max(1.2, max(cell[k][0] for k in keys) + 0.05)
     out += [
         "```mermaid",
-        "xychart-beta",
+        "xychart-beta horizontal",
         '  title "Search speed, this pull request over main"',
         f"  x-axis [{names}]",
         f'  y-axis "times main" {low:.2f} --> {high:.2f}',
