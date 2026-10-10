@@ -37,8 +37,9 @@ same vector distances a rounding apart by different paths, such as a search and 
 
 `W` is 1 for vectors under a kilobyte, 8 on Zen 5 and later, and 4 everywhere else. It is decided
 when a search starts, from the CPU and the vector's size in bytes, both fixed for an index; no
-search measures another. A group of four never lost more than 1% in cache, so the index's size
-against the cache does not enter the rule. Timing settings while searches run was left out:
+search measures another. The index's size against the cache does not enter the rule: in cache a
+group cost Zen 3 and Zen 5 up to 8% at one `ef` in full precision (2 to 6% over all of them), and
+gained elsewhere, against a tenth to three fifths out of cache. Timing settings while searches run was left out:
 timings are noisy (other processes, clock speed, a file still arriving in memory), and tuning on
 the first searches costs the time `warm()` saves.
 
