@@ -131,20 +131,37 @@ half precision it is level.
   and how much is slower ones; then try building with the vectors on huge pages from the first
   write, which today gave 5%.
 
+## Prefetch depth in half precision
+
+* **Known**, from sweeps on 2026-10-10 (half precision, 1,536 dimensions, 20,000 and 99,000
+  vectors): on Zen 5 (three machines) asking for all 48 lines of a vector into L1 is 9 to 12%
+  faster than today's eight; on Zen 4 (one machine, two runs) 48 lines into L2 is 21 to 26%
+  faster than 32. Zen 3 is unmoved by depth, and so is 960 dimensions on Zen 3 and the Xeons
+  except at 200,000 vectors. At 2,000 vectors, in cache, deeper is up to a fifth slower.
+* **To validate**: whether the rule is "the whole vector, up to a number of bytes" rather than a
+  number of lines, which would make the full-precision settings the same rule; check that it
+  costs nothing in full precision at 960 and 1,536 dimensions and in cache.
+
 ## Results nobody has explained
 
-* **Zen 5 gains nothing from half precision at 1,536 dimensions and 99,000 vectors** (1.02),
-  where it gains 6 to 54% elsewhere. The prefetch depths were tuned for `f32` vectors; in half
-  precision the same number of lines is twice as much of a vector, which is what made Zen 4 2.3
-  times as fast at 960 dimensions. Retuning the depth for half precision is untried.
+* **FAISS's HNSW searches long vectors faster on x86.** On 2026-10-10, with every engine through
+  its Python package on one thread (99,000 vectors of 1,536 dimensions, EPYC 7763 and 9V74), at
+  95% recall FAISS answered 3,476 to 3,702 queries a second, hnswlib 2,634 to 2,693, Chassis
+  1,924 to 2,132 in full precision and 2,563 to 2,979 in half; usearch 1,449 to 1,572. On
+  Neoverse-N2, Chassis 1,578 (1,969 in half) against FAISS 2,305 and hnswlib 896. At 128
+  dimensions and a million vectors Chassis led on Zen 5 and N2, and FAISS on Zen 3 by 1.05 to
+  1.25. The other engines are asked for all the queries in one call and Chassis one call a query,
+  which is worth little at half a millisecond a query. A likely cause is that FAISS computes a
+  node's neighbors' distances four at a time, so that four vectors' memory is awaited together;
+  untried here.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
 
 ## Not yet measured at all
 
-* Any engine but hnswlib with the current code. usearch was measured once, on one Mac, before the
-  performance work; FAISS, sqlite-vec, LanceDB and Annoy never.
+* Other engines from a cold start: the first comparison's cold column for Chassis and usearch's
+  view was taken while the measuring process still mapped the file, which kept it in memory.
 * Anything past a million vectors, or a file past about a gigabyte.
 * A consumer x86 laptop or desktop. Every x86 figure is from a server CPU.
 * Apple silicon out of Low Power Mode, and more than one machine of it.
