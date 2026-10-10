@@ -236,6 +236,12 @@ distances are to the vectors as kept; on the embeddings measured, recall was the
 with a component of 65,520 or more in magnitude is refused. A file in half precision is format
 version 4, which releases from before this option refuse to open.
 
+Besides half precision, the way to shrink an index is fewer dimensions. Some embedding models are
+trained so that the first part of a vector works on its own ("Matryoshka" embeddings, such as
+OpenAI's text-embedding-3 with its `dimensions` argument): 512 of 1,536 dimensions make the index
+about a third of the size. Measure recall on your own queries first, and cut vectors yourself only
+with `DistanceMetric::Cosine`, or normalize them again.
+
 `huge_pages` is for an index too large for the CPU's caches: with the vectors on 2 MB pages,
 searches are up to a quarter faster and batch builds a little faster
 ([ADR-0016](../adr/016-huge-pages-on-request.md)). It works on Linux, where the kernel and
