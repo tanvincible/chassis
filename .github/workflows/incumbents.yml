@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 6
-  CHASSIS: main
+  RUN: 7
+  CHASSIS: feat/search-batch
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -103,7 +103,7 @@ jobs:
           for pkg in numpy pyarrow hnswlib usearch faiss-cpu annoy sqlite-vec lancedb; do
             pip install -q "$pkg" || echo "could not install $pkg" | tee -a results/inc.log
           done
-          pip install -q --no-deps -e "$RUNNER_TEMP/src/pychassis"
+          pip install -q --no-deps -e "$RUNNER_TEMP/src/chassisdb"
           pip list 2>/dev/null | grep -iE "numpy|pyarrow|hnswlib|usearch|faiss|annoy|sqlite|lancedb|chassis" | tee -a results/versions.txt
 
       - name: Every engine on the same vectors
@@ -125,7 +125,7 @@ jobs:
             "$PAGETOOL" evict "$T/c.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/c.chassis" "$truth" cold-full | tee -a results/cold.tsv
             "$PAGETOOL" evict "$T/h.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/h.chassis" "$truth" cold-half | tee -a results/cold.tsv
           done
-          for engine in chassis-py chassis-py-half hnswlib usearch faiss; do
+          for engine in chassis-py chassis-py-batch chassis-py-half chassis-py-half-batch hnswlib usearch faiss; do
             timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
             grep "^inc" "$T/inc.out" | tee -a results/inc.tsv || true
             grep -v "^inc" "$T/inc.out" | tail -5 >> results/inc.log || true

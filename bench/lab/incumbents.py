@@ -252,6 +252,19 @@ class ChassisPyHalf(ChassisPy):
     file, precision = "chassis-half.chassis", "half"
 
 
+class ChassisPyBatch(ChassisPy):
+    """chassis-py with every query in one call, as the other engines are given them."""
+
+    def search(self, queries, ef):
+        if ef != self.ef:
+            self.reopen(ef)
+        return self.index.search_batch(queries, k=K)[0]
+
+
+class ChassisPyHalfBatch(ChassisPyBatch):
+    file, precision = "chassis-half.chassis", "half"
+
+
 class ChassisPyWarm(ChassisPy):
     """The same file as chassis-py, opened with `warm`: only its cold run means anything new."""
 
@@ -271,6 +284,8 @@ ENGINES = {
     "sqlitevec": SqliteVec,
     "lancedb": Lance,
     "chassis-py": ChassisPy,
+    "chassis-py-batch": ChassisPyBatch,
+    "chassis-py-half-batch": ChassisPyHalfBatch,
     "chassis-py-half": ChassisPyHalf,
     "chassis-py-warm": ChassisPyWarm,
     "chassis-py-half-warm": ChassisPyHalfWarm,
