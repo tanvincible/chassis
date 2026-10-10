@@ -139,8 +139,10 @@ half precision it is level.
   half precision with `warm` (0.70 to 0.76 s without); hnswlib 1.37 to 1.41 s, FAISS 1.31 to
   1.43 s, usearch 1.35 to 1.44 s, LanceDB 1.13 to 1.19 s. On a million SIFT vectors: Chassis
   1.38 to 1.41 s with `warm` (1.44 to 2.33 s without), 0.74 to 0.77 s in half precision; hnswlib
-  2.01 to 2.17 s, FAISS 1.41 to 1.48 s. Chassis's first result came after 0.2 to 0.5 s, the
-  others' after 1.3 to 2.2 s. One Zen 4 runner was slow for every engine (FAISS 3.3 s), and there
+  2.01 to 2.17 s, FAISS 1.41 to 1.48 s. Chassis's first result came after 0.2 to 0.5 s;
+  hnswlib's, FAISS's and usearch's, which load the file first, after 1.3 to 2.2 s; LanceDB's after
+  0.9 to 1.4 s; usearch's memory-mapped view's after 0.2 to 0.8 s, with its hundredth after 1.4 to
+  2.2 s. One Zen 4 runner was slow for every engine (FAISS 3.3 s), and there
   `warm` made Chassis slower: 2.8 s to 3.2 s in full precision, and its first result 0.5 s to
   1.2 s.
 * **To validate**: a rule for when `warm` should hold back on a slow disk, for instance reading in
