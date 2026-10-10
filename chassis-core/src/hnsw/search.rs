@@ -480,13 +480,35 @@ impl HnswGraph {
         skip_deleted: bool,
         filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
     ) -> Result<Option<Vec<SearchResult>>> {
+        let args = (query, entry, ef, layer, skip_deleted, filter);
+        let bytes = query.len() * self.storage.precision().bytes();
+        match crate::prefetch::group_width(bytes) {
+            8 => self.search_layer_grouped::<FILTERED, 8>(args),
+            4 => self.search_layer_grouped::<FILTERED, 4>(args),
+            _ => self.search_layer_grouped::<FILTERED, 1>(args),
+        }
+    }
+
+    /// `search_layer` computing `W` distances at a time.
+    #[allow(clippy::type_complexity)]
+    fn search_layer_grouped<const FILTERED: bool, const W: usize>(
+        &self,
+        (query, entry, ef, layer, skip_deleted, filter): (
+            &[f32],
+            NodeId,
+            usize,
+            usize,
+            bool,
+            Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
+        ),
+    ) -> Result<Option<Vec<SearchResult>>> {
         match self.storage.precision() {
             Precision::Full => {
                 #[cfg(target_arch = "x86_64")]
                 if crate::distance::has_avx2() {
                     // SAFETY: the CPU has AVX2 and FMA.
                     return unsafe {
-                        self.search_layer_avx2::<FILTERED>(
+                        self.search_layer_avx2::<FILTERED, W>(
                             query,
                             entry,
                             ef,
@@ -496,7 +518,7 @@ impl HnswGraph {
                         )
                     };
                 }
-                self.search_layer_with::<f32, Portable, FILTERED>(
+                self.search_layer_with::<f32, Portable, FILTERED, W>(
                     query,
                     entry,
                     ef,
@@ -510,7 +532,7 @@ impl HnswGraph {
                 if crate::distance::has_f16c() {
                     // SAFETY: the CPU has AVX2, FMA and F16C.
                     return unsafe {
-                        self.search_layer_f16c::<FILTERED>(
+                        self.search_layer_f16c::<FILTERED, W>(
                             query,
                             entry,
                             ef,
@@ -520,7 +542,7 @@ impl HnswGraph {
                         )
                     };
                 }
-                self.search_layer_with::<u16, Portable, FILTERED>(
+                self.search_layer_with::<u16, Portable, FILTERED, W>(
                     query,
                     entry,
                     ef,
@@ -537,7 +559,7 @@ impl HnswGraph {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2", enable = "fma")]
     #[allow(clippy::type_complexity)]
-    unsafe fn search_layer_avx2<const FILTERED: bool>(
+    unsafe fn search_layer_avx2<const FILTERED: bool, const W: usize>(
         &self,
         query: &[f32],
         entry: NodeId,
@@ -546,7 +568,7 @@ impl HnswGraph {
         skip_deleted: bool,
         filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
     ) -> Result<Option<Vec<SearchResult>>> {
-        self.search_layer_with::<f32, crate::distance::Avx2, FILTERED>(
+        self.search_layer_with::<f32, crate::distance::Avx2, FILTERED, W>(
             query,
             entry,
             ef,
@@ -560,7 +582,7 @@ impl HnswGraph {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
     #[allow(clippy::type_complexity)]
-    unsafe fn search_layer_f16c<const FILTERED: bool>(
+    unsafe fn search_layer_f16c<const FILTERED: bool, const W: usize>(
         &self,
         query: &[f32],
         entry: NodeId,
@@ -569,7 +591,7 @@ impl HnswGraph {
         skip_deleted: bool,
         filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
     ) -> Result<Option<Vec<SearchResult>>> {
-        self.search_layer_with::<u16, crate::distance::F16c, FILTERED>(
+        self.search_layer_with::<u16, crate::distance::F16c, FILTERED, W>(
             query,
             entry,
             ef,
@@ -581,7 +603,7 @@ impl HnswGraph {
 
     #[inline(always)]
     #[allow(clippy::type_complexity)]
-    fn search_layer_with<E: Element, K: Kernel<E>, const FILTERED: bool>(
+    fn search_layer_with<E: Element, K: Kernel<E>, const FILTERED: bool, const W: usize>(
         &self,
         query: &[f32],
         entry: NodeId,
@@ -641,22 +663,22 @@ impl HnswGraph {
                     fresh.push((neighbor_id, vector));
                 }
             }
-            for &(neighbor_id, vector) in &fresh {
+            // Their distances `W` at a time, then one by one for what is left over; each
+            // group's are taken in as soon as they are known.
+            let mut take = |neighbor_id: NodeId, dist: f32| -> Result<bool> {
                 if FILTERED {
                     budget = match budget.checked_sub(1) {
                         Some(left) => left,
-                        None => return Ok(None),
+                        None => return Ok(false),
                     };
                 }
-                let dist = unsafe { K::squared(query, vector) };
-
                 if u64::from(dist.to_bits()) < bound {
                     let found = pack(dist, neighbor_id);
                     candidates.push(Reverse(found));
                     // It will most likely be expanded: have its neighbor list on the way.
                     self.storage.prefetch_record(neighbor_id);
                     if excluded(neighbor_id)? {
-                        continue;
+                        return Ok(true);
                     }
                     if results.len() < ef {
                         results.push(found);
@@ -666,6 +688,22 @@ impl HnswGraph {
                         *worst = found;
                     }
                     bound = worst_allowed(&results, ef);
+                }
+                Ok(true)
+            };
+            let (groups, rest) = fresh.as_chunks::<W>();
+            for group in groups {
+                let dists =
+                    unsafe { K::squared_group::<W>(query, group.map(|(_, vector)| vector)) };
+                for (&(neighbor_id, _), dist) in group.iter().zip(dists) {
+                    if !take(neighbor_id, dist)? {
+                        return Ok(None);
+                    }
+                }
+            }
+            for &(neighbor_id, vector) in rest {
+                if !take(neighbor_id, unsafe { K::squared(query, vector) })? {
+                    return Ok(None);
                 }
             }
         }
@@ -707,6 +745,32 @@ fn worst_allowed(results: &BinaryHeap<u64>, ef: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_distances_in_groups_find_exactly_what_one_at_a_time_does() {
+        let dir = tempfile::tempdir().unwrap();
+        // 37 components: a whole main loop, a tail of eight and a scalar tail.
+        let vector = |i: u64| (0..37).map(|d| ((i * 37 + d) as f32 * 0.618).sin()).collect();
+        for precision in [Precision::Full, Precision::Half] {
+            let options = crate::IndexOptions { precision, ..crate::IndexOptions::default() };
+            let path = dir.path().join(format!("{precision:?}.chassis"));
+            let mut index = crate::VectorIndex::open(path, 37, options).unwrap();
+            index.add_batch(&(0..600).flat_map(vector).collect::<Vec<f32>>()).unwrap();
+            let graph = &index.graph;
+            let entry = graph.entry_point.unwrap();
+            let found = |results: Option<Vec<SearchResult>>| -> Vec<(u64, u32)> {
+                results.unwrap().iter().map(|r| (r.id, r.distance.to_bits())).collect()
+            };
+            for q in 0..30 {
+                let query: Vec<f32> = vector(1000 + q);
+                let args = (&query[..], entry, 40, 0, false, None);
+                let alone = found(graph.search_layer_grouped::<false, 1>(args).unwrap());
+                assert_eq!(alone.len(), 40);
+                assert_eq!(found(graph.search_layer_grouped::<false, 4>(args).unwrap()), alone);
+                assert_eq!(found(graph.search_layer_grouped::<false, 8>(args).unwrap()), alone);
+            }
+        }
+    }
 
     #[test]
     fn test_search_result_ordering() {

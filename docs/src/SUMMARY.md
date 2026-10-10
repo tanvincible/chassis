@@ -40,6 +40,7 @@
 - [ADR-0018: Half Precision for the Vectors, on Request (Proposed)](./adr/018-half-precision.md)
 - [ADR-0019: Reading an Index into Memory in the Background, on Request (Proposed)](./adr/019-warm.md)
 - [ADR-0020: Errors That Say What to Do (Proposed)](./adr/020-errors.md)
+- [ADR-0021: Distances Computed in Groups (Proposed)](./adr/021-grouped-distances.md)
 
 # Development
 
