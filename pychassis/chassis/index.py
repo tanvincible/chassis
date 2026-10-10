@@ -651,7 +651,10 @@ def _check_id(id) -> int:
         )
     id = _check_int("id", id)
     if not 0 <= id < 2**64 - 1:
-        raise InvalidArgumentError(f"id is {id}, but ids go from 0 to 2**64 - 2")
+        raise InvalidArgumentError(
+            f"id is {id}, but ids go from 0 to 2**64 - 2\nhelp: pass an id in that range, or "
+            "leave it out to have one chosen"
+        )
     return id
 
 

@@ -104,4 +104,10 @@ fn test_an_error_goes_into_anyhow_with_its_message() {
         error.downcast_ref::<chassis_core::Error>().unwrap().kind(),
         ErrorKind::InvalidArgument
     );
+    // And into a boxed std error.
+    let boxed: Box<dyn std::error::Error + Send + Sync> =
+        VectorIndex::open(dir.path().join("y.chassis"), 0, IndexOptions::default())
+            .unwrap_err()
+            .into();
+    assert!(boxed.to_string().contains("\nhelp: "));
 }

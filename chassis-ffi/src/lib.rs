@@ -788,7 +788,9 @@ pub unsafe extern "C" fn chassis_add_batch(
 ) -> size_t {
     ffi_guard(|| {
         if ptr.is_null() {
-            set_last_error("Null index pointer");
+            set_last_error(
+                "The index pointer is NULL\nhelp: pass the handle chassis_open returned",
+            );
             return 0;
         }
 

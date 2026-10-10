@@ -488,8 +488,13 @@ impl Undo {
         let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
         let mut bytes = Vec::with_capacity(16 + entry.len());
         if file.is_none() {
-            let created = File::create(&self.path)
-                .with_context(|| format!("Failed to create {}", self.path.display()))?;
+            let created = File::create(&self.path).with_context(|| {
+                format!(
+                    "Can't create {}\nhelp: check that the index's directory is writable and \
+                         its disk has room",
+                    self.path.display()
+                )
+            })?;
             *file = Some((created, 0));
             bytes.extend_from_slice(UNDO_MAGIC);
         }
@@ -499,7 +504,12 @@ impl Undo {
             // Whatever part was written would hide every entry after it.
             let _ = file.set_len(*len);
             let _ = file.seek(SeekFrom::Start(*len));
-            return Err(e).with_context(|| format!("Failed to write {}", self.path.display()));
+            return Err(e).with_context(|| {
+                format!(
+                    "Can't write {}\nhelp: check that the disk has room and is writable",
+                    self.path.display()
+                )
+            });
         }
         *len += bytes.len() as u64;
         Ok(())
@@ -637,7 +647,8 @@ impl Storage {
         read_prefix(&file, &mut prefix)?;
         if is_legacy(&prefix) {
             bail!(
-                "{} uses an older file format; open it once with write access to migrate it",
+                "{} uses an older file format, which a reader can't open\nhelp: open it once as a \
+                 writer, which migrates it",
                 path.display()
             );
         }
@@ -811,8 +822,9 @@ impl Storage {
         let (copy, header) = FileHeader::newest(a, b)?;
         if header.write_version > crate::header::VERSION {
             bail!(
-                "File was written by a newer Chassis (format {}); this release can only read it, \
-                 with a reader (IndexReader, chassis_open_reader, or read_only=True in Python)",
+                "The file was written by a newer release of Chassis (format {}), so this one can't \
+                 write it\nhelp: open it as a reader (IndexReader, chassis_open_reader, or \
+                 read_only=True in Python), or use the newer release",
                 header.write_version
             );
         }
@@ -1641,7 +1653,11 @@ impl Storage {
             );
         }
         if self.poisoned {
-            fail!(Io, "An earlier flush failed, so later ones can't be trusted; reopen the index");
+            fail!(
+                Io,
+                "An earlier flush failed, so what reached the disk is unknown and later flushes \
+                 are refused\nhelp: open the index again; it recovers to its last good flush"
+            );
         }
         let result = self.commit_inner(deletes);
         self.poisoned = result.is_err();
@@ -2013,8 +2029,10 @@ pub(crate) fn rename_over(temp: &Path, path: &Path) -> Result<()> {
     let flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
     // SAFETY: both paths are NUL-terminated wide strings that outlive the call.
     if unsafe { MoveFileExW(wide(temp).as_ptr(), wide(path).as_ptr(), flags) } == 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("Another process has the index open, so its file can't be replaced");
+        return Err(std::io::Error::last_os_error()).context(
+            "Another process has the index open, so Windows won't let its file be replaced\n\
+                 help: close the readers in other processes, then compact again",
+        );
     }
     Ok(())
 }

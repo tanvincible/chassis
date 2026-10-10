@@ -5,7 +5,7 @@
 
 use crate::header::MAGIC;
 use crate::hnsw::node::{NodeId, NodeRecord, NodeRecordParams};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use memmap2::Mmap;
 use std::fs::File;
 
@@ -70,7 +70,11 @@ impl LegacyIndex {
 
         let Some(graph) = graph.filter(|g| g.iter().any(|&b| b != 0)) else {
             if stored > 0 {
-                bail!("File has {stored} vectors but no graph: it was truncated or corrupted");
+                crate::error::fail!(
+                    Corrupt,
+                    "The file has {stored} vectors but no graph: it was cut short or damaged\nhelp: \
+                     restore it from a backup, or rebuild it from its vectors"
+                );
             }
             let params = NodeRecordParams::default();
             return Ok(Self {
@@ -98,7 +102,11 @@ impl LegacyIndex {
         let graph_start = graph_start.expect("graph header found above");
 
         if stored < count {
-            bail!("Index corruption: graph has {count} nodes but storage only {stored} vectors");
+            crate::error::fail!(
+                Corrupt,
+                "The graph has {count} nodes but only {stored} vectors are stored: the file is \
+                 damaged\nhelp: restore it from a backup, or rebuild it from its vectors"
+            );
         }
         let graph_end = usize::try_from(count)
             .ok()
