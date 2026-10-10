@@ -84,6 +84,21 @@ impl Prefetch {
     }
 }
 
+/// How many vectors' distances a search computes at once, for vectors of `bytes` (ADR-0021).
+/// Grouped, their memory is awaited together, which pays from about a kilobyte a vector up.
+/// Zen 5 gains more from eight; every other CPU measured, from four.
+pub(crate) fn group_width(bytes: usize) -> usize {
+    static ZEN_5_OR_LATER: OnceLock<bool> = OnceLock::new();
+    if bytes < 1024 {
+        return 1;
+    }
+    #[cfg(target_arch = "x86_64")]
+    let wide = *ZEN_5_OR_LATER.get_or_init(|| matches!(amd(), Some((ZEN_5.., _))));
+    #[cfg(not(target_arch = "x86_64"))]
+    let wide = *ZEN_5_OR_LATER.get_or_init(|| false);
+    if wide { 8 } else { 4 }
+}
+
 /// Asks for all of the `bytes` at `start`, into L1: a neighbor list about to be read.
 #[inline(always)]
 pub(crate) fn list(start: *const u8, bytes: usize) {
@@ -193,6 +208,14 @@ mod tests {
         assert_eq!(Prefetch::for_x86(Some((0x1b, 0x00))), into_l1);
         // A 128-dimension vector is eight lines whatever the policy.
         assert_eq!(deeper.for_dims::<f32>(128), into_l2);
+    }
+
+    #[test]
+    fn test_short_vectors_are_not_grouped() {
+        assert_eq!(group_width(512), 1);
+        assert_eq!(group_width(1023), 1);
+        assert!([4, 8].contains(&group_width(1024)));
+        assert_eq!(group_width(1024), group_width(6144));
     }
 
     #[cfg(target_arch = "x86_64")]
