@@ -1120,6 +1120,109 @@ pub unsafe extern "C" fn chassis_search_filtered(
     .unwrap_or(0)
 }
 
+/// Search for the k nearest neighbors of each of many queries, in one call
+///
+/// # Arguments
+///
+/// - `ptr`: Non-NULL pointer to index
+/// - `queries`: `count` queries of `dim` components each, one after another
+/// - `count`: Number of queries
+/// - `dim`: Components per query: the index's dimensions
+/// - `k`: Number of results per query
+/// - `out_ids`, `out_dists`: Space for `count * k` values each. Row `i`, the `k` values from
+///   `i * k`, receives query `i`'s results, nearest first; a row with fewer than `k` is filled
+///   out with id `UINT64_MAX`, which no vector has, and distance `INFINITY`.
+///
+/// # Returns
+///
+/// - `count` on success
+/// - 0 on failure (check `chassis_last_error_message()`), or for an empty batch, which sets no
+///   error; the rows before a query that failed hold its predecessors' results
+///
+/// # Thread Safety
+///
+/// Safe from any thread. Runs concurrently with other searches; a write waits for the whole batch.
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+/// - `queries` must point to `count * dim` valid f32 values
+/// - `out_ids` and `out_dists` must have space for `count * k` values each, and not overlap
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_search_batch(
+    ptr: *const ChassisIndex,
+    queries: *const c_float,
+    count: size_t,
+    dim: size_t,
+    k: size_t,
+    out_ids: *mut u64,
+    out_dists: *mut c_float,
+) -> size_t {
+    ffi_guard(|| {
+        if ptr.is_null() {
+            set_last_error(
+                "The index pointer is NULL\nhelp: pass the handle chassis_open returned",
+            );
+            return 0;
+        }
+        if count == 0 {
+            clear_last_error();
+            return 0;
+        }
+        if queries.is_null() || out_ids.is_null() || out_dists.is_null() {
+            set_last_error("A buffer pointer is NULL\nhelp: pass a pointer to each buffer");
+            return 0;
+        }
+        if dim == 0 || k == 0 {
+            set_last_error(format!(
+                "dim is {dim} and k is {k}, but both have to be at least 1\nhelp: pass the index's \
+                 dimensions as dim, and how many results to return per query as k"
+            ));
+            return 0;
+        }
+        let (Some(values), Some(slots)) = (count.checked_mul(dim), count.checked_mul(k)) else {
+            set_last_error("count times dim or k overflows\nhelp: search in smaller batches");
+            return 0;
+        };
+        // SAFETY: the caller guarantees these lengths
+        let queries = unsafe { slice::from_raw_parts(queries, values) };
+        let ids = unsafe { slice::from_raw_parts_mut(out_ids, slots) };
+        let dists = unsafe { slice::from_raw_parts_mut(out_dists, slots) };
+        let rows =
+            queries.chunks_exact(dim).zip(ids.chunks_exact_mut(k).zip(dists.chunks_exact_mut(k)));
+        unsafe {
+            read(ptr, |index| {
+                for (i, (query, (ids, dists))) in rows.enumerate() {
+                    match index.search(query, k, None) {
+                        Ok(results) => {
+                            ids.fill(u64::MAX);
+                            dists.fill(f32::INFINITY);
+                            for (result, (id, dist)) in
+                                results.iter().zip(ids.iter_mut().zip(dists))
+                            {
+                                (*id, *dist) = (result.id, result.distance);
+                            }
+                        }
+                        Err(e) => {
+                            // "The query has ..." from the search names the query in the batch.
+                            let mut failure = Failure::from(e);
+                            if let Some(rest) = failure.message.strip_prefix("The query") {
+                                failure.message = format!("Query {i} of the batch{rest}").into();
+                            }
+                            set_last_error(failure);
+                            return 0;
+                        }
+                    }
+                }
+                clear_last_error();
+                count
+            })
+        }
+        .unwrap_or(0)
+    })
+    .unwrap_or(0)
+}
+
 /// The body of `chassis_search`, once the index is locked.
 ///
 /// # Safety
@@ -1590,6 +1693,100 @@ mod tests {
         assert_eq!(flush_result, 0, "Flush should succeed");
 
         // Clean up
+        unsafe { chassis_free(ptr) };
+    }
+
+    #[test]
+    fn test_ffi_search_batch() {
+        let (_dir, path) = temp_index_path();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 2) };
+        let vectors = [0.0f32, 0.0, 1.0, 0.0, 0.0, 1.0];
+        let mut added = [0u64; 3];
+        assert_eq!(
+            unsafe { chassis_add_batch(ptr, vectors.as_ptr(), 3, 2, added.as_mut_ptr()) },
+            3
+        );
+        let error = || {
+            let message = unsafe { CStr::from_ptr(chassis_last_error_message()) };
+            (chassis_last_error_code(), message.to_str().unwrap().to_owned())
+        };
+
+        // Each row is what chassis_search returns for its query; a fourth result of three is padding.
+        let queries = [0.9f32, 0.1, 0.1, 0.9];
+        let search_batch = |handle, queries: &[f32], k| {
+            let (mut ids, mut dists) =
+                (vec![0u64; queries.len() / 2 * k], vec![0.0f32; queries.len() / 2 * k]);
+            let n = unsafe {
+                chassis_search_batch(
+                    handle,
+                    queries.as_ptr(),
+                    queries.len() / 2,
+                    2,
+                    k,
+                    ids.as_mut_ptr(),
+                    dists.as_mut_ptr(),
+                )
+            };
+            (n, ids, dists)
+        };
+        let (n, ids, dists) = search_batch(ptr, &queries, 4);
+        assert_eq!(n, 2);
+        for (row, query) in queries.as_chunks::<2>().0.iter().enumerate() {
+            let (mut one_ids, mut one_dists) = ([0u64; 4], [0.0f32; 4]);
+            let found = unsafe {
+                chassis_search(
+                    ptr,
+                    query.as_ptr(),
+                    2,
+                    4,
+                    one_ids.as_mut_ptr(),
+                    one_dists.as_mut_ptr(),
+                )
+            };
+            assert_eq!(found, 3);
+            assert_eq!(ids[row * 4..row * 4 + 3], one_ids[..3]);
+            assert_eq!(dists[row * 4..row * 4 + 3], one_dists[..3]);
+            assert_eq!((ids[row * 4 + 3], dists[row * 4 + 3]), (u64::MAX, f32::INFINITY));
+        }
+
+        // A query that fails is named by its place in the batch, with the search's own code.
+        assert_eq!(search_batch(ptr, &[0.0, 0.0, f32::NAN, 0.0], 1).0, 0);
+        let (code, message) = error();
+        assert_eq!(code, CHASSIS_ERROR_INVALID_ARGUMENT);
+        assert!(message.starts_with("Query 1 of the batch has NaN at component 0"), "{message}");
+        let (mut ids, mut dists) = ([0u64; 1], [0.0f32; 1]);
+        let wide = unsafe {
+            chassis_search_batch(
+                ptr,
+                queries.as_ptr(),
+                1,
+                4,
+                1,
+                ids.as_mut_ptr(),
+                dists.as_mut_ptr(),
+            )
+        };
+        assert_eq!(wide, 0);
+        let (code, message) = error();
+        assert_eq!(code, CHASSIS_ERROR_DIMENSION_MISMATCH);
+        assert!(
+            message.starts_with(
+                "Query 0 of the batch has 4 components, but this index holds vectors of 2"
+            ),
+            "{message}"
+        );
+        assert_eq!(search_batch(ptr, &queries, 0).0, 0);
+        assert_eq!(error().0, CHASSIS_ERROR_INVALID_ARGUMENT);
+
+        // An empty batch is no error.
+        assert_eq!(search_batch(ptr, &[], 1).0, 0);
+        assert_eq!(chassis_last_error_code(), CHASSIS_OK);
+
+        // A reader's batch is the writer's.
+        assert_eq!(unsafe { chassis_flush(ptr) }, 0);
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+        assert_eq!(search_batch(reader, &queries, 4), search_batch(ptr, &queries, 4));
+        unsafe { chassis_free(reader) };
         unsafe { chassis_free(ptr) };
     }
 

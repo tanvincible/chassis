@@ -103,15 +103,16 @@ with VectorIndex("vectors.chassis", dimensions=128) as index:
 ```python
 import numpy as np
 
-# Efficient batch insertion
 vectors = np.random.rand(10000, 768).astype(np.float32)
+queries = np.random.rand(100, 768).astype(np.float32)
 
 with VectorIndex("large.chassis", dimensions=768) as index:
-    for vec in vectors:
-        index.add(vec)
-    
-    # Flush once at the end (much faster than flushing per insert)
+    # Added and linked on every core
+    index.add_batch(vectors)
     index.flush()
+
+    # One call for every query: ids and distances are (100, 10) arrays
+    ids, distances = index.search_batch(queries, k=10)
 ```
 
 ### NumPy Integration
@@ -178,6 +179,11 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
   can be returned, e.g. `allowed=[row[0] for row in db.execute("SELECT id FROM docs WHERE owner = ?", (user,))]`;
   when walking the graph would cost more, as when few vectors match, every vector is checked
   instead and the results are exact.
+
+- **`search_batch(queries: ndarray, k: int = 10) -> tuple[ndarray, ndarray]`**  
+  Search for the k nearest neighbors of each row of a `(count, dimensions)` array, in one call:
+  faster than `search` in a loop. Returns `(ids, distances)`, two `(count, k)` arrays, nearest
+  first; a row with fewer than k results is filled out with id `2**64 - 1` and distance `inf`.
 
 - **`flush() -> None`**  
   Flush changes to disk. Call after batch insertions.

@@ -464,6 +464,38 @@ size_t chassis_search(const struct ChassisIndex *ptr, const float *query, size_t
 size_t chassis_search_filtered(const struct ChassisIndex *ptr, const float *query, size_t len, size_t k, const uint64_t *allowed_ids, size_t allowed_len, uint64_t *out_ids, float *out_dists);
 
 /**
+ * Search for the k nearest neighbors of each of many queries, in one call
+ *
+ * # Arguments
+ *
+ * - `ptr`: Non-NULL pointer to index
+ * - `queries`: `count` queries of `dim` components each, one after another
+ * - `count`: Number of queries
+ * - `dim`: Components per query: the index's dimensions
+ * - `k`: Number of results per query
+ * - `out_ids`, `out_dists`: Space for `count * k` values each. Row `i`, the `k` values from
+ *   `i * k`, receives query `i`'s results, nearest first; a row with fewer than `k` is filled
+ *   out with id `UINT64_MAX`, which no vector has, and distance `INFINITY`.
+ *
+ * # Returns
+ *
+ * - `count` on success
+ * - 0 on failure (check `chassis_last_error_message()`), or for an empty batch, which sets no
+ *   error; the rows before a query that failed hold its predecessors' results
+ *
+ * # Thread Safety
+ *
+ * Safe from any thread. Runs concurrently with other searches; a write waits for the whole batch.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ * - `queries` must point to `count * dim` valid f32 values
+ * - `out_ids` and `out_dists` must have space for `count * k` values each, and not overlap
+ */
+size_t chassis_search_batch(const struct ChassisIndex *ptr, const float *queries, size_t count, size_t dim, size_t k, uint64_t *out_ids, float *out_dists);
+
+/**
  * Flush all changes to disk
  *
  * # Arguments
