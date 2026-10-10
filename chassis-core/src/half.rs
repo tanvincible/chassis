@@ -1,7 +1,7 @@
 //! Half precision (ADR-0018): vectors kept as IEEE 754 16-bit floats, half the size of f32s. A
 //! query stays in f32, and a stored vector is widened as its distance is computed.
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 /// What an index keeps of each component of a vector; fixed when the index is created.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -29,12 +29,23 @@ impl Precision {
 /// From here up a finite f32 rounds to infinity in half precision, whose largest value is 65,504.
 const TOO_LARGE: f32 = 65_520.0;
 
-/// Refuses vectors that half precision can't hold. NaN and infinity pass, as in full precision.
-pub(crate) fn check(vectors: &[f32]) -> Result<()> {
-    match vectors.iter().find(|x| x.is_finite() && x.abs() >= TOO_LARGE) {
-        Some(x) => bail!("{x} is too large for a half-precision index, which holds up to 65,504"),
-        None => Ok(()),
-    }
+/// Refuses vectors, `dims` components each, that half precision can't hold. NaN and infinity
+/// pass here; callers refuse them for every precision.
+pub(crate) fn check(vectors: &[f32], dims: usize) -> Result<()> {
+    let Some(at) = vectors.iter().position(|x| x.is_finite() && x.abs() >= TOO_LARGE) else {
+        return Ok(());
+    };
+    let which = match vectors.len() == dims {
+        true => "The vector".to_string(),
+        false => format!("Vector {} of the batch", at / dims),
+    };
+    crate::error::fail!(
+        InvalidArgument,
+        "{which} has {} at component {}, too large for half precision, which holds up to \
+         65,504\nhelp: scale the vectors down, or keep them in an index in full precision",
+        vectors[at],
+        at % dims
+    );
 }
 
 /// `x` as the nearest half, ties to the even one.
@@ -225,10 +236,12 @@ mod tests {
         assert_eq!(decode(0x7bff), 65_504.0);
         assert_eq!(encode(TOO_LARGE), 0x7c00);
         assert_eq!(encode(-TOO_LARGE), 0xfc00);
-        assert!(check(&[0.0, below, -below]).is_ok());
-        assert!(check(&[0.0, TOO_LARGE]).is_err());
-        assert!(check(&[-1e9]).is_err());
-        assert!(check(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]).is_ok());
+        assert!(check(&[0.0, below, -below], 3).is_ok());
+        assert!(check(&[0.0, TOO_LARGE], 2).is_err());
+        assert!(check(&[-1e9], 1).is_err());
+        assert!(check(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY], 3).is_ok());
+        let error = check(&[0.0, 1.0, 2.0, 70_000.0], 2).unwrap_err().to_string();
+        assert!(error.starts_with("Vector 1 of the batch has 70000 at component 1"), "{error}");
         assert_eq!(encode(f32::INFINITY), 0x7c00);
     }
 

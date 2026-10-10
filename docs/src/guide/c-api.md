@@ -352,9 +352,19 @@ The precision the index keeps its vectors in: `0` full, `1` half, `-1` if `index
 ```c
 const char* chassis_last_error_message(void);
 ```
-Get last error message for current thread. Returns `NULL` if no error.
+The last error on this thread: what was wrong, with the value, then a line starting `help:` with
+what to do instead. Returns `NULL` if no error.
 
 **Lifetime**: Valid until next FFI call on this thread.
+
+#### `chassis_last_error_code`
+```c
+int chassis_last_error_code(void);
+```
+The last error's kind, for a program to act on: one of the `CHASSIS_ERROR_` constants
+(`CHASSIS_ERROR_INVALID_ARGUMENT`, `CHASSIS_ERROR_DIMENSION_MISMATCH`, `CHASSIS_ERROR_LOCKED`, …),
+or `CHASSIS_OK` (0) after a call that succeeded. [Errors](./errors.md) lists them, with their
+causes and fixes.
 
 ### Versioning
 

@@ -1,6 +1,11 @@
 """High-level Pythonic interface to Chassis vector index."""
 
 import ctypes
+import dataclasses
+import difflib
+import functools
+import numbers
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Union
@@ -12,13 +17,21 @@ from chassis import _ffi
 from chassis.exceptions import (
     ChassisError,
     DimensionMismatchError,
-    InvalidPathError,
-    NullPointerError,
+    InvalidArgumentError,
+    OptionsMismatchError,
+    ReadOnlyError,
 )
 
 
 _METRICS = {"euclidean": 0, "cosine": 1}
 _PRECISIONS = {"full": 0, "half": 1}
+# Other names for them, as other libraries spell them.
+_METRIC_NAMES = {"l2": "euclidean", "euclid": "euclidean", "cos": "cosine", "angular": "cosine"}
+_PRECISION_NAMES = {
+    "f32": "full", "float32": "full", "fp32": "full", "single": "full",
+    "f16": "half", "float16": "half", "fp16": "half",
+}
+_MAX_DIMENSIONS = 4096
 
 
 @dataclass
@@ -64,27 +77,62 @@ class IndexOptions:
     warm: bool = False
 
     def validate(self) -> None:
-        """Validate configuration parameters.
+        """Check the options, and spell metric and precision as Chassis does:
+        "L2" becomes "euclidean" and "float16" becomes "half".
 
         Raises:
-            ValueError: If parameters are out of valid ranges
+            InvalidArgumentError: If an option is out of range or unknown
+            TypeError: If an option has the wrong type
         """
-        if not 1 <= self.max_connections <= 65535:
-            raise ValueError(
-                f"max_connections must be 1-65535, got {self.max_connections}"
+        for name in ("max_connections", "ef_construction", "ef_search"):
+            _check_int(name, getattr(self, name))
+        if not 2 <= self.max_connections <= 32767:
+            raise InvalidArgumentError(
+                f"max_connections is {self.max_connections}, but has to be between 2 and "
+                "32,767\nhelp: 16 suits most indexes; 32 gives higher recall for more memory"
             )
-        if self.ef_construction < 1:
-            raise ValueError(
-                f"ef_construction must be >= 1, got {self.ef_construction}"
-            )
-        if self.ef_search < 1:
-            raise ValueError(f"ef_search must be >= 1, got {self.ef_search}")
-        if self.metric not in _METRICS:
-            raise ValueError(f"metric must be one of {list(_METRICS)}, got {self.metric!r}")
-        if self.precision not in _PRECISIONS:
-            raise ValueError(
-                f"precision must be one of {list(_PRECISIONS)}, got {self.precision!r}"
-            )
+        for name in ("ef_construction", "ef_search"):
+            if getattr(self, name) < 1:
+                raise InvalidArgumentError(
+                    f"{name} is {getattr(self, name)}, but has to be at least 1\nhelp: higher "
+                    f"finds more of the true nearest for more time; the default is "
+                    f"{getattr(IndexOptions(), name)}"
+                )
+        self.metric = _named("metric", self.metric, _METRICS, _METRIC_NAMES)
+        self.precision = _named("precision", self.precision, _PRECISIONS, _PRECISION_NAMES)
+
+
+# What other libraries call the options, for a hint when one of those names is given.
+_OPTION_NAMES = {
+    "M": "max_connections", "m": "max_connections", "ef": "ef_search", "efSearch": "ef_search",
+    "efConstruction": "ef_construction", "ef_c": "ef_construction", "space": "metric",
+    "distance": "metric", "dtype": "precision",
+}
+
+
+def _check_option_names(keys) -> None:
+    """Raises TypeError for a key that isn't an option, saying which was likely meant."""
+    names = [field.name for field in dataclasses.fields(IndexOptions)]
+    for key in keys:
+        if key in names:
+            continue
+        near = _OPTION_NAMES.get(key) or next(iter(difflib.get_close_matches(str(key), names, 1)), None)
+        hint = f"did you mean {near!r}? " if near else ""
+        raise TypeError(f"{key!r} is not an option\nhelp: {hint}the options are {', '.join(names)}")
+
+
+def _named_options(init):
+    """IndexOptions' __init__, saying which option was meant when one is misspelled."""
+
+    @functools.wraps(init)
+    def checked(self, *args, **kwargs):
+        _check_option_names(kwargs)
+        init(self, *args, **kwargs)
+
+    return checked
+
+
+IndexOptions.__init__ = _named_options(IndexOptions.__init__)
 
 
 @dataclass
@@ -154,17 +202,27 @@ class VectorIndex:
                 was created with; explicit options naming another raise.
 
         Raises:
-            InvalidPathError: If path is invalid or inaccessible
-            NullPointerError: If index creation fails
-            ChassisError: For other errors
+            IndexNotFoundError: If read_only and there is no index at path, or
+                the path's directory doesn't exist
+            IndexLockedError: If another writer has the index open
+            DimensionMismatchError: If the index holds vectors of other
+                dimensions
+            OptionsMismatchError: If the index was created with another
+                metric or precision
+            NotAnIndexError: If the file isn't a Chassis index
+            InvalidArgumentError: If dimensions or an option is out of range
+            TypeError: If an argument has the wrong type
+            ChassisError: For other errors; every class above is one too
         """
         # Set before anything can raise: __del__ calls close(), which reads them.
         self._ptr: Optional[_ffi.ChassisIndexPtr] = None
         self._closed = False
+        self._read_only = read_only
         self._path = Path(path)
-        self._dimensions = dimensions
-        self._options = options or IndexOptions()
-        self._options.validate()
+        self._dimensions = _check_dimensions(dimensions)
+        self._options = _check_options(options)
+        explicit = options is not None
+        options = self._options
 
         # Encode path to UTF-8 bytes
         path_bytes = str(self._path).encode("utf-8")
@@ -177,7 +235,7 @@ class VectorIndex:
                 self._options.max_connections,
                 self._options.ef_search,
             )
-        elif options is None:
+        elif not explicit:
             # Use default options
             ptr = _ffi._lib.chassis_open(path_bytes, dimensions)
         else:
@@ -193,20 +251,7 @@ class VectorIndex:
             )
 
         if not ptr:
-            error_msg = _ffi.get_last_error()
-            if error_msg:
-                if "dimension" in error_msg.lower():
-                    raise DimensionMismatchError(error_msg)
-                elif (
-                    "path" in error_msg.lower() or "utf-8" in error_msg.lower()
-                ):
-                    raise InvalidPathError(error_msg)
-                else:
-                    raise ChassisError(error_msg)
-            else:
-                raise NullPointerError(
-                    "Failed to open index (no error message)"
-                )
+            raise _ffi.last_error("The index couldn't be opened, and Chassis didn't say why")
 
         self._ptr = ptr
         if self._options.huge_pages:
@@ -214,9 +259,13 @@ class VectorIndex:
         if self._options.warm:
             _ffi._lib.chassis_warm(ptr)
         # A reader takes the file's metric; say so rather than search by another.
-        if options is not None and options.metric != (metric := self.metric):
+        if explicit and options.metric != (metric := self.metric):
             self.close()
-            raise ChassisError(f"Index was created with {metric} distance, not {options.metric}")
+            raise OptionsMismatchError(
+                f"The index at {self._path} was created with {metric} distance, not "
+                f"{options.metric}\nhelp: open it with metric={metric!r}, or leave the metric "
+                "out: a read_only index takes it from the file"
+            )
 
     @property
     def metric(self) -> str:
@@ -257,7 +306,19 @@ class VectorIndex:
     def _check_closed(self) -> None:
         """Check if index is closed and raise error if so."""
         if self._closed or not self._ptr:
-            raise ChassisError("Index is closed")
+            raise ChassisError(
+                f"The index at {self._path} is closed\nhelp: open it again with "
+                "VectorIndex(path, dimensions), or use it inside its with block"
+            )
+
+    def _check_writable(self, action: str) -> None:
+        self._check_closed()
+        if self._read_only:
+            raise ReadOnlyError(
+                f"Can't {action}: the index at {self._path} was opened with read_only=True, which "
+                "only searches\nhelp: open it without read_only to write it; an index has one "
+                "writer at a time, and read_only indexes can search while it writes"
+            )
 
     def add(
         self,
@@ -289,45 +350,17 @@ class VectorIndex:
         Thread Safety:
             Safe from any thread; writes run one at a time.
         """
-        self._check_closed()
-
-        # Convert to numpy array for consistent handling
-        if not isinstance(vector, np.ndarray):
-            vector = np.array(vector, dtype=np.float32)
-        elif vector.dtype != np.float32:
-            vector = vector.astype(np.float32)
-
-        # Validate dimensions
-        if len(vector) != self._dimensions:
-            raise DimensionMismatchError(
-                f"Vector has {len(vector)} dimensions, "
-                f"but index expects {self._dimensions}"
-            )
-
-        # Ensure C-contiguous array
-        if not vector.flags.c_contiguous:
-            vector = np.ascontiguousarray(vector)
-
-        # Call FFI
+        self._check_writable("add")
+        vector = _as_vector(vector, self._dimensions, "vector")
         vector_ptr = vector.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         if id is not None:
-            _check_id(id)
+            id = _check_id(id)
             if _ffi._lib.chassis_add_with_id(self._ptr, id, vector_ptr, len(vector)) != 0:
-                raise ChassisError(_ffi.get_last_error() or "Failed to add vector")
+                raise _ffi.last_error("The vector couldn't be added")
             return id
         vector_id = _ffi._lib.chassis_add(self._ptr, vector_ptr, len(vector))
-
-        # Check for error (UINT64_MAX)
         if vector_id == 2**64 - 1:
-            error_msg = _ffi.get_last_error()
-            if error_msg:
-                if "dimension" in error_msg.lower():
-                    raise DimensionMismatchError(error_msg)
-                else:
-                    raise ChassisError(error_msg)
-            else:
-                raise ChassisError("Failed to add vector")
-
+            raise _ffi.last_error("The vector couldn't be added")
         return int(vector_id)
 
     def add_batch(
@@ -354,12 +387,8 @@ class VectorIndex:
             ValueError: If ids are out of range or their count differs
             ChassisError: If an id repeats or already exists, or for other errors
         """
-        self._check_closed()
-        vectors = np.ascontiguousarray(vectors, dtype=np.float32)
-        if vectors.ndim != 2 or vectors.shape[1] != self._dimensions:
-            raise DimensionMismatchError(
-                f"Expected a (count, {self._dimensions}) array, got shape {vectors.shape}"
-            )
+        self._check_writable("add")
+        vectors = _as_batch(vectors, self._dimensions)
         count = len(vectors)
         vectors_ptr = vectors.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
@@ -370,20 +399,21 @@ class VectorIndex:
                 self._ptr, vectors_ptr, count, self._dimensions, out_ptr
             )
             if added != count:
-                raise ChassisError(_ffi.get_last_error() or "Failed to add batch")
+                raise _ffi.last_error("The batch couldn't be added")
             return out_ids
 
-        ids = [int(i) for i in ids]
-        for i in ids:
-            _check_id(i)
+        ids = [_check_id(i) for i in (ids.tolist() if isinstance(ids, np.ndarray) else ids)]
         if len(ids) != count:
-            raise ValueError(f"{len(ids)} ids for {count} vectors")
+            raise InvalidArgumentError(
+                f"{len(ids)} ids were given for {count} vectors\nhelp: give one id per vector, "
+                "or leave ids out to have them chosen"
+            )
         id_array = np.array(ids, dtype=np.uint64)
         ids_ptr = id_array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
         if _ffi._lib.chassis_add_batch_with_ids(
             self._ptr, ids_ptr, vectors_ptr, count, self._dimensions
         ) != 0:
-            raise ChassisError(_ffi.get_last_error() or "Failed to add batch")
+            raise _ffi.last_error("The batch couldn't be added")
         return id_array
 
     def delete(self, id: int) -> bool:
@@ -402,11 +432,10 @@ class VectorIndex:
         Thread Safety:
             Safe from any thread; writes run one at a time.
         """
-        self._check_closed()
-        _check_id(id)
-        result = _ffi._lib.chassis_delete(self._ptr, id)
+        self._check_writable("delete")
+        result = _ffi._lib.chassis_delete(self._ptr, _check_id(id))
         if result < 0:
-            raise ChassisError(_ffi.get_last_error() or "Failed to delete vector")
+            raise _ffi.last_error("The vector couldn't be deleted")
         return result == 1
 
     def search(
@@ -438,26 +467,13 @@ class VectorIndex:
             waits while a write runs.
         """
         self._check_closed()
-
+        k = _check_int("k", k)
         if k < 1:
-            raise ValueError(f"k must be >= 1, got {k}")
-
-        # Convert to numpy array
-        if not isinstance(query, np.ndarray):
-            query = np.array(query, dtype=np.float32)
-        elif query.dtype != np.float32:
-            query = query.astype(np.float32)
-
-        # Validate dimensions
-        if len(query) != self._dimensions:
-            raise DimensionMismatchError(
-                f"Query has {len(query)} dimensions, "
-                f"but index expects {self._dimensions}"
+            raise InvalidArgumentError(
+                f"k is {k}, but has to be at least 1\nhelp: pass how many results to return, "
+                "such as k=10"
             )
-
-        # Ensure C-contiguous
-        if not query.flags.c_contiguous:
-            query = np.ascontiguousarray(query)
+        query = _as_vector(query, self._dimensions, "query")
 
         # Allocate output buffers
         out_ids = np.zeros(k, dtype=np.uint64)
@@ -479,15 +495,9 @@ class VectorIndex:
                 self._ptr, query_ptr, len(query), k, allowed_ptr, len(allowed), ids_ptr, dists_ptr
             )
 
-        # Check for error (count == 0 could be error or empty index)
-        if count == 0:
-            error_msg = _ffi.get_last_error()
-            if error_msg:
-                if "dimension" in error_msg.lower():
-                    raise DimensionMismatchError(error_msg)
-                else:
-                    raise ChassisError(error_msg)
-            # Otherwise, just no results (empty index or no neighbors found)
+        # 0 results is an error only if one was set: an empty index has none either.
+        if count == 0 and _ffi._lib.chassis_last_error_code() != 0:
+            raise _ffi.last_error("The search failed")
 
         # Convert to SearchResult objects
         results = [
@@ -509,13 +519,9 @@ class VectorIndex:
         Thread Safety:
             Safe from any thread; writes run one at a time.
         """
-        self._check_closed()
-
-        result = _ffi._lib.chassis_flush(self._ptr)
-
-        if result != 0:
-            error_msg = _ffi.get_last_error()
-            raise ChassisError(f"Flush failed: {error_msg or 'unknown error'}")
+        self._check_writable("flush")
+        if _ffi._lib.chassis_flush(self._ptr) != 0:
+            raise _ffi.last_error("The flush failed")
 
     def warm(self) -> None:
         """Start reading the whole index into memory on another thread.
@@ -530,8 +536,7 @@ class VectorIndex:
         self._check_closed()
 
         if _ffi._lib.chassis_warm(self._ptr) != 0:
-            error_msg = _ffi.get_last_error()
-            raise ChassisError(f"Warm failed: {error_msg or 'unknown error'}")
+            raise _ffi.last_error("The index couldn't be read in")
 
     def compact(self) -> None:
         """Rewrite the index without its deleted vectors, with a newly built graph.
@@ -547,9 +552,9 @@ class VectorIndex:
             ChassisError: If the copy can't be written or, on Windows, another
                 process has the index open. The index is left as it was.
         """
-        self._check_closed()
+        self._check_writable("compact")
         if _ffi._lib.chassis_compact(self._ptr) != 0:
-            raise ChassisError(f"Compaction failed: {_ffi.get_last_error() or 'unknown error'}")
+            raise _ffi.last_error("The compaction failed")
 
     def __len__(self) -> int:
         """Get the number of vectors in the index.
@@ -610,17 +615,143 @@ class VectorIndex:
 
 def _allowed_ids(allowed) -> npt.NDArray[np.uint64]:
     # Like _check_id: numpy and ctypes would silently wrap, truncate or flatten bad ids.
+    if callable(allowed):
+        raise TypeError(
+            "allowed is a function, but has to be the ids a result may have\nhelp: pass "
+            "allowed=[i for i in candidate_ids if keep(i)], or a set or numpy array of ids"
+        )
     ids = np.asarray(allowed if isinstance(allowed, np.ndarray) else list(allowed))
     if ids.size == 0:
         return np.zeros(0, dtype=np.uint64)
     if ids.ndim != 1 or ids.dtype == np.bool_ or not np.issubdtype(ids.dtype, np.integer):
-        raise TypeError(f"allowed must be a flat sequence of int ids, got {ids.dtype} {ids.shape}")
+        raise TypeError(
+            f"allowed has to be a flat sequence of int ids, but is {ids.dtype} of shape "
+            f"{ids.shape}\nhelp: ids are ints; keep a dict from your own keys to them"
+        )
     if (ids < 0).any() or (ids == 2**64 - 1).any():
-        raise ValueError("allowed ids must be between 0 and 2**64 - 2")
+        raise InvalidArgumentError(
+            "allowed has an id below 0 or of 2**64 - 1\nhelp: ids go from 0 to 2**64 - 2"
+        )
     return np.ascontiguousarray(ids, dtype=np.uint64)
 
 
-def _check_id(id: int) -> None:
+def _check_int(name: str, value) -> int:
+    """`value` as an int, or TypeError: a bool or a float isn't one."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise TypeError(f"{name} is {value!r}, but has to be an int\nhelp: pass {name}=int(...)")
+    return int(value)
+
+
+def _check_id(id) -> int:
     # ctypes would silently wrap a negative or oversized id into a different one.
+    if isinstance(id, (str, bytes)):
+        raise TypeError(
+            f"id is {id!r}, but ids have to be ints\nhelp: keep a dict from your own keys to int "
+            "ids, or leave ids out to have them chosen"
+        )
+    id = _check_int("id", id)
     if not 0 <= id < 2**64 - 1:
-        raise ValueError(f"id must be between 0 and 2**64 - 2, got {id}")
+        raise InvalidArgumentError(
+            f"id is {id}, but ids go from 0 to 2**64 - 2\nhelp: pass an id in that range, or "
+            "leave it out to have one chosen"
+        )
+    return id
+
+
+def _check_dimensions(dimensions) -> int:
+    dimensions = _check_int("dimensions", dimensions)
+    if not 1 <= dimensions <= _MAX_DIMENSIONS:
+        raise InvalidArgumentError(
+            f"dimensions is {dimensions}, but has to be between 1 and {_MAX_DIMENSIONS}\nhelp: "
+            "give the length of the vectors the index will hold, such as 384, 768 or 1536"
+        )
+    return dimensions
+
+
+def _check_options(options) -> IndexOptions:
+    """`options` as checked IndexOptions; a dict of their fields is taken too."""
+    if options is None:
+        options = IndexOptions()
+    elif isinstance(options, Mapping):
+        options = IndexOptions(**options)
+    elif not isinstance(options, IndexOptions):
+        raise TypeError(
+            f"options is a {type(options).__name__}, but has to be IndexOptions or a dict\nhelp: "
+            "pass options=IndexOptions(metric='cosine'), or options={'metric': 'cosine'}"
+        )
+    options.validate()
+    return options
+
+
+def _named(option: str, value, names: dict, aliases: dict) -> str:
+    """`value` as one of `names`, taking any case and the aliases other libraries use."""
+    key = value.lower() if isinstance(value, str) else value
+    key = aliases.get(key, key)
+    if key in names:
+        return key
+    known = ", ".join(repr(name) for name in names)
+    hint = ""
+    if option == "metric" and key in ("ip", "dot", "inner_product", "dot_product"):
+        hint = "; for inner product on vectors of length 1, cosine orders results the same way"
+    raise InvalidArgumentError(f"{option} is {value!r}, but has to be one of {known}\nhelp: pass "
+                               f"{option}={next(iter(names))!r} or another of them{hint}")
+
+
+def _as_vector(value, dims: int, what: str) -> npt.NDArray[np.float32]:
+    """`value` as one contiguous float32 vector of `dims` components; `what` names it."""
+    if value is None or isinstance(value, (str, bytes)):
+        raise TypeError(
+            f"The {what} is {value!r:.40}, but has to be {dims} numbers\nhelp: pass a list or "
+            f"numpy array of {dims} floats"
+        )
+    try:
+        array = np.ascontiguousarray(value, dtype=np.float32)
+    except (TypeError, ValueError) as e:
+        raise TypeError(
+            f"The {what} has to be {dims} numbers, but can't be read as numbers: {e}\nhelp: pass "
+            f"a list or numpy array of {dims} floats"
+        ) from None
+    if array.ndim == 1 and len(array) == dims:
+        return array
+    if array.ndim == 2 and array.shape[0] == 1:
+        fix = f"pass {what}[0], or {what}.ravel() for an array"
+    elif array.ndim == 2 and what == "vector":
+        fix = "to add several, pass them to add_batch"
+    elif array.ndim == 2:
+        fix = "search takes one query at a time; call it once per row"
+    elif array.ndim == 1:
+        raise DimensionMismatchError(
+            f"The {what} has {len(array)} components, but this index holds vectors of {dims}\n"
+            f"help: make the {what} with the same model as the index's vectors; this index was "
+            f"created for {dims} dimensions"
+        )
+    else:
+        fix = f"pass one vector of {dims} floats"
+    raise DimensionMismatchError(
+        f"The {what} is an array of shape {array.shape}, but has to be one vector of {dims} "
+        f"components\nhelp: {fix}"
+    )
+
+
+def _as_batch(value, dims: int) -> npt.NDArray[np.float32]:
+    """`value` as a contiguous (count, dims) float32 array."""
+    try:
+        array = np.ascontiguousarray(value, dtype=np.float32)
+    except (TypeError, ValueError) as e:
+        raise TypeError(
+            f"The vectors have to be numbers, but can't be read as numbers: {e}\nhelp: pass a "
+            f"(count, {dims}) numpy array, or a list of lists of {dims} floats"
+        ) from None
+    if array.ndim == 2 and array.shape[1] == dims:
+        return array
+    if array.ndim == 1 and len(array) == dims:
+        fix = "for one vector, pass [vector], or call add"
+    elif array.ndim == 2:
+        fix = (f"each vector has to have {dims} components: make them with the same model as the "
+               "index's vectors")
+    else:
+        fix = f"pass a (count, {dims}) array, one vector per row"
+    raise DimensionMismatchError(
+        f"The vectors are an array of shape {array.shape}, but have to be (count, {dims})\n"
+        f"help: {fix}"
+    )

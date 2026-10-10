@@ -77,7 +77,7 @@ fn test_cosine_handles_any_finite_vector_and_rejects_the_rest() {
     }
     for v in [[f32::INFINITY, 1.0], [f32::NAN, 1.0]] {
         let error = index.add(&v).unwrap_err().to_string();
-        assert!(error.contains("NaN or infinite"), "{error}");
+        assert!(error.contains("every component has to be a finite number"), "{error}");
     }
     let hits = index.search(&[-1e-25, 0.0], 4).unwrap();
     assert_eq!(hits.len(), 4);

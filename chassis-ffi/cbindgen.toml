@@ -28,7 +28,7 @@ clean = false
 
 [export]
 prefix = ""
-item_types = ["functions", "structs", "opaque"]
+item_types = ["functions", "structs", "opaque", "constants"]
 
 [fn]
 args = "horizontal"

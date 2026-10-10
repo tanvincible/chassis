@@ -80,13 +80,12 @@ fn test_dimension_validation() {
 
     // Wrong dimension on add
     let result = index.add(&vec![0.1; 64]);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("dimension mismatch"));
+    assert_eq!(result.unwrap_err().kind(), chassis_core::ErrorKind::DimensionMismatch);
 
     // Wrong dimension on search
-    let result = index.search(&vec![0.1; 64], 5);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("dimension mismatch"));
+    let error = index.search(&vec![0.1; 64], 5).unwrap_err();
+    assert_eq!(error.kind(), chassis_core::ErrorKind::DimensionMismatch);
+    assert!(error.to_string().contains("The query has 64 components"));
 }
 
 #[test]
@@ -303,9 +302,9 @@ fn test_dimension_mismatch_on_reopen() {
 
     // Try to open with different dimensions
     {
-        let result = VectorIndex::open(&path, 256, IndexOptions::default());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("mismatch"));
+        let error = VectorIndex::open(&path, 256, IndexOptions::default()).unwrap_err();
+        assert_eq!(error.kind(), chassis_core::ErrorKind::DimensionMismatch);
+        assert!(error.to_string().contains("holds vectors of 128 dimensions, not 256"));
     }
 }
 

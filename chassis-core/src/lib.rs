@@ -48,6 +48,7 @@
 //! primitive, like SQLite for relational data.
 
 pub mod distance;
+mod error;
 mod half;
 mod header;
 mod hnsw;
@@ -62,12 +63,13 @@ mod power_loss;
 pub use hnsw::*;
 
 pub use distance::{DistanceMetric, cosine_distance, euclidean_distance};
+pub use error::{Error, ErrorKind, Result};
 pub use half::Precision;
 pub use header::{MAGIC, VERSION};
 pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
 pub use storage::Storage;
 
-use anyhow::Result;
+use error::fail;
 use hnsw::layer_from_uniform;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -178,17 +180,24 @@ impl VectorIndex {
             options.precision,
         )?;
         if storage.metric() != options.metric {
-            anyhow::bail!(
-                "Index was created with {:?} distance but opened with {:?}",
-                storage.metric(),
-                options.metric
+            let (held, asked) = (metric_name(storage.metric()), metric_name(options.metric));
+            fail!(
+                OptionsMismatch,
+                "The index at {} was created with {held} distance, so it has to be opened with \
+                 {held} distance too, not {asked}\nhelp: open it with the {held} metric, or \
+                 create a new index at another path for {asked} distance",
+                path.display()
             );
         }
         if storage.precision() != options.precision {
-            anyhow::bail!(
-                "Index was created with {:?} precision but opened with {:?}",
-                storage.precision(),
-                options.precision
+            let (held, asked) =
+                (precision_name(storage.precision()), precision_name(options.precision));
+            fail!(
+                OptionsMismatch,
+                "The index at {} keeps its vectors in {held} precision, so it has to be opened \
+                 with {held} precision too, not {asked}\nhelp: open it with {held} precision, or \
+                 create a new index at another path for {asked} precision",
+                path.display()
             );
         }
         let graph = HnswGraph::open_no_reset(storage, params)?;
@@ -218,6 +227,7 @@ impl VectorIndex {
     /// - Storage write fails
     /// - Graph write fails
     pub fn add(&mut self, vector: &[f32]) -> Result<u64> {
+        check_finite(vector, "The vector")?;
         let id = self.next_ids(1)?.start;
         self.insert(id, vector)?;
         Ok(id)
@@ -233,7 +243,14 @@ impl VectorIndex {
         };
         match first.checked_add(count) {
             Some(end) => Ok(first..end),
-            None => anyhow::bail!("No ids are left; choose free ones with add_with_id"),
+            None => {
+                fail!(
+                    Full,
+                    "No ids are left for add to give: the largest in use is {}\nhelp: choose \
+                     free ids yourself with add_with_id",
+                    u64::MAX - 1
+                )
+            }
         }
     }
 
@@ -244,11 +261,14 @@ impl VectorIndex {
     /// Returns an error if a live vector already has `id` (delete it first to replace it), if
     /// `id` is `u64::MAX` (reserved), or for the same reasons as `add`.
     pub fn add_with_id(&mut self, id: u64, vector: &[f32]) -> Result<()> {
-        if id == u64::MAX {
-            anyhow::bail!("Id u64::MAX is reserved");
-        }
+        check_id(id)?;
+        check_finite(vector, "The vector")?;
         if self.slot_of(id)?.is_some() {
-            anyhow::bail!("Id {id} already exists; delete it first to replace it");
+            fail!(
+                IdInUse,
+                "Id {id} is already in use\nhelp: delete it first to replace its vector, or use \
+                 another id"
+            );
         }
         if !self.graph.custom_ids && id != self.graph.node_count() {
             self.ids()?;
@@ -281,19 +301,30 @@ impl VectorIndex {
     /// Returns an error if the counts differ, an id is `u64::MAX`, repeats, or already exists, or
     /// storing or linking fails.
     pub fn add_batch_with_ids(&mut self, ids: &[u64], vectors: &[f32]) -> Result<()> {
-        if self.batch_len(vectors)? != ids.len() {
-            anyhow::bail!("{} ids for {} vectors", ids.len(), vectors.len() / self.dims());
+        let count = self.batch_len(vectors)?;
+        if count != ids.len() {
+            fail!(
+                InvalidArgument,
+                "{} ids were given for {count} vectors\nhelp: give one id per vector, in the same \
+                 order",
+                ids.len()
+            );
         }
         let mut seen = HashSet::with_capacity(ids.len());
         for &id in ids {
-            if id == u64::MAX {
-                anyhow::bail!("Id u64::MAX is reserved");
-            }
+            check_id(id)?;
             if !seen.insert(id) {
-                anyhow::bail!("Id {id} appears twice in the batch");
+                fail!(
+                    InvalidArgument,
+                    "Id {id} is given twice in the batch\nhelp: give each vector its own id"
+                );
             }
             if self.slot_of(id)?.is_some() {
-                anyhow::bail!("Id {id} already exists; delete it first to replace it");
+                fail!(
+                    IdInUse,
+                    "Id {id} is already in use\nhelp: delete it first to replace its vector, or use \
+                 another id"
+                );
             }
         }
         let first = self.graph.node_count();
@@ -310,15 +341,19 @@ impl VectorIndex {
 
     /// Vectors in a batch, which must be a whole number of them.
     fn batch_len(&self, vectors: &[f32]) -> Result<usize> {
-        if !vectors.len().is_multiple_of(self.dims()) {
-            anyhow::bail!(
-                "Vector dimension mismatch: {} floats is not a whole number of {}-dimensional \
-                 vectors",
-                vectors.len(),
-                self.dims()
+        let dims = self.dims();
+        if !vectors.len().is_multiple_of(dims) {
+            fail!(
+                DimensionMismatch,
+                "A batch of {} floats is not a whole number of vectors of {dims}\nhelp: pass the \
+                 vectors back to back, {dims} floats each",
+                vectors.len()
             );
         }
-        Ok(vectors.len() / self.dims())
+        for (row, vector) in vectors.chunks_exact(dims).enumerate() {
+            check_finite(vector, &format!("Vector {row} of the batch"))?;
+        }
+        Ok(vectors.len() / dims)
     }
 
     /// Writes every vector and an empty record for it, then links them all on every core.
@@ -330,7 +365,7 @@ impl VectorIndex {
             DistanceMetric::Euclidean => self.insert_stored(ids, vectors),
             DistanceMetric::Cosine => {
                 let rows = vectors.chunks_exact(self.dims()).map(distance::unit);
-                self.insert_stored(ids, &rows.collect::<Result<Vec<_>>>()?.concat())
+                self.insert_stored(ids, &rows.collect::<anyhow::Result<Vec<_>>>()?.concat())
             }
         }
     }
@@ -342,17 +377,17 @@ impl VectorIndex {
         }
         // The whole batch before any of it is written: `append` would stop part way.
         if self.graph.storage.precision() == Precision::Half {
-            half::check(vectors)?;
+            half::check(vectors, self.dims())?;
         }
         let layers: Vec<usize> = ids.iter().map(|_| self.select_layer()).collect();
         let first = self.graph.node_count();
         let saved = (self.graph.entry_point, self.graph.max_layer);
         let linked = self.write_and_link(first, ids, vectors, &layers);
-        if linked.is_err() {
+        if let Err(e) = linked {
             self.graph.node_count = first;
             (self.graph.entry_point, self.graph.max_layer) = saved;
             self.graph.storage.truncate_logical(first);
-            return linked;
+            return Err(e.into());
         }
         self.graph.storage.publish_routing(self.graph.node_count);
         if let Some(map) = &mut self.ids {
@@ -368,7 +403,7 @@ impl VectorIndex {
         ids: &[u64],
         vectors: &[f32],
         layers: &[usize],
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let dims = self.dims();
         let storage = &mut self.graph.storage;
         storage.truncate_logical(first);
@@ -444,10 +479,14 @@ impl VectorIndex {
     }
 
     fn insert(&mut self, id: u64, vector: &[f32]) -> Result<()> {
-        // Validate dimensions
         let dims = self.graph.storage.dimensions() as usize;
         if vector.len() != dims {
-            anyhow::bail!("Vector dimension mismatch: expected {}, got {}", dims, vector.len());
+            fail!(
+                DimensionMismatch,
+                "The vector has {} components, but this index holds vectors of {dims}\nhelp: make \
+                 the vector with the same model as the index's vectors",
+                vector.len()
+            );
         }
 
         let unit;
@@ -552,7 +591,7 @@ impl VectorIndex {
     ///
     /// Returns an error if the flush fails
     pub fn flush(&mut self) -> Result<()> {
-        self.graph.commit()
+        Ok(self.graph.commit()?)
     }
 
     /// Rewrites the index without its deleted vectors and with a newly built graph, then replaces
@@ -628,7 +667,7 @@ impl VectorIndex {
         fresh.graph.storage.moved_to(&fresh.path);
         *self = fresh;
         // Either file may be at the path after a power loss; they hold the same vectors.
-        storage::sync_dir(&self.path)
+        Ok(storage::sync_dir(&self.path)?)
     }
 
     /// Windows can't rename over a file with open handles, so this index moves to the copy before
@@ -644,10 +683,11 @@ impl VectorIndex {
                 Ok(old) => *self = old,
                 Err(reopen) => {
                     self.graph.storage.poison();
-                    return Err(e.context(format!("and the index couldn't be reopened: {reopen}")));
+                    let e = e.context(format!("and the index couldn't be reopened: {reopen}"));
+                    return Err(e.into());
                 }
             }
-            return Err(e);
+            return Err(e.into());
         }
         self.graph.storage.moved_to(&path);
         self.path = path;
@@ -751,8 +791,14 @@ fn search_graph(
 ) -> Result<Vec<SearchResult>> {
     let dims = graph.storage.dimensions() as usize;
     if query.len() != dims {
-        anyhow::bail!("Query dimension mismatch: expected {}, got {}", dims, query.len());
+        fail!(
+            DimensionMismatch,
+            "The query has {} components, but this index holds vectors of {dims}\nhelp: make the \
+             query with the same model as the index's vectors",
+            query.len()
+        );
     }
+    check_finite(query, "The query")?;
     let search = |query: &[f32]| match filter {
         None => graph.search(query, k, ef),
         Some(filter) => graph.search_filtered(query, k, ef, &|slot| {
@@ -777,6 +823,41 @@ fn search_graph(
         }
     }
     Ok(results)
+}
+
+/// Refuses a vector with a component that isn't a finite number: it would have no distance to
+/// anything. `what` names it in the message.
+fn check_finite(vector: &[f32], what: &str) -> Result<()> {
+    if let Some(i) = vector.iter().position(|x| !x.is_finite()) {
+        fail!(
+            InvalidArgument,
+            "{what} has {} at component {i}, but every component has to be a finite number\nhelp: \
+             check how it was made; a division by zero, as in normalizing a zero vector, gives NaN",
+            vector[i]
+        );
+    }
+    Ok(())
+}
+
+fn check_id(id: u64) -> Result<()> {
+    if id == u64::MAX {
+        fail!(InvalidArgument, "Id {id} is reserved\nhelp: ids go from 0 to {}", u64::MAX - 1);
+    }
+    Ok(())
+}
+
+fn metric_name(metric: DistanceMetric) -> &'static str {
+    match metric {
+        DistanceMetric::Euclidean => "euclidean",
+        DistanceMetric::Cosine => "cosine",
+    }
+}
+
+fn precision_name(precision: Precision) -> &'static str {
+    match precision {
+        Precision::Half => "half",
+        _ => "full",
+    }
 }
 
 fn hnsw_params(options: &IndexOptions) -> HnswParams {
@@ -1259,7 +1340,8 @@ mod tests {
     fn test_filtered_scan_is_exact_with_a_nan_vector() {
         let file = NamedTempFile::new().unwrap();
         let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
-        index.add(&[f32::NAN; 16]).unwrap();
+        // `add` refuses one now; a file from before could hold one.
+        index.insert(0, &[f32::NAN; 16]).unwrap();
         for id in 1..300 {
             index.add(&random_vector(id)).unwrap();
         }
@@ -1299,8 +1381,7 @@ mod tests {
         let vector = vec![0.1; 64];
         let result = index.add(&vector);
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("dimension mismatch"));
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::DimensionMismatch);
     }
 
     #[test]

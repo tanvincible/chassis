@@ -164,7 +164,8 @@ fn test_precision_is_the_files() {
 
     // A writer has to name it, as it names the metric; a reader takes it from the file.
     let error = VectorIndex::open(&path, DIMS, IndexOptions::default()).err().unwrap();
-    assert!(error.to_string().contains("Half precision"), "{error}");
+    assert_eq!(error.kind(), chassis_core::ErrorKind::OptionsMismatch);
+    assert!(error.to_string().contains("opened with half precision too"), "{error}");
     let mut reader = IndexReader::open(&path, DIMS, IndexOptions::default()).unwrap();
     assert_eq!(reader.precision(), Precision::Half);
     let mut index = VectorIndex::open(&path, DIMS, half()).unwrap();
@@ -181,7 +182,7 @@ fn test_precision_is_the_files() {
     let full = dir.path().join("full.chassis");
     VectorIndex::open(&full, DIMS, IndexOptions::default()).unwrap().flush().unwrap();
     let error = VectorIndex::open(&full, DIMS, half()).err().unwrap();
-    assert!(error.to_string().contains("Full precision"), "{error}");
+    assert!(error.to_string().contains("opened with full precision too, not half"), "{error}");
 }
 
 #[test]
@@ -193,7 +194,7 @@ fn test_a_vector_half_precision_cannot_hold_is_refused_and_leaves_nothing() {
     index.add(&[65_519.0, -65_519.0, 0.0, 0.0]).unwrap();
 
     let error = index.add(&[0.0, 65_520.0, 0.0, 0.0]).unwrap_err().to_string();
-    assert!(error.contains("too large for a half-precision index"), "{error}");
+    assert!(error.contains("has 65520 at component 1, too large for half precision"), "{error}");
     let batch = [[5.0; 4], [0.0, 0.0, -1e9, 0.0], [6.0; 4]].concat();
     assert!(index.add_batch(&batch).is_err());
     assert_eq!(index.len(), 2);

@@ -17,9 +17,17 @@ Example:
 from chassis.index import VectorIndex, SearchResult, IndexOptions
 from chassis.exceptions import (
     ChassisError,
+    CorruptIndexError,
     DimensionMismatchError,
-    InvalidPathError,
+    IdInUseError,
+    IndexFullError,
+    IndexLockedError,
     IndexNotFoundError,
+    InvalidArgumentError,
+    InvalidPathError,
+    NotAnIndexError,
+    OptionsMismatchError,
+    ReadOnlyError,
 )
 
 __version__ = "0.6.3"
@@ -28,7 +36,15 @@ __all__ = [
     "SearchResult",
     "IndexOptions",
     "ChassisError",
+    "CorruptIndexError",
     "DimensionMismatchError",
-    "InvalidPathError",
+    "IdInUseError",
+    "IndexFullError",
+    "IndexLockedError",
     "IndexNotFoundError",
+    "InvalidArgumentError",
+    "InvalidPathError",
+    "NotAnIndexError",
+    "OptionsMismatchError",
+    "ReadOnlyError",
 ]

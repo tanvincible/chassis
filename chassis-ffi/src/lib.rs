@@ -15,7 +15,9 @@
 //! Errors are reported through:
 //! - Return values: `u64::MAX` for add, `size_t` insert count for `chassis_add_batch` (`0` on
 //!   failure: a batch is added whole or not at all), `0` for search, `-1` for flush
-//! - Thread-local error message: `chassis_last_error_message()`
+//! - Thread-local error message, `chassis_last_error_message()`, which says what was wrong and,
+//!   on a line starting `help:`, what to do instead; and a code to act on,
+//!   `chassis_last_error_code()`, one of the `CHASSIS_ERROR_` constants
 //!
 //! # Thread Safety
 //!
@@ -28,7 +30,7 @@
 //! - Each thread has its own error message storage
 
 use chassis_core::{
-    DistanceMetric, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
+    DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
 };
 use libc::{c_char, c_float, c_int, size_t};
 use std::cell::RefCell;
@@ -59,7 +61,7 @@ trait Readable {
         query: &[f32],
         k: usize,
         filter: Filter,
-    ) -> anyhow::Result<Vec<SearchResult>>;
+    ) -> chassis_core::Result<Vec<SearchResult>>;
     fn len(&mut self) -> u64;
     fn dimensions(&self) -> u32;
     fn metric(&self) -> DistanceMetric;
@@ -72,7 +74,7 @@ impl Readable for &VectorIndex {
         query: &[f32],
         k: usize,
         filter: Filter,
-    ) -> anyhow::Result<Vec<SearchResult>> {
+    ) -> chassis_core::Result<Vec<SearchResult>> {
         match filter {
             None => VectorIndex::search(self, query, k),
             Some(filter) => VectorIndex::search_filtered(self, query, k, filter),
@@ -98,7 +100,7 @@ impl Readable for IndexReader {
         query: &[f32],
         k: usize,
         filter: Filter,
-    ) -> anyhow::Result<Vec<SearchResult>> {
+    ) -> chassis_core::Result<Vec<SearchResult>> {
         match filter {
             None => IndexReader::search(self, query, k),
             Some(filter) => IndexReader::search_filtered(self, query, k, filter),
@@ -134,12 +136,14 @@ unsafe fn state<'a>(ptr: *const ChassisIndex) -> Option<&'a ChassisIndexState> {
     // SAFETY: Caller guarantees ptr is NULL or a live handle
     let state = unsafe { (ptr as *const ChassisIndexState).as_ref() };
     if state.is_none() {
-        set_last_error("Null index pointer");
+        set_last_error("The index pointer is NULL\nhelp: pass the handle chassis_open returned");
     }
     state
 }
 
-const POISONED: &str = "Index is unusable after an earlier panic; reopen it";
+const POISONED: Failure = Failure::other(
+    "The index is unusable after an earlier panic\nhelp: free the handle and open the index again",
+);
 
 /// Runs `f` on the index for a search or other read, or sets the last error.
 ///
@@ -163,7 +167,13 @@ unsafe fn write_index<'a>(ptr: *const ChassisIndex) -> Option<RwLockWriteGuard<'
     match &unsafe { state(ptr) }?.inner {
         Kind::Writer(lock) => lock.write().map_err(|_| set_last_error(POISONED)).ok(),
         Kind::Reader(_) => {
-            set_last_error("Index was opened with chassis_open_reader, which is read-only");
+            set_last_error(Failure {
+                code: CHASSIS_ERROR_READ_ONLY,
+                message: "This index was opened as a reader, which only searches\nhelp: to \
+                          add, delete, flush or compact, open it as a writer (chassis_open); an \
+                          index has one writer at a time"
+                    .into(),
+            });
             None
         }
     }
@@ -181,18 +191,23 @@ unsafe fn open_handle(
     read_only: bool,
 ) -> *mut ChassisIndex {
     if path.is_null() {
-        set_last_error("Path cannot be NULL");
+        set_last_error(
+            "The path is NULL\nhelp: pass the index file's path as a NUL-terminated string",
+        );
         return ptr::null_mut();
     }
     if dimensions == 0 {
-        set_last_error("Dimensions must be > 0");
+        set_last_error(
+            "dimensions is 0, but has to be between 1 and 4096\nhelp: pass the length of the \
+             vectors the index will hold, such as 384, 768 or 1536",
+        );
         return ptr::null_mut();
     }
     // SAFETY: Caller guarantees path is valid C string
     let c_path = unsafe { CStr::from_ptr(path) };
     // STRICT UTF-8 CHECK: Do not use to_string_lossy()
     let Ok(path_str) = c_path.to_str() else {
-        set_last_error("Path must be valid UTF-8");
+        set_last_error("The path isn't valid UTF-8\nhelp: pass the path encoded as UTF-8");
         return ptr::null_mut();
     };
     let inner = if read_only {
@@ -222,28 +237,91 @@ pub struct ChassisIndex {
     _private: [u8; 0],
 }
 
-thread_local! {
-    /// Thread-local storage for error messages
-    ///
-    /// Each thread maintains its own error message to ensure thread safety
-    /// without requiring locks. The `RefCell` allows interior mutability.
-    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
+/// No error: what `chassis_last_error_code` returns after a call that succeeded.
+pub const CHASSIS_OK: c_int = 0;
+/// An argument is out of range or malformed: a NULL pointer, dimensions, an option, an id, a
+/// vector with a component that isn't a finite number.
+pub const CHASSIS_ERROR_INVALID_ARGUMENT: c_int = 1;
+/// A vector or query has another number of components than the index's vectors, or the file
+/// holds vectors of other dimensions than asked for.
+pub const CHASSIS_ERROR_DIMENSION_MISMATCH: c_int = 2;
+/// The file was created with another metric or precision than the one asked for.
+pub const CHASSIS_ERROR_OPTIONS_MISMATCH: c_int = 3;
+/// There is no index at the path, or its directory doesn't exist.
+pub const CHASSIS_ERROR_NOT_FOUND: c_int = 4;
+/// The file is not a Chassis index.
+pub const CHASSIS_ERROR_NOT_AN_INDEX: c_int = 5;
+/// The id is already in use.
+pub const CHASSIS_ERROR_ID_IN_USE: c_int = 6;
+/// Another writer has the index open.
+pub const CHASSIS_ERROR_LOCKED: c_int = 7;
+/// The handle is a reader, which only searches.
+pub const CHASSIS_ERROR_READ_ONLY: c_int = 8;
+/// The file is damaged.
+pub const CHASSIS_ERROR_CORRUPT: c_int = 9;
+/// The index can hold no more.
+pub const CHASSIS_ERROR_FULL: c_int = 10;
+/// The operating system refused: permissions, a full disk, a failed read or write.
+pub const CHASSIS_ERROR_IO: c_int = 11;
+/// Anything else, a panic included.
+pub const CHASSIS_ERROR_OTHER: c_int = 12;
+
+/// An error as C sees it: a code and a message.
+struct Failure {
+    code: c_int,
+    message: std::borrow::Cow<'static, str>,
 }
 
-/// Set the last error message for the current thread
-///
-/// # Safety
-///
-/// This function handles interior NULs gracefully to prevent panics during
-/// error reporting. If the error message contains NUL bytes, they are
-/// replaced with the escaped sequence "\\0".
-fn set_last_error(err: impl std::fmt::Display) {
-    LAST_ERROR.with(|cell| {
-        // Handle interior NULs gracefully to avoid panic during error reporting
-        let safe_msg = err.to_string().replace('\0', "\\0");
-        let c_str = CString::new(safe_msg).unwrap_or_default();
-        *cell.borrow_mut() = Some(c_str);
-    });
+impl Failure {
+    const fn other(message: &'static str) -> Self {
+        Self { code: CHASSIS_ERROR_OTHER, message: std::borrow::Cow::Borrowed(message) }
+    }
+}
+
+impl From<chassis_core::Error> for Failure {
+    fn from(e: chassis_core::Error) -> Self {
+        let code = match e.kind() {
+            ErrorKind::InvalidArgument => CHASSIS_ERROR_INVALID_ARGUMENT,
+            ErrorKind::DimensionMismatch => CHASSIS_ERROR_DIMENSION_MISMATCH,
+            ErrorKind::OptionsMismatch => CHASSIS_ERROR_OPTIONS_MISMATCH,
+            ErrorKind::NotFound => CHASSIS_ERROR_NOT_FOUND,
+            ErrorKind::NotAnIndex => CHASSIS_ERROR_NOT_AN_INDEX,
+            ErrorKind::IdInUse => CHASSIS_ERROR_ID_IN_USE,
+            ErrorKind::Locked => CHASSIS_ERROR_LOCKED,
+            ErrorKind::ReadOnly => CHASSIS_ERROR_READ_ONLY,
+            ErrorKind::Corrupt => CHASSIS_ERROR_CORRUPT,
+            ErrorKind::Full => CHASSIS_ERROR_FULL,
+            ErrorKind::Io => CHASSIS_ERROR_IO,
+            _ => CHASSIS_ERROR_OTHER,
+        };
+        Self { code, message: e.to_string().into() }
+    }
+}
+
+/// The C layer's own checks of its arguments.
+impl From<&'static str> for Failure {
+    fn from(message: &'static str) -> Self {
+        Self { code: CHASSIS_ERROR_INVALID_ARGUMENT, message: message.into() }
+    }
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self { code: CHASSIS_ERROR_INVALID_ARGUMENT, message: message.into() }
+    }
+}
+
+thread_local! {
+    /// The last error on this thread: its code and message.
+    static LAST_ERROR: RefCell<Option<(c_int, CString)>> = const { RefCell::new(None) };
+}
+
+/// Sets the last error for the current thread. A NUL inside the message becomes "\\0", so that
+/// reporting an error can't panic.
+fn set_last_error(err: impl Into<Failure>) {
+    let Failure { code, message } = err.into();
+    let message = CString::new(message.replace('\0', "\\0")).unwrap_or_default();
+    LAST_ERROR.with(|cell| *cell.borrow_mut() = Some((code, message)));
 }
 
 /// Clear the last error message for the current thread
@@ -281,14 +359,21 @@ where
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(result) => Some(result),
         Err(e) => {
-            let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                format!("Panic: {}", s)
+            let what = if let Some(s) = e.downcast_ref::<&str>() {
+                (*s).to_string()
             } else if let Some(s) = e.downcast_ref::<String>() {
-                format!("Panic: {}", s)
+                s.clone()
             } else {
-                "Unknown panic".to_string()
+                "no message".to_string()
             };
-            set_last_error(msg);
+            set_last_error(Failure {
+                code: CHASSIS_ERROR_OTHER,
+                message: format!(
+                    "Chassis panicked: {what}\nhelp: this is a bug in Chassis; please report it, \
+                     with this message"
+                )
+                .into(),
+            });
             None
         }
     }
@@ -371,7 +456,10 @@ pub unsafe extern "C" fn chassis_open_with_options(
     ffi_guard(|| {
         // Validate max_connections is u16
         let Ok(max_connections) = u16::try_from(max_connections) else {
-            set_last_error(format!("max_connections must be <= {}", u16::MAX));
+            set_last_error(format!(
+                "max_connections is {max_connections}, but has to be between 2 and 32,767\nhelp: 16 \
+                 suits most indexes; 32 gives higher recall for more memory"
+            ));
             return ptr::null_mut();
         };
         let options = IndexOptions {
@@ -448,14 +536,20 @@ pub unsafe extern "C" fn chassis_open_with_precision(
 ) -> *mut ChassisIndex {
     ffi_guard(|| {
         let Ok(max_connections) = u16::try_from(max_connections) else {
-            set_last_error(format!("max_connections must be <= {}", u16::MAX));
+            set_last_error(format!(
+                "max_connections is {max_connections}, but has to be between 2 and 32,767\nhelp: 16 \
+                 suits most indexes; 32 gives higher recall for more memory"
+            ));
             return ptr::null_mut();
         };
         let metric = match metric {
             0 => DistanceMetric::Euclidean,
             1 => DistanceMetric::Cosine,
             other => {
-                set_last_error(format!("Unknown metric {other}: use 0 (Euclidean) or 1 (cosine)"));
+                set_last_error(format!(
+                    "metric is {other}, which is no metric\nhelp: pass 0 for euclidean distance \
+                     or 1 for cosine"
+                ));
                 return ptr::null_mut();
             }
         };
@@ -463,7 +557,10 @@ pub unsafe extern "C" fn chassis_open_with_precision(
             0 => Precision::Full,
             1 => Precision::Half,
             other => {
-                set_last_error(format!("Unknown precision {other}: use 0 (full) or 1 (half)"));
+                set_last_error(format!(
+                    "precision is {other}, which is no precision\nhelp: pass 0 for full (32-bit \
+                     floats) or 1 for half (16-bit floats)"
+                ));
                 return ptr::null_mut();
             }
         };
@@ -511,7 +608,10 @@ pub unsafe extern "C" fn chassis_open_reader(
 ) -> *mut ChassisIndex {
     ffi_guard(|| {
         let Ok(max_connections) = u16::try_from(max_connections) else {
-            set_last_error(format!("max_connections must be <= {}", u16::MAX));
+            set_last_error(format!(
+                "max_connections is {max_connections}, but has to be between 2 and 32,767\nhelp: 16 \
+                 suits most indexes; 32 gives higher recall for more memory"
+            ));
             return ptr::null_mut();
         };
         let options =
@@ -603,12 +703,16 @@ pub unsafe extern "C" fn chassis_add(
         };
 
         if vector.is_null() {
-            set_last_error("Null vector pointer");
+            set_last_error(
+                "The vector pointer is NULL\nhelp: pass a pointer to the vector's floats",
+            );
             return u64::MAX;
         }
 
         if len == 0 {
-            set_last_error("Vector length must be > 0");
+            set_last_error(
+                "len is 0\nhelp: pass the number of floats in the vector: the index's dimensions",
+            );
             return u64::MAX;
         }
 
@@ -684,7 +788,9 @@ pub unsafe extern "C" fn chassis_add_batch(
 ) -> size_t {
     ffi_guard(|| {
         if ptr.is_null() {
-            set_last_error("Null index pointer");
+            set_last_error(
+                "The index pointer is NULL\nhelp: pass the handle chassis_open returned",
+            );
             return 0;
         }
 
@@ -694,12 +800,14 @@ pub unsafe extern "C" fn chassis_add_batch(
         }
 
         if vectors.is_null() || out_ids.is_null() {
-            set_last_error("Null buffer pointers");
+            set_last_error("A buffer pointer is NULL\nhelp: pass a pointer to each buffer");
             return 0;
         }
 
         if dim == 0 {
-            set_last_error("Vector dimension must be > 0");
+            set_last_error(
+                "dim is 0\nhelp: pass the number of floats in each vector: the index's dimensions",
+            );
             return 0;
         }
 
@@ -709,17 +817,21 @@ pub unsafe extern "C" fn chassis_add_batch(
 
         let index_dim = index.dimensions() as usize;
         if dim != index_dim {
-            set_last_error(format!(
-                "Vector dimension mismatch: expected {}, got {}",
-                index_dim, dim
-            ));
+            set_last_error(Failure {
+                code: CHASSIS_ERROR_DIMENSION_MISMATCH,
+                message: format!(
+                    "dim is {dim}, but this index holds vectors of {index_dim}\nhelp: pass \
+                     dim = {index_dim}, with the vectors back to back, {index_dim} floats each"
+                )
+                .into(),
+            });
             return 0;
         }
 
         let total = match dim.checked_mul(count) {
             Some(t) => t,
             None => {
-                set_last_error("Vector batch size overflow");
+                set_last_error("count × dim overflows\nhelp: pass the batch in smaller pieces");
                 return 0;
             }
         };
@@ -767,7 +879,10 @@ pub unsafe extern "C" fn chassis_add_with_id(
         };
 
         if vector.is_null() || len == 0 {
-            set_last_error("Vector must be non-NULL with length > 0");
+            set_last_error(
+                "The query pointer is NULL or len is 0\nhelp: pass the query's floats and their \
+                 number, the index's dimensions",
+            );
             return -1;
         }
 
@@ -819,18 +934,23 @@ pub unsafe extern "C" fn chassis_add_batch_with_ids(
             return 0;
         }
         if ids.is_null() || vectors.is_null() {
-            set_last_error("Null buffer pointers");
+            set_last_error("A buffer pointer is NULL\nhelp: pass a pointer to each buffer");
             return -1;
         }
         let Some(total) = dim.checked_mul(count) else {
-            set_last_error("Vector batch size overflow");
+            set_last_error("count × dim overflows\nhelp: pass the batch in smaller pieces");
             return -1;
         };
         if dim != index.dimensions() as usize {
-            set_last_error(format!(
-                "Vector dimension mismatch: expected {}, got {dim}",
-                index.dimensions()
-            ));
+            let held = index.dimensions();
+            set_last_error(Failure {
+                code: CHASSIS_ERROR_DIMENSION_MISMATCH,
+                message: format!(
+                    "dim is {dim}, but this index holds vectors of {held}\nhelp: pass dim = {held}, \
+                     with the vectors back to back, {held} floats each"
+                )
+                .into(),
+            });
             return -1;
         }
         // SAFETY: caller guarantees both buffers are this long
@@ -979,7 +1099,10 @@ pub unsafe extern "C" fn chassis_search_filtered(
 ) -> size_t {
     ffi_guard(|| {
         if allowed_ids.is_null() && allowed_len > 0 {
-            set_last_error("Null allowed_ids");
+            set_last_error(
+                "allowed_ids is NULL\nhelp: pass the ids a result may have, or call chassis_search \
+                 to search them all",
+            );
             return 0;
         }
         let allowed: std::collections::HashSet<u64> = if allowed_len == 0 {
@@ -1013,12 +1136,12 @@ unsafe fn search_into(
 ) -> size_t {
     {
         if query.is_null() || out_ids.is_null() || out_dists.is_null() {
-            set_last_error("Null buffer pointers");
+            set_last_error("A buffer pointer is NULL\nhelp: pass a pointer to each buffer");
             return 0;
         }
 
         if k == 0 {
-            set_last_error("k must be > 0");
+            set_last_error("k is 0\nhelp: pass how many results to return, at least 1");
             return 0;
         }
 
@@ -1367,7 +1490,28 @@ pub unsafe extern "C" fn chassis_precision(ptr: *const ChassisIndex) -> c_int {
 /// ```
 #[unsafe(no_mangle)]
 pub extern "C" fn chassis_last_error_message() -> *const c_char {
-    LAST_ERROR.with(|cell| cell.borrow().as_ref().map(|s| s.as_ptr()).unwrap_or(ptr::null()))
+    LAST_ERROR
+        .with(|cell| cell.borrow().as_ref().map_or(ptr::null(), |(_, message)| message.as_ptr()))
+}
+
+/// What the last error on this thread was, for a program to act on
+///
+/// # Returns
+///
+/// One of the `CHASSIS_ERROR_` constants, or `CHASSIS_OK` (0) if the last call succeeded or set
+/// no error. `chassis_last_error_message` says the same in words, with what to do instead.
+///
+/// # Example (C)
+///
+/// ```c
+/// ChassisIndex* index = chassis_open("vectors.chassis", 768);
+/// if (index == NULL && chassis_last_error_code() == CHASSIS_ERROR_LOCKED) {
+///     index = chassis_open_reader("vectors.chassis", 768, 16, 50);
+/// }
+/// ```
+#[unsafe(no_mangle)]
+pub extern "C" fn chassis_last_error_code() -> c_int {
+    LAST_ERROR.with(|cell| cell.borrow().as_ref().map_or(CHASSIS_OK, |&(code, _)| code))
 }
 
 //
@@ -1548,8 +1692,9 @@ mod tests {
         assert_eq!(unsafe { (chassis_len(reader), chassis_dimensions(reader)) }, (1, 8));
 
         assert_eq!(unsafe { chassis_add(reader, vec.as_ptr(), 8) }, u64::MAX);
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_READ_ONLY);
         let error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
-        assert!(error.to_str().unwrap().contains("read-only"));
+        assert!(error.to_str().unwrap().contains("open it as a writer (chassis_open)"));
 
         assert_eq!(unsafe { chassis_add_with_id(writer, 8, [0.9f32; 8].as_ptr(), 8) }, 0);
         assert_eq!(unsafe { chassis_len(reader) }, 1);
@@ -1734,9 +1879,13 @@ mod tests {
         assert_eq!(id, u64::MAX, "Should fail with dimension mismatch");
 
         // Check error message
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_DIMENSION_MISMATCH);
         let error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
-        let error_str = error.to_string_lossy();
-        assert!(error_str.contains("dimension"), "Error should mention dimensions");
+        assert!(
+            error
+                .to_string_lossy()
+                .contains("has 64 components, but this index holds vectors of 128")
+        );
 
         unsafe { chassis_free(ptr) };
     }
@@ -1892,8 +2041,9 @@ mod tests {
         let n = unsafe { chassis_add_batch(ptr, batch.as_ptr(), 1, 64, out_ids.as_mut_ptr()) };
         assert_eq!(n, 0);
 
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_DIMENSION_MISMATCH);
         let error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
-        assert!(error.to_string_lossy().to_lowercase().contains("dimension"));
+        assert!(error.to_string_lossy().contains("help: pass dim = 128"));
 
         unsafe { chassis_free(ptr) };
     }
@@ -1962,5 +2112,38 @@ mod tests {
         // Verify main thread still has its error
         let main_error_again = unsafe { CStr::from_ptr(chassis_last_error_message()) };
         assert_eq!(main_error_again.to_string_lossy(), "Main thread error");
+    }
+
+    #[test]
+    fn test_ffi_an_error_has_a_code_to_act_on_and_a_help_line() {
+        let (dir, path) = temp_index_path();
+        let writer = unsafe { chassis_open(path.as_ptr(), 8) };
+        assert_eq!(chassis_last_error_code(), CHASSIS_OK);
+        let message = || unsafe { CStr::from_ptr(chassis_last_error_message()) }.to_string_lossy();
+
+        assert!(unsafe { chassis_open(path.as_ptr(), 8) }.is_null());
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_LOCKED);
+        assert!(message().contains("\nhelp: "));
+
+        let missing = CString::new(dir.path().join("none.chassis").to_str().unwrap()).unwrap();
+        assert!(unsafe { chassis_open_reader(missing.as_ptr(), 8, 16, 50) }.is_null());
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_NOT_FOUND);
+
+        let nan = [f32::NAN; 8];
+        assert_eq!(unsafe { chassis_add(writer, nan.as_ptr(), 8) }, u64::MAX);
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_INVALID_ARGUMENT);
+        assert!(message().contains("NaN at component 0"));
+
+        assert_eq!(
+            unsafe { chassis_open_with_metric(path.as_ptr(), 8, 16, 200, 50, 7) },
+            ptr::null_mut()
+        );
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_INVALID_ARGUMENT);
+        assert!(message().contains("help: pass 0 for euclidean distance or 1 for cosine"));
+
+        // A call that succeeds clears it.
+        assert_eq!(unsafe { chassis_add(writer, [0.5f32; 8].as_ptr(), 8) }, 0);
+        assert_eq!(chassis_last_error_code(), CHASSIS_OK);
+        unsafe { chassis_free(writer) };
     }
 }

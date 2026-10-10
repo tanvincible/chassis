@@ -15,6 +15,7 @@
 //! crash writes them back (ADR-0012).
 
 use crate::distance::{DistanceMetric, Element};
+use crate::error::{ErrorKind, fail, raised};
 use crate::half::{self, Precision};
 use crate::header::{FLAG_SUPERSEDED, FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES, REGIONS_START};
 use crate::hnsw::node::NodeRecordParams;
@@ -101,7 +102,10 @@ impl Geometry {
             || header.table_page_log2 > 16
             || heap_base + u32::from(header.doubling_chunks) > 32
         {
-            bail!("Corrupt file header: impossible dimensions, graph parameters or geometry");
+            fail!(
+                Corrupt,
+                "Corrupt file header: impossible dimensions, graph parameters or geometry\nhelp: restore the index from a backup, or rebuild it from its vectors"
+            );
         }
         let geometry = Self {
             dims: header.dims as usize,
@@ -116,7 +120,10 @@ impl Geometry {
             table_page_log2: u32::from(header.table_page_log2),
         };
         if geometry.upper_bytes(usize::from(header.max_layers)) > geometry.chunk_bytes(0) {
-            bail!("Corrupt file header: heap chunks smaller than one entry");
+            fail!(
+                Corrupt,
+                "Corrupt file header: heap chunks smaller than one entry\nhelp: restore the index from a backup, or rebuild it from its vectors"
+            );
         }
         Ok(geometry)
     }
@@ -129,10 +136,19 @@ impl Geometry {
         precision: Precision,
     ) -> Result<FileHeader> {
         if !(1..=MAX_DIMENSIONS).contains(&dims) {
-            bail!("Dimensions must be between 1 and {MAX_DIMENSIONS}, got {dims}");
+            fail!(
+                InvalidArgument,
+                "dimensions is {dims}, but has to be between 1 and {MAX_DIMENSIONS}\nhelp: give the \
+                 length of the vectors the index will hold, such as 384, 768 or 1536"
+            );
         }
         if params.m < 2 || params.m > 32_767 || params.max_layers == 0 {
-            bail!("max_connections must be between 2 and 32,767");
+            fail!(
+                InvalidArgument,
+                "max_connections is {}, but has to be between 2 and 32,767\nhelp: 16 suits most \
+                 indexes; 32 gives higher recall for more memory",
+                params.m
+            );
         }
         let mut header = FileHeader {
             write_version: crate::header::version_of(u8::from(precision == Precision::Half)),
@@ -472,8 +488,13 @@ impl Undo {
         let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
         let mut bytes = Vec::with_capacity(16 + entry.len());
         if file.is_none() {
-            let created = File::create(&self.path)
-                .with_context(|| format!("Failed to create {}", self.path.display()))?;
+            let created = File::create(&self.path).with_context(|| {
+                format!(
+                    "Can't create {}\nhelp: check that the index's directory is writable and \
+                         its disk has room",
+                    self.path.display()
+                )
+            })?;
             *file = Some((created, 0));
             bytes.extend_from_slice(UNDO_MAGIC);
         }
@@ -483,7 +504,12 @@ impl Undo {
             // Whatever part was written would hide every entry after it.
             let _ = file.set_len(*len);
             let _ = file.seek(SeekFrom::Start(*len));
-            return Err(e).with_context(|| format!("Failed to write {}", self.path.display()));
+            return Err(e).with_context(|| {
+                format!(
+                    "Can't write {}\nhelp: check that the disk has room and is writable",
+                    self.path.display()
+                )
+            });
         }
         *len += bytes.len() as u64;
         Ok(())
@@ -585,7 +611,7 @@ impl Storage {
             return Self::migrate(path, file, dimensions);
         }
         if len < REGIONS_START {
-            bail!("File is not a valid Chassis index");
+            return Err(not_an_index(path));
         }
         let headers = Region::map(&file, 0, REGIONS_START as usize, true)?;
         // Creation sets the length, then writes both header copies, so a crash leaves both zero or
@@ -612,23 +638,27 @@ impl Storage {
     /// access to migrate it), has different dimensions, or is corrupt.
     pub fn open_read_only<P: AsRef<Path>>(path: P, dimensions: u32) -> Result<Self> {
         let path = path.as_ref();
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open chassis file: {}", path.display()))?;
+        // Windows refuses to open a directory with "access denied", which would read as permissions.
+        if path.is_dir() {
+            return Err(open_failed(path, std::io::ErrorKind::IsADirectory.into(), false));
+        }
+        let file = File::open(path).map_err(|e| open_failed(path, e, false))?;
         let mut prefix = [0u8; 12];
         read_prefix(&file, &mut prefix)?;
         if is_legacy(&prefix) {
             bail!(
-                "{} uses an older file format; open it once with write access to migrate it",
+                "{} uses an older file format, which a reader can't open\nhelp: open it once as a \
+                 writer, which migrates it",
                 path.display()
             );
         }
         if file.metadata()?.len() < REGIONS_START {
-            bail!("File is not a valid Chassis index");
+            return Err(not_an_index(path));
         }
         let headers = Region::map(&file, 0, REGIONS_START as usize, false)?;
         let (header, _) = newest_header(&headers)?;
         if header.dims != dimensions {
-            bail!("Dimension mismatch: file has {}, requested {dimensions}", header.dims);
+            return Err(dimension_mismatch(path, header.dims, dimensions));
         }
         let mut storage = Self::new(file, false, headers, header, 0)?;
         storage.refresh()?;
@@ -792,16 +822,20 @@ impl Storage {
         let (copy, header) = FileHeader::newest(a, b)?;
         if header.write_version > crate::header::VERSION {
             bail!(
-                "File was written by a newer Chassis (format {}); this release can only read it, \
-                 with a reader (IndexReader, chassis_open_reader, or read_only=True in Python)",
+                "The file was written by a newer release of Chassis (format {}), so this one can't \
+                 write it\nhelp: open it as a reader (IndexReader, chassis_open_reader, or \
+                 read_only=True in Python), or use the newer release",
                 header.write_version
             );
         }
         if header.dims != dims {
-            bail!("Dimension mismatch: file has {}, requested {dims}", header.dims);
+            return Err(dimension_mismatch(path, header.dims, dims));
         }
         if header.file_end > file.metadata()?.len() {
-            bail!("File truncated: it ends before its last region");
+            fail!(
+                Corrupt,
+                "File truncated: it ends before its last region\nhelp: restore the index from a backup, or rebuild it from its vectors"
+            );
         }
         let mut storage = Self::new(file, true, headers, header, copy)?;
         storage.map_regions(None)?;
@@ -832,7 +866,10 @@ impl Storage {
             || s.heap_used >> 32 > u64::from(s.heap_chunks)
             || s.heap_used & 0xffff_ffff > g.chunk_bytes(s.heap_used >> 32) as u64
         {
-            bail!("Corrupt file header: counts don't match its tables");
+            fail!(
+                Corrupt,
+                "Corrupt file header: counts don't match its tables\nhelp: restore the index from a backup, or rebuild it from its vectors"
+            );
         }
         let [segments, chunks, segment_pages, chunk_pages] = live.unwrap_or_default();
         let mut file_len = None;
@@ -939,7 +976,10 @@ impl Storage {
         match (fits, committed) {
             (true, _) => Ok(Some(Region::map(&self.file, offset, len, self.writable)?)),
             (false, true) => {
-                bail!("Corrupt file: a region at offset {offset} lies outside the file")
+                fail!(
+                    Corrupt,
+                    "Corrupt file: a region at offset {offset} lies outside the file\nhelp: restore the index from a backup, or rebuild it from its vectors"
+                )
             }
             (false, false) => Ok(None),
         }
@@ -1110,18 +1150,25 @@ impl Storage {
     /// Writes `id` and `vector` into the next slot; its graph record is written separately.
     pub(crate) fn append(&mut self, id: u64, vector: &[f32]) -> Result<u64> {
         if !self.writable {
-            bail!("This index was opened read-only");
+            fail!(
+                ReadOnly,
+                "This index was opened as a reader, which only searches\nhelp: to add, delete, flush or compact, open it as a writer; an index has one writer at a time"
+            );
         }
         let g = self.geometry;
         if vector.len() != g.dims {
             bail!("Vector dimension mismatch: expected {}, got {}", g.dims, vector.len());
         }
         if g.precision == Precision::Half {
-            half::check(vector)?;
+            half::check(vector, g.dims)?;
         }
         let slot = self.count;
         if slot >= u64::from(EMPTY) {
-            bail!("Index is full: it holds at most {} vectors", EMPTY);
+            fail!(
+                Full,
+                "The index is full: it holds at most {} vectors\nhelp: split the vectors across indexes",
+                EMPTY
+            );
         }
         while g.capacity(self.segments.len() as u64) <= slot {
             let layout = g.segment_layout(g.segment_slots(self.segments.len() as u64));
@@ -1167,7 +1214,10 @@ impl Storage {
         };
         if page == pages {
             if page == MAX_TABLE_PAGES {
-                bail!("Index is full: no room for another table page");
+                fail!(
+                    Full,
+                    "The index is full: no room for another table page\nhelp: compact it to drop deleted vectors, or split the vectors across indexes"
+                );
             }
             let region = self.allocate(8 << log2)?;
             let (pages, offsets) = match table {
@@ -1211,7 +1261,10 @@ impl Storage {
         }
         while self.chunks.len() as u64 <= chunk {
             if self.chunks.len() >= 1 << 24 {
-                bail!("Index is full: no room for another heap chunk");
+                fail!(
+                    Full,
+                    "The index is full: no room for another heap chunk\nhelp: compact it to drop deleted vectors, or split the vectors across indexes"
+                );
             }
             let region = self.push_region(Table::Chunks, self.geometry.chunk_bytes(chunk))?;
             self.chunks.push(region);
@@ -1356,7 +1409,10 @@ impl Storage {
                 Ok(Some(chunk.u32s(start, m)))
             }
             None if !self.writable => Ok(None),
-            _ => bail!("Corrupt graph record: invalid upper-layer reference"),
+            _ => fail!(
+                Corrupt,
+                "Corrupt graph record: invalid upper-layer reference\nhelp: restore the index from a backup, or rebuild it from its vectors"
+            ),
         }
     }
 
@@ -1591,10 +1647,17 @@ impl Storage {
     /// Commits `state`, deleting `deletes` in the same commit (ADR-0008, decision 6).
     pub(crate) fn commit_deleting(&mut self, deletes: &[u64]) -> Result<()> {
         if !self.writable {
-            bail!("This index was opened read-only");
+            fail!(
+                ReadOnly,
+                "This index was opened as a reader, which only searches\nhelp: to add, delete, flush or compact, open it as a writer; an index has one writer at a time"
+            );
         }
         if self.poisoned {
-            bail!("An earlier flush failed, so later ones can't be trusted; reopen the index");
+            fail!(
+                Io,
+                "An earlier flush failed, so what reached the disk is unknown and later flushes \
+                 are refused\nhelp: open the index again; it recovers to its last good flush"
+            );
         }
         let result = self.commit_inner(deletes);
         self.poisoned = result.is_err();
@@ -1783,8 +1846,81 @@ fn read_prefix(file: &File, prefix: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
+/// The error for an index file that couldn't be opened, `for_writing` or not, saying what to do
+/// about it, which depends on why.
+fn open_failed(path: &Path, e: std::io::Error, for_writing: bool) -> anyhow::Error {
+    use std::io::ErrorKind as Os;
+    let at = path.display();
+    let (kind, message) = match e.kind() {
+        Os::NotFound if !for_writing => (
+            ErrorKind::NotFound,
+            format!(
+                "There is no index at {at}\nhelp: a reader opens an index that exists; create it \
+                 by opening it as a writer first, or check the path"
+            ),
+        ),
+        Os::NotFound => (
+            ErrorKind::NotFound,
+            format!(
+                "Can't create an index at {at}: its directory doesn't exist\nhelp: create the \
+                 directory first, or give a path in one that exists"
+            ),
+        ),
+        Os::IsADirectory => (
+            ErrorKind::InvalidArgument,
+            format!(
+                "{at} is a directory, not an index file\nhelp: give the path of a file in it, such \
+                 as {}",
+                path.join("index.chassis").display()
+            ),
+        ),
+        Os::PermissionDenied => (
+            ErrorKind::Io,
+            format!(
+                "No permission to {} {at} ({e})\nhelp: check the file's and its directory's \
+                 permissions, or give a path you can write",
+                if for_writing { "write" } else { "read" }
+            ),
+        ),
+        _ => (
+            ErrorKind::Io,
+            format!(
+                "Can't open {at}: {e}\nhelp: check that its disk is mounted, writable and has \
+                 room, or give another path"
+            ),
+        ),
+    };
+    raised(kind, message)
+}
+
+fn not_an_index(path: &Path) -> anyhow::Error {
+    raised(
+        ErrorKind::NotAnIndex,
+        format!(
+            "{} is not a Chassis index: it doesn't begin with a Chassis header\nhelp: check the \
+             path; to create a new index, give a path where no file exists yet",
+            path.display()
+        ),
+    )
+}
+
+fn dimension_mismatch(path: &Path, held: u32, asked: u32) -> anyhow::Error {
+    raised(
+        ErrorKind::DimensionMismatch,
+        format!(
+            "The index at {} holds vectors of {held} dimensions, not {asked}\nhelp: open it with \
+             {held} dimensions, or create a new index at another path",
+            path.display()
+        ),
+    )
+}
+
 /// Opens (creating if missing) and locks `path`, making sure the lock is on the file now at it.
 fn open_locked(path: &Path) -> Result<File> {
+    // Windows refuses to open a directory with "access denied", which would read as permissions.
+    if path.is_dir() {
+        return Err(open_failed(path, std::io::ErrorKind::IsADirectory.into(), true));
+    }
     for _ in 0..8 {
         let file = OpenOptions::new()
             .read(true)
@@ -1792,10 +1928,18 @@ fn open_locked(path: &Path) -> Result<File> {
             .create(true)
             .truncate(false)
             .open(path)
-            .with_context(|| format!("Failed to open chassis file: {}", path.display()))?;
+            .map_err(|e| open_failed(path, e, true))?;
 
         // CRITICAL: Exclusive file locking prevents concurrent access corruption
-        lock_writer(&file).context("Chassis file is already open by another process")?;
+        if lock_writer(&file).is_err() {
+            fail!(
+                Locked,
+                "{} is already open as a writer, in this process or another, and an index has \
+                 one writer at a time\nhelp: close the other writer first, or open a reader to \
+                 search while it writes",
+                path.display()
+            );
+        }
         // A migration may have replaced the file between our open and our lock.
         if is_at(&file, path)? {
             return Ok(file);
@@ -1885,8 +2029,10 @@ pub(crate) fn rename_over(temp: &Path, path: &Path) -> Result<()> {
     let flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
     // SAFETY: both paths are NUL-terminated wide strings that outlive the call.
     if unsafe { MoveFileExW(wide(temp).as_ptr(), wide(path).as_ptr(), flags) } == 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("Another process has the index open, so its file can't be replaced");
+        return Err(std::io::Error::last_os_error()).context(
+            "Another process has the index open, so Windows won't let its file be replaced\n\
+                 help: close the readers in other processes, then compact again",
+        );
     }
     Ok(())
 }
