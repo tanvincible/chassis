@@ -533,12 +533,22 @@ fn main() -> anyhow::Result<()> {
     let dir = Path::new(&args[1]);
     let name = &args[2];
     let (dims, mut train) = read(&dir.join(format!("{name}.train.f32")), f32::from_le_bytes)?;
+    let (_, mut test) = read(&dir.join(format!("{name}.test.f32")), f32::from_le_bytes)?;
+    // LAB_DIMS=d keeps each vector's first d components: OpenAI's text-embedding-3 vectors are
+    // trained so that a prefix is an embedding of its own.
+    let dims = match std::env::var("LAB_DIMS").ok().and_then(|d| d.parse::<usize>().ok()) {
+        Some(d) if d < dims => {
+            let cut = |v: &[f32]| v.chunks_exact(dims).flat_map(|r| r[..d].to_vec()).collect::<Vec<f32>>();
+            (train, test) = (cut(&train), cut(&test));
+            d
+        }
+        _ => dims,
+    };
     if std::env::var("LAB_ROUND16").is_ok() && arg(0) != "truth" {
         for value in &mut train {
             *value = half16::decode(half16::encode(*value));
         }
     }
-    let (_, test) = read(&dir.join(format!("{name}.test.f32")), f32::from_le_bytes)?;
     let queries: Vec<&[f32]> = test.chunks_exact(dims).collect();
     match arg(0).as_str() {
         "build" => {
