@@ -37,6 +37,9 @@ each other would mean fewer page faults on a cold file and fewer TLB misses on a
 * **Known**: nothing measured. It can only help where several vectors fit in a page: at 128
   dimensions eight do in 4 KB, and twice that in half precision; a full-precision vector of 1,536
   dimensions is a page and a half on its own.
+* **Known elsewhere**: on HNSW graphs, Gorder and RCM orderings made queries 10 to 40% faster for
+  about a tenth of the build time (Coleman et al., NeurIPS 2022, arXiv 2104.03221); Lucene's
+  reordering cut latency 20% (apache/lucene#13683).
 * **To validate**: reorder an existing index in the experiment branch, then count faults a query
   on a cold file and measure warm search speed, at 128 and 768 dimensions.
 
@@ -114,6 +117,53 @@ waits for memory, and an index of long vectors that fits in cache searches 19% m
 * **Known**: the kernel widens four components at a time with one instruction per four.
 * **To validate**: try widening from wider loads, or SVE where a CPU has it, in the kernel
   benchmark.
+
+## Smaller files without smaller vectors
+
+A vector costs its own bytes plus 160: a 24-byte slot header, an 8-byte head word and 32 level-0
+neighbors of 4 bytes. That is 38% of a 128-dimension half-precision file and 5% of a
+1,536-dimension one. hnswlib keeps about 140 bytes a vector, pgvector about 288.
+
+### Fewer level-0 neighbors
+
+24 instead of 32 saves 32 bytes a vector: 8% of a 128-dimension half-precision file, 1% at 1,536.
+
+* **Known**: on 99,000 OpenAI vectors of 1,536 dimensions at M=16, level-0 lists hold 27.7
+  neighbors of 32 on average, and 22% are full (2026-10-10), so a cap of 24 drops real edges.
+  M=12 already gives 24, with 12 instead of 16 above level 0.
+* **To validate**: running in the lab (`m0.yml`): 24 at M=16 and M=12 against main, in half
+  precision at 128, 384 and 1,536 dimensions: size, build time, and speed at the same recall.
+
+### A narrower slot header
+
+The header is an id, a metadata reference and a deleted epoch, 8 bytes each. Nothing uses the
+metadata reference yet, and an epoch of 4 bytes lasts 4 billion flushes: 12 bytes a vector, 3% of
+a 128-dimension half-precision file.
+
+* **Known**: arithmetic only. It is a format change, worth making only with another one.
+* **To validate**: nothing to measure but the size; decide it when metadata is designed.
+
+### Neighbor ids in three bytes
+
+Up to 16.7 million vectors, three bytes name a neighbor: 32 bytes a vector at 32 neighbors.
+
+* **Known**: readers in other processes read lists while the writer changes them, as 4-byte
+  words that are each written at once. Three bytes are not, so a reader could see half an id.
+* **To validate**: a way to read a list that never sees half a write first (a version per list),
+  then its cost in search speed.
+
+### Compressed neighbor lists in a read-only copy
+
+Lucene stores lists as differences between sorted ids, in as few bytes as each needs: its graph
+of SIFT at M=16 went from 137 to 60 MB with the same latency (apache/lucene#11860). Qdrant 1.13
+cut its graph up to 30%; Meta's lossless id coding takes HNSW links from 32 to about 17 bits
+(arXiv 2501.10479).
+
+* **Known**: every one of them does it only to files that never change afterwards. Chassis changes
+  lists in place while other processes read them, so it fits only a compacted copy that is opened
+  read-only from then on, which Chassis doesn't have. With a reordering (above) the differences,
+  and so the lists, get smaller.
+* **To validate**: whether anyone wants an index that is built once and then only read.
 
 ## Builds of long vectors on x86
 
