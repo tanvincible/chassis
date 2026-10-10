@@ -831,9 +831,13 @@ mod tests {
         check_groups::<f32, Portable>(|v| v.to_vec());
         check_groups::<u16, Portable>(half);
         #[cfg(target_arch = "x86_64")]
-        if has_f16c() {
-            check_groups::<f32, Avx2>(|v| v.to_vec());
-            check_groups::<u16, F16c>(half);
+        {
+            // CI's x86 runners have them; there, skipping this would pass without testing it.
+            assert!(has_f16c() || std::env::var_os("CI").is_none(), "no AVX2 and F16C here");
+            if has_f16c() {
+                check_groups::<f32, Avx2>(|v| v.to_vec());
+                check_groups::<u16, F16c>(half);
+            }
         }
     }
 

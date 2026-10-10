@@ -214,7 +214,11 @@ mod tests {
     fn test_short_vectors_are_not_grouped() {
         assert_eq!(group_width(512), 1);
         assert_eq!(group_width(1023), 1);
-        assert!([4, 8].contains(&group_width(1024)));
+        #[cfg(target_arch = "x86_64")]
+        let zen_5 = matches!(amd(), Some((ZEN_5.., _)));
+        #[cfg(not(target_arch = "x86_64"))]
+        let zen_5 = false;
+        assert_eq!(group_width(1024), if zen_5 { 8 } else { 4 });
         assert_eq!(group_width(1024), group_width(6144));
     }
 
