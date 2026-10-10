@@ -20,9 +20,10 @@ which made searches over vectors of a kilobyte or more another 11 to 60% faster 
 
 **Through Python, with grouped distances**: each engine through its Python package on one thread,
 queries a second for 0.95 recall, Chassis over the other engine (2026-10-10, one run, one machine
-per CPU). Zen 3 at 128 dims in full precision was 0.87 to 0.93 times hnswlib over four runs, where
-the measurements from Rust above start at 1.2; Python's own cost per search explains only a few
-percent of that.
+per CPU). hnswlib, FAISS and USearch were each given all the queries in one call; Chassis, which has
+no such call in Python, one call per query. On the same machines that cost Chassis a fifth to a
+third of its speed from Rust, 15 to 38 µs a query: at 128 dims on Zen 3 it was 0.87 to 0.93 times
+hnswlib through Python, and 1.14 to 1.21 times from Rust.
 
 | Vectors | Over hnswlib | Over FAISS's HNSW |
 | --- | --- | --- |
