@@ -15,7 +15,7 @@ for hit in index.search(query, k=5):
     print(hit.id, hit.distance)
 ```
 
-An index opens in about a millisecond: only its headers are read until a search needs more. In half precision, it searches a million 128-dimension vectors faster than hnswlib at the same recall, on every server CPU it was measured on, x86 and ARM.
+An index opens in about a millisecond: only its headers are read until a search needs more. In half precision, it searches a million 128-dimension vectors faster than hnswlib at the same recall, on every server CPU measured, x86 and ARM.
 
 ## Current Capabilities
 
