@@ -203,10 +203,18 @@ half precision it is level.
 
 ## Results nobody has explained
 
-* **FAISS's HNSW searched long vectors faster on x86**: 1.6 to 1.9 times Chassis's queries a
-  second at 1,536 dimensions in full precision (2026-10-10, every engine through Python). Its
-  distances four at a time were the likely reason; Chassis does the same in PR #42 (ADR-0021),
-  1.25 to 1.42 times as fast there. Whether a gap remains is to be measured once it merges.
+* **FAISS's HNSW still searches long vectors faster on x86, by less**: at 1,536 dimensions in full
+  precision, with grouped distances on main (2026-10-10, `incumbents.yml` RUN 6, every engine
+  through Python), FAISS made 1.44 times Chassis's queries a second for 0.95 recall on Zen 4 (2.03
+  before) and 1.15 on a Xeon 8573C; on Neoverse-N2 the two were within 7% either way. In half
+  precision Chassis was ahead of FAISS's `f32` on all three, 1.02 to 1.41 times for 0.95 recall.
+  What FAISS still does differently is unknown.
+* **Zen 3 at 128 dimensions in full precision, through Python**: 0.87 to 0.93 times hnswlib's
+  queries a second for 0.95 recall in four runs, and 1.03 to 1.14 for 0.99, where the Rust harness
+  measured 1.15 to 1.31 (ADR-0017). FAISS was ahead there too. Python adds about 12 µs a search on
+  an Apple M5 (ctypes pointers and ten result objects), of which a leaner path saves 4: a few
+  percent of a search over a million vectors, so not the whole difference. Half precision was 1.15
+  to 1.24 times hnswlib there.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
