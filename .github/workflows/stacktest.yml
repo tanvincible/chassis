@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 2
+  RUN: 3
   CHASSIS: feat/errors
 
 jobs:
