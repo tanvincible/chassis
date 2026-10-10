@@ -131,6 +131,21 @@ half precision it is level.
   and how much is slower ones; then try building with the vectors on huge pages from the first
   write, which today gave 5%.
 
+## Other engines from a cold start
+
+* **Known**, from 2026-10-10 (every engine through Python on one thread, files verified out of
+  memory first, `warm()` as in PR #40): from opening to the hundredth query, on 99,000 vectors of
+  1,536 dimensions Chassis took 1.3 to 1.5 s in full precision either way, and 0.57 to 0.61 s in
+  half precision with `warm` (0.70 to 0.76 s without); hnswlib 1.37 to 1.41 s, FAISS 1.31 to
+  1.43 s, usearch 1.35 to 1.44 s, LanceDB 1.13 to 1.19 s. On a million SIFT vectors: Chassis
+  1.38 to 1.41 s with `warm` (1.44 to 2.33 s without), 0.74 to 0.77 s in half precision; hnswlib
+  2.01 to 2.17 s, FAISS 1.41 to 1.48 s. Chassis's first result came after 0.2 to 0.5 s, the
+  others' after 1.3 to 2.2 s. One Zen 4 runner was slow for every engine (FAISS 3.3 s), and there
+  `warm` made Chassis slower: 2.8 s to 3.2 s in full precision, and its first result 0.5 s to
+  1.2 s.
+* **To validate**: a rule for when `warm` should hold back on a slow disk, for instance reading in
+  only while searches aren't waiting on it.
+
 ## Prefetch depth in half precision
 
 * **Known**, from sweeps on 2026-10-10 (half precision, 1,536 dimensions, 20,000 and 99,000
@@ -160,8 +175,6 @@ half precision it is level.
 
 ## Not yet measured at all
 
-* Other engines from a cold start: the first comparison's cold column for Chassis and usearch's
-  view was taken while the measuring process still mapped the file, which kept it in memory.
 * Anything past a million vectors, or a file past about a gigabyte.
 * A consumer x86 laptop or desktop. Every x86 figure is from a server CPU.
 * Apple silicon out of Low Power Mode, and more than one machine of it.
