@@ -97,11 +97,29 @@ precision converts each component there too.
 
 Half precision halved the file with the same recall (ADR-0018). Eight bits would halve it again.
 
-* **Known**: nothing measured here. It changes results by more than rounding does, so it would
-  need the full vectors or a second pass to rank the final candidates, and it is another file
-  format.
-* **To validate**: quantize real embeddings in the experiment branch, as was done for half
-  precision before it was built, and measure recall with and without re-ranking.
+* **Known** (lab `quant.yml`, 2026-10-11, seven text configurations from four models; plan,
+  results and skeptic pass in `bench/lab/quant-plan.md` on `lab/x86`): with ranges from the first
+  1,000 vectors, or none, no int8 scheme was within 0.01 recall@10 of half precision everywhere;
+  re-ranking 20 candidates by half precision brought every one back, but that keeps both copies.
+  The losses are near-ties, and they come from two things with fixes this run did not include:
+  ranges from the first vectors clip later ones, which then look nearer than they are, and
+  ada-002 has a constant offset in two dimensions that sets each vector's range. A range widened
+  by a quarter passed on the one configuration it was tried on, after the results.
+* **To validate**: a planned run of per-dimension ranges from the first 1,000 with a margin, and
+  of centering, on all seven configurations, with a calibration set from one topic too. Then the
+  file format and the kernel, which nothing here measured.
+
+### One bit a component, re-ranked
+
+Keep one bit a component (RaBitQ) to search with and the half-precision vectors to rank the
+final candidates: a sixteenth of half precision in what a search reads most.
+
+* **Known** (same run, stage 1, no graph): 0.998 recall@10 at 1,536 dimensions with 40
+  candidates re-ranked, and 0.981 to 0.991 at 384 with 100. The sign alone fails on vectors
+  that aren't centered (SIFT: 0.0001); RaBitQ centers and rotates first.
+* **To validate**: a graph searched by these distances, which was not measured, and whether the
+  re-ranking reads, one random page each, cost more than the smaller index saves. A second
+  distance in Chassis, and the file gets larger, not smaller.
 
 ### Change an index's precision when compacting
 
