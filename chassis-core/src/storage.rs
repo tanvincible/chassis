@@ -2042,14 +2042,17 @@ mod tests {
             assert!(ranges.contains(&(start, per_slot * 40)));
         }
 
-        // Reading it in changes nothing.
+        // Reading it in changes nothing. Where there is a way to ask (not on Windows yet), asking
+        // again once that is done starts another.
         storage.warm();
-        storage.warming.as_mut().unwrap().thread.take().unwrap().join().unwrap();
+        if cfg!(unix) {
+            storage.warming.as_mut().unwrap().thread.take().unwrap().join().unwrap();
+            let done = Arc::clone(&storage.warming.as_ref().unwrap().stop);
+            storage.warm();
+            assert!(!Arc::ptr_eq(&storage.warming.as_ref().unwrap().stop, &done));
+        }
         assert_eq!(storage.get_vector(87).unwrap(), vec![87.0; 8]);
-        // Asked again once that is done, it starts another; while one is under way, none.
-        let done = Arc::clone(&storage.warming.as_ref().unwrap().stop);
-        storage.warm();
-        assert!(!Arc::ptr_eq(&storage.warming.as_ref().unwrap().stop, &done));
+        // While one is under way, asking again starts none.
         let (busy, _) = stand_in();
         let stop = Arc::clone(&busy.stop);
         storage.warming = Some(busy);
