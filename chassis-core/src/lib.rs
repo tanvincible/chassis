@@ -66,6 +66,11 @@ pub use distance::{DistanceMetric, cosine_distance, euclidean_distance};
 pub use error::{Error, ErrorKind, Result};
 pub use half::Precision;
 pub use header::{MAGIC, VERSION};
+
+/// The README's example, compiled with the doctests so that it stays true.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
 pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
 pub use storage::Storage;
 
