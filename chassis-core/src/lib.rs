@@ -102,7 +102,7 @@ pub struct IndexOptions {
     /// Read the whole index into memory on another thread from the moment it is opened
     /// (ADR-0019), so that searches stop waiting for the disk one page at a time. For an index
     /// that fits in memory; one much larger would push everything else out. Off by default. It
-    /// does nothing on Windows yet.
+    /// takes Linux 5.14 or macOS: an older Linux reads only some of the index, and Windows none.
     pub warm: bool,
 }
 
@@ -660,8 +660,10 @@ impl VectorIndex {
         self.graph.storage.use_huge_pages();
     }
 
-    /// Starts reading what the index holds now into memory on another thread, as opening with
-    /// `IndexOptions::warm` does, and returns at once. Searches go on meanwhile.
+    /// Reads what the index holds into memory on another thread, as opening with
+    /// `IndexOptions::warm` does, without waiting for it: searches go on meanwhile. While that is
+    /// under way, asking again does nothing. The option is on from here on, so a file opened
+    /// again, as a reader does after a compaction, is read in too.
     pub fn warm(&mut self) {
         self.options.warm = true;
         self.graph.storage.warm();
@@ -898,8 +900,10 @@ impl IndexReader {
         self.graph.storage.use_huge_pages();
     }
 
-    /// Starts reading what the index holds now into memory on another thread, as opening with
-    /// `IndexOptions::warm` does, and returns at once. Searches go on meanwhile.
+    /// Reads what the index holds into memory on another thread, as opening with
+    /// `IndexOptions::warm` does, without waiting for it: searches go on meanwhile. While that is
+    /// under way, asking again does nothing. The option is on from here on, so a file opened
+    /// again, as a reader does after a compaction, is read in too.
     pub fn warm(&mut self) {
         self.options.warm = true;
         self.graph.storage.warm();
@@ -931,6 +935,18 @@ mod tests {
                 (x >> 40) as f32 / (1u64 << 24) as f32
             })
             .collect()
+    }
+
+    #[test]
+    fn test_asking_to_warm_turns_the_option_on_for_a_reopen() {
+        let file = NamedTempFile::new().unwrap();
+        let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+        index.add(&random_vector(0)).unwrap();
+        index.flush().unwrap();
+        let mut reader = IndexReader::open(file.path(), 16, IndexOptions::default()).unwrap();
+        index.warm();
+        reader.warm();
+        assert!(index.options.warm && reader.options.warm);
     }
 
     /// 2,500 vectors: sampled every second slot, so a filter on odd slots meets an unjittered

@@ -1149,10 +1149,13 @@ pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int
 
 /// Start reading the whole index into memory on another thread
 ///
-/// Returns at once; searches go on meanwhile and stop waiting for the disk one page at a time as
-/// the index arrives. For an index that fits in memory: one much larger would push everything
-/// else out. What is read is what the index holds when this is called. It does nothing on Windows
-/// yet. Call it on a writer's handle or a reader's, right after opening or later.
+/// Doesn't wait for the reading: searches go on meanwhile and stop waiting for the disk one page
+/// at a time as the index arrives. For an index that fits in memory: one much larger would push
+/// everything else out. What is read is what the index holds when this is called; while that is
+/// under way, calling again does nothing. A reader that opens the file again after a compaction
+/// reads the new one in too. It takes Linux 5.14 or macOS: an older Linux reads only some of the
+/// index, and Windows none. Call it on a writer's handle or a reader's, right after opening or
+/// later.
 ///
 /// # Arguments
 ///
@@ -1160,7 +1163,7 @@ pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int
 ///
 /// # Returns
 ///
-/// - 0 on success
+/// - 0 once asked, whether or not this system can do it
 /// - -1 on failure (check `chassis_last_error_message()`)
 ///
 /// # Safety

@@ -27,6 +27,7 @@ index = VectorIndex("tuned.chassis", dimensions=128, options=options)
 | **`ef_search`** | Size of the dynamic candidate list during search. | 50 | Higher = Slower search, better recall. |
 | **`precision`** | `"full"` keeps 32-bit floats, `"half"` 16-bit floats. Fixed when the index is created. | `"full"` | `"half"` halves the vectors' size in the file and in memory, and on an index too large for the CPU's caches searches are a tenth to two thirds faster on most machines measured. Components are rounded to about three decimal digits; recall on the embeddings measured was the same. A component of 65,520 or more in magnitude is refused, and older releases can't open the file. |
 | **`huge_pages`** | Ask Linux to keep the vectors on 2 MB pages. | `False` | On an index too large for the CPU's caches, up to a quarter faster search. Does nothing off Linux, or where the kernel and filesystem don't keep files on huge pages (ext4 on Linux 6.17 does). An index much larger than memory reads 2 MB per miss. |
+| **`warm`** | Read the index into memory on another thread from the moment it is opened; `warm()` asks for it later. | `False` | While the file isn't in memory yet, as after a reboot, searches stop waiting for the disk one page at a time. ⟪PYNUMBERS⟫ For an index that fits in memory. Linux 5.14 or later, or macOS; an older Linux reads in only some of the index, and Windows none. |
 
 ## Batch Insertion Strategy
 

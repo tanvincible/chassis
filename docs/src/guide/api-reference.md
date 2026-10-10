@@ -191,6 +191,9 @@ pub struct IndexOptions {
 
     /// Ask the operating system to keep the vectors on huge pages. Default: false
     pub huge_pages: bool,
+
+    /// Read the index into memory on another thread from the moment it is opened. Default: false
+    pub warm: bool,
 }
 ```
 
@@ -218,6 +221,16 @@ filesystem keep files on huge pages (ext4 on Linux 6.17 does), and does nothing 
 and its readers each ask for themselves. It is off by default because a page not yet in memory is
 then read 2 MB at a time, which an index much larger than memory pays for on every miss.
 `VectorIndex::use_huge_pages` and `IndexReader::use_huge_pages` turn it on after opening.
+
+`warm` is for an index whose file is not in memory yet, as after a reboot. Until it is, each page
+a search touches is read from the disk, one read at a time. With `warm`, another thread reads in
+what the index holds, at the disk's sequential speed, while searches go on
+([ADR-0019](../adr/019-warm.md)). ⟪NUMBERS⟫ It reads only what has been written, and changes
+nothing in the file. It is off by default because an index much larger than memory would push
+everything else out, itself included. It takes Linux 5.14 or later, or macOS; an older Linux reads
+in only some of the index, and Windows none. `VectorIndex::warm` and `IndexReader::warm` ask for
+it after opening and return at once; from then on the option is on, so a reader that opens the
+file again after a compaction reads the new one in too.
 
 **Tuning Guide**:
 

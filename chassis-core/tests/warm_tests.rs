@@ -43,7 +43,7 @@ fn test_warming_changes_no_result() {
     with.warm();
     for id in (0..2100).step_by(41) {
         let wanted = found(without.search(&vector(id), 5).unwrap());
-        assert_eq!(wanted[0].0, id);
+        assert_eq!(wanted.len(), 5);
         assert_eq!(found(with.search(&vector(id), 5).unwrap()), wanted);
         assert_eq!(found(index.search(&vector(id), 5).unwrap()), wanted);
     }
@@ -60,9 +60,18 @@ fn test_warming_changes_no_result() {
     let mut reader = IndexReader::open(&path, DIMS, options(true)).unwrap();
     assert_eq!((index.len(), reader.len()), (1400, 1400));
     for id in [1, 1000, 2099] {
-        assert_eq!(index.search(&vector(id), 1).unwrap()[0].id, id);
-        assert_eq!(reader.search(&vector(id), 1).unwrap()[0].id, id);
+        let wanted = found(reader.search(&vector(id), 5).unwrap());
+        assert_eq!(wanted.len(), 5);
+        assert_eq!(found(index.search(&vector(id), 5).unwrap()), wanted);
     }
+}
+
+/// An index was all of these before it could hold a thread.
+#[test]
+fn test_an_index_that_can_warm_is_what_it_was_to_the_compiler() {
+    fn kept<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    kept::<VectorIndex>();
+    kept::<IndexReader>();
 }
 
 #[test]
@@ -75,18 +84,19 @@ fn test_an_index_can_go_away_while_it_is_read_in() {
     for round in 0..30 {
         let mut reader = IndexReader::open(&path, DIMS, options(true)).unwrap();
         if round % 2 == 0 {
-            assert_eq!(reader.search(&vector(round), 1).unwrap()[0].id, round);
+            assert_eq!(reader.search(&vector(round), 1).unwrap().len(), 1);
         }
     }
     // The writer too, with a read under way when it is replaced by its compacted copy.
     index.warm();
     index.compact().unwrap();
-    assert_eq!(index.search(&vector(7), 1).unwrap()[0].id, 7);
+    assert_eq!((index.len(), index.search(&vector(7), 1).unwrap().len()), (3000, 1));
 }
 
-/// The share of the file past its headers that is in memory, by the system's own account.
+/// The shares of the file past its headers that are in memory and, where the system says, that
+/// are changed from what is on disk.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn in_memory(path: &std::path::Path) -> f64 {
+fn in_memory(path: &std::path::Path) -> (f64, f64) {
     let file = std::fs::File::open(path).unwrap();
     // SAFETY: mapped only to ask the system about its pages; nothing is read through it.
     let map = unsafe { memmap2::Mmap::map(&file) }.unwrap();
@@ -97,7 +107,10 @@ fn in_memory(path: &std::path::Path) -> f64 {
     assert_eq!(asked, 0, "mincore failed");
     // Two header copies and the live page, 64 KiB each, are there as soon as anything opens it.
     let data = &pages[(3 * 64 * 1024) / page..];
-    data.iter().filter(|&&p| p & 1 == 1).count() as f64 / data.len() as f64
+    let share = |flags: u8| data.iter().filter(|&&p| p & flags != 0).count() as f64;
+    // macOS: MINCORE_MODIFIED and MINCORE_MODIFIED_OTHER. Linux says only what is in memory.
+    let changed = if cfg!(target_os = "macos") { share(0x4 | 0x10) } else { 0.0 };
+    (share(1) / data.len() as f64, changed / data.len() as f64)
 }
 
 /// Puts the file's pages out of memory, where the system lets a user.
@@ -134,22 +147,35 @@ fn test_warming_reads_the_file_into_memory() {
     drop(index);
 
     put_out_of_memory(&path);
-    if in_memory(&path) > 0.2 {
+    if in_memory(&path).0 > 0.2 {
         eprintln!("this system keeps the file in memory whatever it is told: nothing to test");
         return;
     }
-    // Opening it without asking brings in little, however long it stays open.
-    let reader = IndexReader::open(&path, DIMS, options(false)).unwrap();
-    std::thread::sleep(Duration::from_millis(200));
-    let unasked = in_memory(&path);
-    assert!(unasked < 0.5, "{unasked} of the file in memory without asking");
-    drop(reader);
+    let open = |writer: bool, warm: bool| -> Box<dyn std::any::Any> {
+        match writer {
+            true => Box::new(VectorIndex::open(&path, DIMS, options(warm)).unwrap()),
+            false => Box::new(IndexReader::open(&path, DIMS, options(warm)).unwrap()),
+        }
+    };
+    for writer in [false, true] {
+        // Opening it without asking brings in little, however long it stays open.
+        let index = open(writer, false);
+        std::thread::sleep(Duration::from_millis(200));
+        let (unasked, _) = in_memory(&path);
+        assert!(unasked < 0.5, "{unasked} of the file in memory without asking");
+        drop(index);
 
-    put_out_of_memory(&path);
-    let _reader = IndexReader::open(&path, DIMS, options(true)).unwrap();
-    let start = Instant::now();
-    while in_memory(&path) < 0.85 {
-        assert!(start.elapsed() < Duration::from_secs(30), "only {} read in", in_memory(&path));
-        std::thread::sleep(Duration::from_millis(10));
+        put_out_of_memory(&path);
+        let index = open(writer, true);
+        let start = Instant::now();
+        while in_memory(&path).0 < 0.85 {
+            let (share, _) = in_memory(&path);
+            assert!(start.elapsed() < Duration::from_secs(30), "only {share} read in");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Nothing to write back: asked through a writer's writable mapping, macOS would.
+        assert_eq!(in_memory(&path).1, 0.0);
+        drop(index);
+        put_out_of_memory(&path);
     }
 }

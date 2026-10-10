@@ -50,8 +50,9 @@ class IndexOptions:
             for on every miss. Default: False
         warm: Read the whole index into memory on another thread from the
             moment it is opened, so that searches stop waiting for the disk
-            one page at a time. For an index that fits in memory. It does
-            nothing on Windows yet. Default: False
+            one page at a time. For an index that fits in memory. It takes
+            Linux 5.14 or macOS: an older Linux reads only some of the
+            index, and Windows none. Default: False
     """
 
     max_connections: int = 16
@@ -519,7 +520,8 @@ class VectorIndex:
     def warm(self) -> None:
         """Start reading the whole index into memory on another thread.
 
-        Returns at once; searches go on meanwhile. Opening with
+        Doesn't wait for the reading: searches go on meanwhile. While it
+        is under way, calling again does nothing. Opening with
         ``IndexOptions(warm=True)`` does the same from the start.
 
         Raises:
