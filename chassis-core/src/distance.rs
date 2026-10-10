@@ -85,6 +85,21 @@ pub(crate) trait Kernel<E = f32> {
     ///
     /// The slices must be the same length, and the CPU must have what the kernel uses.
     unsafe fn squared(a: &[f32], b: &[E]) -> f32;
+
+    /// `squared` to `W` stored vectors at once, each with `EACH` partial sums (1, 2 or 4; with 4,
+    /// the same sums in the same order as `squared`).
+    ///
+    /// # Safety
+    ///
+    /// As `squared`, for each of them.
+    #[inline(always)]
+    unsafe fn squared_group<const W: usize, const EACH: usize>(
+        a: &[f32],
+        b: [&[E]; W],
+    ) -> [f32; W] {
+        // SAFETY: the caller's.
+        std::array::from_fn(|j| unsafe { Self::squared(a, b[j]) })
+    }
 }
 
 /// A component of a stored vector: an `f32`, or a 16-bit float held in a `u16` (ADR-0018).
@@ -158,6 +173,16 @@ impl Kernel for Portable {
         #[allow(unreachable_code)]
         squared_scalar(a, b)
     }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    unsafe fn squared_group<const W: usize, const EACH: usize>(
+        a: &[f32],
+        b: [&[f32]; W],
+    ) -> [f32; W] {
+        // SAFETY: as above.
+        unsafe { squared_group_neon::<W, EACH>(a, b) }
+    }
 }
 
 impl Kernel<u16> for Portable {
@@ -171,6 +196,16 @@ impl Kernel<u16> for Portable {
         #[allow(unreachable_code)]
         squared_half_scalar(a, b)
     }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    unsafe fn squared_group<const W: usize, const EACH: usize>(
+        a: &[f32],
+        b: [&[u16]; W],
+    ) -> [f32; W] {
+        // SAFETY: as above.
+        unsafe { squared_half_group_neon::<W, EACH>(a, b) }
+    }
 }
 
 /// AVX2 and FMA. A loop that uses it has to be compiled for them too, or the call can't inline.
@@ -183,6 +218,15 @@ impl Kernel for Avx2 {
     unsafe fn squared(a: &[f32], b: &[f32]) -> f32 {
         // SAFETY: the caller vouches for the CPU and the lengths.
         unsafe { squared_avx2(a, b) }
+    }
+
+    #[inline(always)]
+    unsafe fn squared_group<const W: usize, const EACH: usize>(
+        a: &[f32],
+        b: [&[f32]; W],
+    ) -> [f32; W] {
+        // SAFETY: as above.
+        unsafe { squared_group_avx2::<W, EACH>(a, b) }
     }
 }
 
@@ -203,6 +247,15 @@ impl Kernel<u16> for F16c {
     unsafe fn squared(a: &[f32], b: &[u16]) -> f32 {
         // SAFETY: the caller vouches for the CPU and the lengths.
         unsafe { squared_half_avx2(a, b) }
+    }
+
+    #[inline(always)]
+    unsafe fn squared_group<const W: usize, const EACH: usize>(
+        a: &[f32],
+        b: [&[u16]; W],
+    ) -> [f32; W] {
+        // SAFETY: as above.
+        unsafe { squared_half_group_avx2::<W, EACH>(a, b) }
     }
 }
 
@@ -569,6 +622,191 @@ unsafe fn squared_half_neon(a: &[f32], b: &[u16]) -> f32 {
     total
 }
 
+/// Squared distances from `len` query components to `W` stored vectors, given eight at a time
+/// by `query(i)` and `stored(j, i)`: each eight of the query is loaded once for all of them, and
+/// each vector's sums are its own, so the CPU works on all of them together. One vector's sums
+/// are `squared_avx2`'s, in its order. Returns them and how many components they cover.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2", enable = "fma")]
+fn group_sums_avx2<const W: usize, const EACH: usize>(
+    len: usize,
+    query: impl Fn(usize) -> std::arch::x86_64::__m256,
+    stored: impl Fn(usize, usize) -> std::arch::x86_64::__m256,
+) -> ([f32; W], usize) {
+    use std::arch::x86_64::*;
+
+    let each = EACH;
+    let mut sums = [[_mm256_setzero_ps(); 4]; W];
+    let mut i = 0;
+    while i + 8 * each <= len {
+        for k in 0..each {
+            let q = query(i + 8 * k);
+            for (j, sum) in sums.iter_mut().enumerate() {
+                let diff = _mm256_sub_ps(q, stored(j, i + 8 * k));
+                sum[k] = _mm256_fmadd_ps(diff, diff, sum[k]);
+            }
+        }
+        i += 8 * each;
+    }
+    while i + 8 <= len {
+        let q = query(i);
+        for (j, sum) in sums.iter_mut().enumerate() {
+            let diff = _mm256_sub_ps(q, stored(j, i));
+            sum[0] = _mm256_fmadd_ps(diff, diff, sum[0]);
+        }
+        i += 8;
+    }
+    let totals = std::array::from_fn(|j| {
+        let s = sums[j];
+        let combined = match each {
+            1 => s[0],
+            2 => _mm256_add_ps(s[0], s[1]),
+            _ => _mm256_add_ps(_mm256_add_ps(s[0], s[1]), _mm256_add_ps(s[2], s[3])),
+        };
+        let sum128 =
+            _mm_add_ps(_mm256_castps256_ps128(combined), _mm256_extractf128_ps(combined, 1));
+        let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+        _mm_cvtss_f32(_mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x55)))
+    });
+    (totals, i)
+}
+
+/// `squared_avx2` to `W` vectors at once.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn squared_group_avx2<const W: usize, const EACH: usize>(
+    a: &[f32],
+    b: [&[f32]; W],
+) -> [f32; W] {
+    use std::arch::x86_64::*;
+    // SAFETY (both): called within the slices, which all have `a`'s length.
+    let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    let stored = |j: usize, i: usize| unsafe { _mm256_loadu_ps(b[j].as_ptr().add(i)) };
+    let (mut totals, done) = group_sums_avx2::<W, EACH>(a.len(), query, stored);
+    for (total, b) in totals.iter_mut().zip(b) {
+        for i in done..a.len() {
+            let diff = a[i] - b[i];
+            *total += diff * diff;
+        }
+    }
+    totals
+}
+
+/// `squared_half_avx2` to `W` vectors at once.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+unsafe fn squared_half_group_avx2<const W: usize, const EACH: usize>(
+    a: &[f32],
+    b: [&[u16]; W],
+) -> [f32; W] {
+    use std::arch::x86_64::*;
+    // SAFETY (both): as in `squared_group_avx2`.
+    let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    let stored = |j: usize, i: usize| unsafe {
+        _mm256_cvtph_ps(_mm_loadu_si128(b[j].as_ptr().add(i).cast()))
+    };
+    let (mut totals, done) = group_sums_avx2::<W, EACH>(a.len(), query, stored);
+    for (total, b) in totals.iter_mut().zip(b) {
+        for i in done..a.len() {
+            let diff = a[i] - crate::half::decode(b[i]);
+            *total += diff * diff;
+        }
+    }
+    totals
+}
+
+/// `group_sums_avx2` four components at a time, for NEON; one vector's sums are `squared_neon`'s.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+fn group_sums_neon<const W: usize, const EACH: usize>(
+    len: usize,
+    query: impl Fn(usize) -> std::arch::aarch64::float32x4_t,
+    stored: impl Fn(usize, usize) -> std::arch::aarch64::float32x4_t,
+) -> ([f32; W], usize) {
+    use std::arch::aarch64::*;
+
+    let each = EACH;
+    let mut sums = [[vdupq_n_f32(0.0); 4]; W];
+    let mut i = 0;
+    while i + 4 * each <= len {
+        for k in 0..each {
+            let q = query(i + 4 * k);
+            for (j, sum) in sums.iter_mut().enumerate() {
+                let diff = vsubq_f32(q, stored(j, i + 4 * k));
+                sum[k] = vfmaq_f32(sum[k], diff, diff);
+            }
+        }
+        i += 4 * each;
+    }
+    while i + 4 <= len {
+        let q = query(i);
+        for (j, sum) in sums.iter_mut().enumerate() {
+            let diff = vsubq_f32(q, stored(j, i));
+            sum[0] = vfmaq_f32(sum[0], diff, diff);
+        }
+        i += 4;
+    }
+    let totals = std::array::from_fn(|j| {
+        let s = sums[j];
+        let combined = match each {
+            1 => s[0],
+            2 => vaddq_f32(s[0], s[1]),
+            _ => vaddq_f32(vaddq_f32(s[0], s[1]), vaddq_f32(s[2], s[3])),
+        };
+        let pair = vpadd_f32(vget_low_f32(combined), vget_high_f32(combined));
+        vget_lane_f32(vpadd_f32(pair, pair), 0)
+    });
+    (totals, i)
+}
+
+/// `squared_neon` to `W` vectors at once.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn squared_group_neon<const W: usize, const EACH: usize>(
+    a: &[f32],
+    b: [&[f32]; W],
+) -> [f32; W] {
+    use std::arch::aarch64::*;
+    // SAFETY (both): called within the slices, which all have `a`'s length.
+    let query = |i: usize| unsafe { vld1q_f32(a.as_ptr().add(i)) };
+    let stored = |j: usize, i: usize| unsafe { vld1q_f32(b[j].as_ptr().add(i)) };
+    let (mut totals, done) = group_sums_neon::<W, EACH>(a.len(), query, stored);
+    for (total, b) in totals.iter_mut().zip(b) {
+        for i in done..a.len() {
+            let diff = a[i] - b[i];
+            *total += diff * diff;
+        }
+    }
+    totals
+}
+
+/// `squared_half_neon` to `W` vectors at once.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn squared_half_group_neon<const W: usize, const EACH: usize>(
+    a: &[f32],
+    b: [&[u16]; W],
+) -> [f32; W] {
+    use std::arch::aarch64::*;
+    // SAFETY (both): as in `squared_group_neon`.
+    let query = |i: usize| unsafe { vld1q_f32(a.as_ptr().add(i)) };
+    let stored = |j: usize, i: usize| unsafe { crate::half::widen4(b[j].as_ptr().add(i)) };
+    let (mut totals, done) = group_sums_neon::<W, EACH>(a.len(), query, stored);
+    for (total, b) in totals.iter_mut().zip(b) {
+        for i in done..a.len() {
+            let diff = a[i] - crate::half::decode(b[i]);
+            *total += diff * diff;
+        }
+    }
+    totals
+}
+
 /// Compute cosine distance (1 - cosine similarity).
 ///
 /// Returns `1.0` when either vector has zero norm because cosine similarity is
@@ -592,6 +830,49 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every length up to past a few main-loop steps, with group sizes 1, 2, 4 and 8: with four
+    /// sums each, a group matches the single kernel bit for bit; with one, within rounding.
+    fn check_groups<E: Element, K: Kernel<E>>(stored: impl Fn(&[f32]) -> Vec<E>) {
+        fn compare<E: Element, K: Kernel<E>, const W: usize>(query: &[f32], vectors: &[Vec<E>]) {
+            let group: [&[E]; W] = std::array::from_fn(|j| vectors[j].as_slice());
+            let together = unsafe { K::squared_group::<W, 1>(query, group) };
+            let same = unsafe { K::squared_group::<W, 4>(query, group) };
+            for (j, &got) in together.iter().enumerate() {
+                let alone = unsafe { K::squared(query, &vectors[j]) };
+                assert_eq!(same[j].to_bits(), alone.to_bits(), "{} components", query.len());
+                assert!((got - alone).abs() <= 1e-5 * alone.max(1.0), "{got} {alone}");
+            }
+        }
+        for len in 0..80 {
+            let query: Vec<f32> = (0..len).map(|i| (i as f32 * 0.37).sin()).collect();
+            let vectors: Vec<Vec<E>> = (0..8)
+                .map(|j| {
+                    stored(
+                        &(0..len)
+                            .map(|i| ((i * 7 + j * 13) as f32 * 0.11).cos())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+            compare::<E, K, 1>(&query, &vectors);
+            compare::<E, K, 2>(&query, &vectors);
+            compare::<E, K, 4>(&query, &vectors);
+            compare::<E, K, 8>(&query, &vectors);
+        }
+    }
+
+    #[test]
+    fn test_distances_computed_together_are_the_same_as_alone() {
+        let half = |v: &[f32]| v.iter().map(|&x| crate::half::encode(x)).collect::<Vec<u16>>();
+        check_groups::<f32, Portable>(|v| v.to_vec());
+        check_groups::<u16, Portable>(half);
+        #[cfg(target_arch = "x86_64")]
+        if has_f16c() {
+            check_groups::<f32, Avx2>(|v| v.to_vec());
+            check_groups::<u16, F16c>(half);
+        }
+    }
 
     #[test]
     #[should_panic(expected = "differ in length")]
