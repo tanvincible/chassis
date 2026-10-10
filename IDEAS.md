@@ -53,17 +53,15 @@ there, and huge pages and `warm()` are both wrong for it.
 
 ## Doing more at once
 
-### `search_batch`: many queries across every core
+### `search_batch` across every core
 
-A caller with a thousand queries has to start its own threads. Searches are independent and
+`search_batch` (PR #55) takes many queries in one call, on one thread. Searches are independent and
 read-only, and `add_batch` already has the thread pattern.
 
-* **Known**: from Python, one call per query costs 15 to 38 µs on GitHub's servers: Chassis through
-  Python made 0.68 to 0.79 times its queries a second from Rust, on the same index and machine (128
-  dims × 1M, 0.95 recall, three comparison runs on 2026-10-10). One call for many queries, even on
-  one thread, would take that away; hnswlib, FAISS and USearch all have one. Across cores,
-  near-linear scaling is the expectation, unmeasured. It helps bulk jobs (deduplication, evaluation,
-  re-ranking many chunks), not one interactive query.
+* **Known**: in one call on one thread, Python reaches Rust's speed: 0.95 to 1.05 times it, where
+  one call per query was 0.68 to 0.79 (2026-10-10). Across cores, near-linear scaling is the
+  expectation, unmeasured. It helps bulk jobs (deduplication, evaluation, re-ranking many chunks),
+  not one interactive query.
 * **To validate**: queries a second against cores, in cache and out of it, where memory
   bandwidth may be the limit before the cores are.
 
@@ -207,11 +205,10 @@ half precision it is level.
 
 ## Results nobody has explained
 
-* **FAISS's HNSW still searches long vectors faster on x86, by less**: at 1,536 dimensions in full
-  precision, with grouped distances on main (2026-10-10, `incumbents.yml` RUN 6, every engine
-  through Python), FAISS made 1.44 times Chassis's queries a second for 0.95 recall on Zen 4 (2.03
-  before) and 1.15 on a Xeon 8573C; on Neoverse-N2 the two were within 7% either way. In half
-  precision Chassis was ahead of FAISS's `f32` on all three, 1.02 to 1.41 times for 0.95 recall.
+* **FAISS's HNSW still searches long vectors faster on x86**: at 1,536 dimensions in full precision,
+  every engine given its queries in one call (2026-10-10, `incumbents.yml` RUN 7), FAISS made 1.28
+  times Chassis's queries a second for 0.95 recall on Zen 4 and 1.05 on a Xeon 6973P-C; Chassis was
+  1.09 times FAISS on Neoverse-N2. In half precision Chassis led on all three, 1.09 to 1.40 times.
   What FAISS still does differently is unknown.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
