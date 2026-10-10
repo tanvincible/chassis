@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 4
+  RUN: 5
   CHASSIS: lab/exp-warm
 
 jobs:
