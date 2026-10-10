@@ -19,8 +19,8 @@ from pathlib import Path
 
 EFS = [32, 64, 128]
 ROUNDS = 5
-# Within this of 1.0, a ratio is noise between two runs on one machine.
-NOISE = 0.03
+# Within this of 1.0, a ratio is noise: the same code against itself gave 0.96 to 1.01.
+NOISE = 0.05
 # Below this, the check fails.
 FAIL = 0.90
 # A recall this much lower at the same ef fails it too.
@@ -129,7 +129,7 @@ def report(directory: str) -> int:
     elif worse:
         out += ["Slightly slower, possibly noise: " + "; ".join(worse) + ".", ""]
     else:
-        out += ["No slowdown beyond noise (±3%).", ""]
+        out += ["No change beyond noise (±5%).", ""]
 
     keys = [(label, arch) for label in labels for arch in archs if (label, arch) in cell]
     names = ", ".join(f'"{label} {arch}"' for label, arch in keys)
@@ -155,20 +155,21 @@ def report(directory: str) -> int:
         out.append(f"| {label} | " + " | ".join(row) + " |")
     out += [
         "",
-        "Queries a second at the same `ef`, and batch-build time, for each build on the same runner, "
-        f"taking turns ({ROUNDS} rounds of search). Recall is compared at the same `ef`.",
+        "Queries a second at the same `ef`, and batch-build time: main and this pull request on one "
+        f"runner, taking turns over {ROUNDS} rounds; the median of each round's ratio. Recall is "
+        "compared at the same `ef`.",
         "",
         "<details><summary>Per ef</summary>",
         "",
-        "| Case | CPU | ef | main q/s | PR q/s | Ratio | Recall main → PR |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Case | CPU | ef | main q/s | PR / main | Recall, main → PR |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for label, arch in keys:
         r = cell[(label, arch)][2]
         for s in r["search"]:
             out.append(
-                f"| {label}, {arch} | {r['cpu']} | {s['ef']} | {s['base']:.0f} | {s['head']:.0f} | "
-                f"{s['ratio']:.2f} | {s['base_recall']:.3f} → {s['head_recall']:.3f} |"
+                f"| {label}, {arch} | {r['cpu']} | {s['ef']} | {s['base']:.0f} | {s['ratio']:.2f} | "
+                f"{s['base_recall']:.3f} → {s['head_recall']:.3f} |"
             )
     out += ["", "</details>"]
     print("\n".join(out))
