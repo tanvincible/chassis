@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
   {{/if}}
 
   {{!-- Categorized individual commits --}}
+  {{#commit-list commits heading="### Breaking" message="^[a-z]+!: "}}
+    - {{subject}} ([{{shorthash}}]({{href}}))
+  {{/commit-list}}
+
   {{#commit-list commits heading="### Added" message="^feat: "}}
     - {{subject}} ([{{shorthash}}]({{href}}))
   {{/commit-list}}

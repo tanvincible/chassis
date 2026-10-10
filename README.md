@@ -40,7 +40,7 @@ It is not a database server or a distributed system, and it stores vectors and i
 
 ## Status
 
-Early, and moving fast. The last release is v0.6.3; `main` is well ahead of it, in a new file format, and not released yet. See [CHANGELOG.md](CHANGELOG.md).
+Early, and moving fast. The latest release is v0.7.0. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

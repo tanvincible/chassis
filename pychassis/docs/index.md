@@ -13,13 +13,18 @@ It combines the safety and raw speed of Rust with the ease of use of Python. Unl
 
 ## Installation
 
-PyChassis requires Python 3.8+ and a compatible OS (Linux, macOS, Windows).
-
-Chassis is not on PyPI yet. Until it is, install it from a checkout of the repository:
+Chassis needs Python 3.13 or later, on Linux (x86-64 or ARM), macOS on Apple silicon, or Windows
+(x86-64):
 
 ```bash
-cargo build --release -p chassis-ffi
-pip install -e pychassis
+pip install chassisdb
+```
+
+The package is named `chassisdb` and imported as `chassis`. To build it from a checkout of the
+repository instead, which needs Rust:
+
+```bash
+pip install ./pychassis
 ```
 
 ## The "Hello World" of Vector Search

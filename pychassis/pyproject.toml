@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chassisdb"
-version = "0.6.3"
+version = "0.7.0"
 description = "Python bindings for Chassis, an embedded vector index for local semantic search"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -48,7 +48,7 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/tanvincible/chassis"
-Documentation = "https://chassis.readthedocs.io"
+Documentation = "https://tanvincible.github.io/chassis/python/"
 Repository = "https://github.com/tanvincible/chassis"
 Issues = "https://github.com/tanvincible/chassis/issues"
 

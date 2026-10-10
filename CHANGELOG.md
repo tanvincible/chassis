@@ -3,7 +3,50 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.6.3...HEAD) - 6 May 2026
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.7.0...HEAD)
+
+## [v0.7.0](https://github.com/tanvincible/chassis/compare/v0.6.3...v0.7.0) - 10 October 2026
+
+A new file format, with readers in other processes. Opening a file from v0.6.3 or earlier
+for writing converts it, and v0.6.3 can't open the new files. The Python package is
+`chassisdb`, imported as `chassis`.
+
+### Breaking
+
+- feat!: file format v3 and multi-process readers ([7c04de0](https://github.com/tanvincible/chassis/commit/7c04de072871586b72628ff6d4688a88150e0ee9))
+- feat!: cosine distance (#14) ([4dfa6cf](https://github.com/tanvincible/chassis/commit/4dfa6cfa200f7f58a305078324e653a030f532e9))
+- feat!: errors that say what was wrong and what to do (#41) ([6b5cbcc](https://github.com/tanvincible/chassis/commit/6b5cbcc8bbf4c375db0884fb3daff26fa5b01e88))
+
+### Added
+
+- feat: ids, deletes and crash-safe durability ([bdc9e34](https://github.com/tanvincible/chassis/commit/bdc9e34c297433ae4ca4220f1bbdf14d5e680433))
+- feat: filtered search (#15) ([a5f3158](https://github.com/tanvincible/chassis/commit/a5f31588a75539ab48c32c4e0989408fb9956204))
+- feat: parallel batch builds (#17) ([b64d4ad](https://github.com/tanvincible/chassis/commit/b64d4ad3c56c8344910c3fab050b9ec2c159e8e8))
+- feat: compaction (#21) ([759a97d](https://github.com/tanvincible/chassis/commit/759a97dcf9337480217b9e330e6e2d39d3467d4b))
+- feat: keep the vectors on huge pages, on request (#31) ([5f80578](https://github.com/tanvincible/chassis/commit/5f8057872dc071c9d6f9877357247dcb2312552d))
+- feat: keep vectors in half precision, on request (#39) ([7518f52](https://github.com/tanvincible/chassis/commit/7518f526b9f58c089e06ab32f81dc78f4df5faf6))
+- feat: warm(), reading an index into memory in the background (#40) ([a803de0](https://github.com/tanvincible/chassis/commit/a803de0162b28f4f3db44e09a3665750bf1755c1))
+
+### Fixed
+
+- fix: lock one byte on Windows and require Rust 1.88 ([f76a56f](https://github.com/tanvincible/chassis/commit/f76a56fe24359ba1eb6bd51f89b7fd9e60d7ab2d))
+- fix: write committed nodes' lists back when a crash loses adds (#23) ([fe8c340](https://github.com/tanvincible/chassis/commit/fe8c340a29012b2f33e85673b05ee7fe1f92b1a7))
+
+### Infrastructure
+
+- ci: test the minimum Rust version for real (#13) ([5fb2159](https://github.com/tanvincible/chassis/commit/5fb21598216396cdd68ac517da0a4fb59e33ff9f))
+- build(python): name the package chassisdb (#36) ([5210bc0](https://github.com/tanvincible/chassis/commit/5210bc0004d8a2a46a0c5bc0320ee959aaf2f55c))
+- ci: build the C library and Python wheels on every platform (#44) ([48f8190](https://github.com/tanvincible/chassis/commit/48f819018ecaecad5a05fb01edefb2b6b3ffc641))
+- ci: benchmark every pull request against main (#45) ([8b8480f](https://github.com/tanvincible/chassis/commit/8b8480f3a91b41e572fded06812f2070da1f103d))
+- ci: build wheels with the stable toolchain as installed, without rust-toolchain.toml's extras (#47) ([0a18448](https://github.com/tanvincible/chassis/commit/0a18448b7c6c681c69b28ed7dab5ba489714acf6))
+
+### Performance
+
+- perf: prefetch neighbor vectors and reuse the visited filter (#20) ([85a1908](https://github.com/tanvincible/chassis/commit/85a1908fe3e3b2e6d08bd7bb4d16480a49dfd3ab))
+- perf: prefetch into L2, a leaner search loop, and a smaller fill (#25) ([ce759f2](https://github.com/tanvincible/chassis/commit/ce759f2786622b7f249c7882aba99babd1c23667))
+- perf: packed heap entries, squared distances, and a search loop that inlines (#27) ([bdb874d](https://github.com/tanvincible/chassis/commit/bdb874d025545d06b7d995046ee8226f31f08df1))
+- perf: prefetch more of a long vector where the CPU does better with it (#30) ([7f4efbe](https://github.com/tanvincible/chassis/commit/7f4efbe35993cf439814727cd425fe7fce3792d7))
+- perf: compute a search's distances in groups (#42) ([8d8b970](https://github.com/tanvincible/chassis/commit/8d8b9701696ef2e81a6759c93d278f0846015c42))
 
 ## [v0.6.3](https://github.com/tanvincible/chassis/compare/v0.6.2...v0.6.3) - 1 May 2026
 
