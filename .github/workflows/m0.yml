@@ -1,0 +1,136 @@
+name: x86 m0
+
+# Experiment branch only: fewer level-0 neighbors, for smaller files. All in half precision, on one
+# runner in turns: main (M=16, M0=32), lab/exp-m0 (M=16, M0=24) and main with M=12 (M0=24). File
+# size, disk use, build time, and recall and speed over an ef sweep. Edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/m0.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  BRANCH: lab/exp-m0
+jobs:
+  m0:
+    name: m0 (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [dbpedia-openai3-1536, sift-128]
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        shard: [a, b]
+        include:
+          - { name: dbpedia-openai3-1536, configs: "384:99000 1536:99000" }
+          - { name: sift-128, configs: "128:1000000" }
+        exclude:
+          - { runner: ubuntu-24.04-arm, shard: b }
+    env:
+      DATA: bench/ann/data
+      NAME: ${{ matrix.name }}
+      LAB_HALF: 1
+      LAB_PASSES: 3
+      LAB_EFS: "16 24 32 48 64 96 128 192 256 384 512"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+          df -h / | tail -1
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ matrix.name }}-v1
+
+      - name: Prepare the data
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            if [ "$NAME" = gist-960 ]; then
+              python - "$DATA" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "bench/ann")
+          import h5py, prepare
+          data = Path(sys.argv[1]); data.mkdir(parents=True, exist_ok=True)
+          path = prepare.fetch("http://ann-benchmarks.com/gist-960-euclidean.hdf5", data / "gist.hdf5")
+          with h5py.File(path) as f:
+              prepare.write(data / "gist-960.train.f32", f["train"][:200000], "<f4")
+              prepare.write(data / "gist-960.test.f32", f["test"][:1000], "<f4")
+          PY
+            else
+              python bench/ann/prepare.py "$DATA"
+            fi
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+      - name: Build Chassis, main and the branch
+        run: |
+          for ref in main "$BRANCH"; do
+            git fetch -q origin "$ref"
+            rm -rf "$RUNNER_TEMP/src"
+            git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+            cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+            (cd "$RUNNER_TEMP/src" && git log --oneline -1 && RUSTFLAGS="--cfg lab_half" cargo build -q --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t")
+            out=main; [ "$ref" = main ] || out=branch
+            cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab-$out"
+            git worktree remove --force "$RUNNER_TEMP/src"
+          done
+
+      # Variants: m32 is main as it ships, m24 the branch, m12 main with M=12.
+      - name: Fewer level-0 neighbors against main
+        run: |
+          run() { case $1 in m32) "$RUNNER_TEMP/lab-main" "${@:2}";; m24) "$RUNNER_TEMP/lab-branch" "${@:2}";; m12) LAB_M=12 "$RUNNER_TEMP/lab-main" "${@:2}";; esac; }
+          for config in ${{ matrix.configs }}; do
+            d=${config%%:*}; n=${config##*:}
+            export LAB_DIMS=$d
+            truth="$RUNNER_TEMP/gt-$d-$n.u32"
+            "$RUNNER_TEMP/lab-main" truth "$DATA" "$NAME" "$n" "$truth"
+            for v in m32 m24 m12; do
+              file="$RUNNER_TEMP/$v.chassis"
+              rm -f "$file"
+              run $v build "$DATA" "$NAME" "$file" "$n" | sed "s/\tbase\t/\tbuild\/$v\/$d\t/" | tee -a results/lab.tsv
+              printf 'chassis\tsize/%s/%s\t%s\tbytes\t0\t0\t%s\t%s\n' $v $d $n "$(stat -c %s "$file")" "$(du -B1 "$file" | cut -f1)" | tee -a results/lab.tsv
+            done
+            export LAB_READER=1
+            for round in 1 2 3; do
+              for v in m32 m24 m12; do
+                run $v search "$DATA" "$NAME" "$RUNNER_TEMP/$v.chassis" "$truth" "$v/$d" 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+              done
+            done
+            unset LAB_READER
+            rm -f "$RUNNER_TEMP"/m*.chassis
+          done
+          { echo '```'; cat results/lab.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m0-${{ matrix.name }}-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/

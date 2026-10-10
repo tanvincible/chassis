@@ -331,7 +331,8 @@ fn halfbench() -> anyhow::Result<()> {
 fn options(ef_search: usize) -> IndexOptions {
     #[allow(unused_mut)]
     let mut options = IndexOptions {
-        max_connections: 16,
+        // LAB_M=<m> sets M.
+        max_connections: std::env::var("LAB_M").ok().and_then(|v| v.parse().ok()).unwrap_or(16),
         ef_construction: 200,
         ef_search,
         ..IndexOptions::default()
@@ -371,10 +372,10 @@ impl Handle {
     }
 
     fn search(&mut self, query: &[f32]) -> anyhow::Result<Vec<SearchResult>> {
-        match self {
-            Self::Writer(index) => index.search(query, K),
-            Self::Reader(reader) => reader.search(query, K),
-        }
+        Ok(match self {
+            Self::Writer(index) => index.search(query, K)?,
+            Self::Reader(reader) => reader.search(query, K)?,
+        })
     }
 
     fn len(&mut self) -> anyhow::Result<u64> {
@@ -630,7 +631,11 @@ fn main() -> anyhow::Result<()> {
             let only: Option<usize> = std::env::var("LAB_EF").ok().and_then(|v| v.parse().ok());
             let passes_wanted: usize =
                 std::env::var("LAB_PASSES").ok().and_then(|v| v.parse().ok()).unwrap_or(PASSES);
-            for ef_search in EF_SEARCH.into_iter().filter(|&ef| only.is_none_or(|o| o == ef)) {
+            // LAB_EFS="<ef> <ef> ..." searches at these instead.
+            let efs: Vec<usize> = std::env::var("LAB_EFS").map_or(EF_SEARCH.to_vec(), |v| {
+                v.split_whitespace().filter_map(|ef| ef.parse().ok()).collect()
+            });
+            for ef_search in efs.into_iter().filter(|&ef| only.is_none_or(|o| o == ef)) {
                 let mut index = Handle::open(&arg(3), dims as u32, options(ef_search))?;
                 let n = index.len()?;
                 #[cfg(all(lab, target_os = "linux"))]
