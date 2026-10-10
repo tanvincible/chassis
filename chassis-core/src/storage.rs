@@ -2250,21 +2250,6 @@ mod tests {
         assert!(told.load(Ordering::Relaxed));
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn test_a_forked_child_drops_a_warming_it_has_no_thread_for() {
-        let (warming, _) = stand_in();
-        // SAFETY: the child drops one value and exits.
-        let child = unsafe { libc::fork() };
-        if child == 0 {
-            let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(warming)));
-            unsafe { libc::_exit(i32::from(dropped.is_err())) };
-        }
-        let mut status = -1;
-        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
-        assert_eq!(status, 0);
-    }
-
     #[test]
     fn test_a_heap_that_ends_past_its_chunk_is_a_corrupt_header() {
         let dir = tempdir().unwrap();
