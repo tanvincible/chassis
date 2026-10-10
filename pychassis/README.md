@@ -186,6 +186,11 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
 - **`flush() -> None`**  
   Flush changes to disk. Call after batch insertions.
 
+- **`warm() -> None`**  
+  Read the index into memory on another thread, so that searches stop waiting for the disk while
+  its file is not in memory yet, as after a reboot. Returns at once; searches go on meanwhile.
+  `IndexOptions(warm=True)` does the same from the moment the index is opened.
+
 - **`compact() -> None`**  
   Rewrite the index without its deleted vectors and with a rebuilt graph, reclaiming their space.
   Ids don't change. Takes as long as building the index and needs disk for a second copy.
@@ -221,6 +226,7 @@ class IndexOptions:
     metric: str = "euclidean"      # or "cosine": 1 - cosine similarity, unit-length storage
     precision: str = "full"        # or "half": vectors kept as 16-bit floats, half the file and memory
     huge_pages: bool = False       # Linux: keep the vectors on 2 MB pages (faster search on a large index)
+    warm: bool = False             # read the index into memory in the background from the start
 ```
 
 ### `SearchResult`

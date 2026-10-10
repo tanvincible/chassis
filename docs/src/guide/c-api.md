@@ -174,6 +174,19 @@ searches are up to a quarter faster. Linux only, where the kernel and filesystem
 (ext4 on Linux 6.17 does); elsewhere it does nothing. Call it right after opening, on a writer's
 handle or a reader's. Returns `0`, or `-1` for a NULL handle.
 
+#### `chassis_warm`
+```c
+int chassis_warm(ChassisIndex* index);
+```
+Read the index into memory on another thread ([ADR-0019](../adr/019-warm.md)), so that searches
+stop waiting for the disk one page at a time while its file is not in memory yet, as after a
+reboot. Doesn't wait for the reading: searches go on meanwhile. What is read is what the index
+holds when this is called; while that is under way, calling again does nothing. A reader that opens
+the file again after a compaction reads the new one in too. For an index that fits in memory: one
+much larger would push everything else out. Linux 5.14 or macOS; an older Linux reads only some of
+the index, and Windows none. Call it on a writer's handle or a reader's, right after opening or
+later. Returns `0`, or `-1` for a NULL handle.
+
 #### `chassis_free`
 ```c
 void chassis_free(ChassisIndex* index);

@@ -98,6 +98,12 @@ pub struct IndexOptions {
     /// page not yet in memory is read 2 MB at a time, which an index much larger than memory
     /// pays for on every miss.
     pub huge_pages: bool,
+
+    /// Read the whole index into memory on another thread from the moment it is opened
+    /// (ADR-0019), so that searches stop waiting for the disk one page at a time. For an index
+    /// that fits in memory; one much larger would push everything else out. Off by default. It
+    /// takes Linux 5.14 or macOS: an older Linux reads only some of the index, and Windows none.
+    pub warm: bool,
 }
 
 impl Default for IndexOptions {
@@ -109,6 +115,7 @@ impl Default for IndexOptions {
             metric: DistanceMetric::Euclidean,
             precision: Precision::Full,
             huge_pages: false,
+            warm: false,
         }
     }
 }
@@ -190,6 +197,9 @@ impl VectorIndex {
         let mut index = Self { graph, ml: params.ml, options, ids: None, next_id: 0, path };
         if index.options.huge_pages {
             index.use_huge_pages();
+        }
+        if index.options.warm {
+            index.warm();
         }
         Ok(index)
     }
@@ -650,6 +660,15 @@ impl VectorIndex {
         self.graph.storage.use_huge_pages();
     }
 
+    /// Reads what the index holds into memory on another thread, as opening with
+    /// `IndexOptions::warm` does, without waiting for it: searches go on meanwhile. While that is
+    /// under way, asking again does nothing. The option is on from here on, so a file opened
+    /// again, as a reader does after a compaction, is read in too.
+    pub fn warm(&mut self) {
+        self.options.warm = true;
+        self.graph.storage.warm();
+    }
+
     /// Get the number of live (not deleted) vectors in the index
     pub fn len(&self) -> u64 {
         self.graph.node_count() - self.graph.deleted_count
@@ -802,6 +821,9 @@ impl IndexReader {
         if reader.options.huge_pages {
             reader.use_huge_pages();
         }
+        if reader.options.warm {
+            reader.warm();
+        }
         Ok(reader)
     }
 
@@ -878,6 +900,15 @@ impl IndexReader {
         self.graph.storage.use_huge_pages();
     }
 
+    /// Reads what the index holds into memory on another thread, as opening with
+    /// `IndexOptions::warm` does, without waiting for it: searches go on meanwhile. While that is
+    /// under way, asking again does nothing. The option is on from here on, so a file opened
+    /// again, as a reader does after a compaction, is read in too.
+    pub fn warm(&mut self) {
+        self.options.warm = true;
+        self.graph.storage.warm();
+    }
+
     /// Live vectors as of the last snapshot, taken by `search` or `refresh`.
     pub fn len(&self) -> u64 {
         self.graph.view.map_or(0, |view| view.committed) - self.graph.deleted_count
@@ -904,6 +935,18 @@ mod tests {
                 (x >> 40) as f32 / (1u64 << 24) as f32
             })
             .collect()
+    }
+
+    #[test]
+    fn test_asking_to_warm_turns_the_option_on_for_a_reopen() {
+        let file = NamedTempFile::new().unwrap();
+        let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+        index.add(&random_vector(0)).unwrap();
+        index.flush().unwrap();
+        let mut reader = IndexReader::open(file.path(), 16, IndexOptions::default()).unwrap();
+        index.warm();
+        reader.warm();
+        assert!(index.options.warm && reader.options.warm);
     }
 
     /// 2,500 vectors: sampled every second slot, so a filter on odd slots meets an unjittered
