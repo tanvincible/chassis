@@ -4,7 +4,7 @@
 //! xxh3-64 checksum; the valid copy with the higher sequence number is current. A commit writes
 //! the other copy, so a torn header write always leaves the previous commit readable.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use xxhash_rust::xxh3::xxh3_64;
 
 /// Magic bytes at the start of every Chassis file, in every format version.
@@ -171,7 +171,11 @@ impl FileHeader {
         let tables =
             FIXED_LEN + 8 * (segment_pages.min(MAX_TABLE_PAGES) + heap_pages.min(MAX_TABLE_PAGES));
         if segment_pages > MAX_TABLE_PAGES || heap_pages > MAX_TABLE_PAGES || len < tables {
-            bail!("Corrupt file header: table page counts don't match its length");
+            crate::error::fail!(
+                Corrupt,
+                "Corrupt file header: table page counts don't match its length\nhelp: restore the \
+                 index from a backup, or rebuild it from its vectors"
+            );
         }
         let table = |start: usize, n: usize| (0..n).map(|i| u64_at(start + 8 * i)).collect();
         if copy[45] > 1 {
@@ -233,12 +237,22 @@ impl FileHeader {
     pub fn newest(a: Option<Self>, b: Option<Self>) -> Result<(usize, Self)> {
         match (a, b) {
             (Some(a), Some(b)) if a.sequence == b.sequence => {
-                bail!("Corrupt file: both header copies have sequence number {}", a.sequence)
+                crate::error::fail!(
+                    Corrupt,
+                    "Corrupt file: both header copies have sequence number {}\nhelp: restore the \
+                     index from a backup, or rebuild it from its vectors",
+                    a.sequence
+                )
             }
             (Some(a), Some(b)) => Ok(if a.sequence > b.sequence { (0, a) } else { (1, b) }),
             (Some(a), None) => Ok((0, a)),
             (None, Some(b)) => Ok((1, b)),
-            (None, None) => None.context("File is not a valid Chassis index: no valid header"),
+            (None, None) => crate::error::fail!(
+                NotAnIndex,
+                "Neither copy of the file's header is valid: it isn't a Chassis index, or both \
+                 copies are damaged\nhelp: check the path; if it was an index, restore it from a \
+                 backup or rebuild it from its vectors"
+            ),
         }
     }
 }

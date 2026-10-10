@@ -28,11 +28,19 @@ pub enum DistanceMetric {
 /// overflow or underflow when squared.
 pub(crate) fn unit(v: &[f32]) -> anyhow::Result<Vec<f32>> {
     if v.iter().any(|x| !x.is_finite()) {
-        anyhow::bail!("A cosine index can't use a vector with NaN or infinite components");
+        crate::error::fail!(
+            InvalidArgument,
+            "A cosine index can't use a vector with NaN or infinite components\nhelp: check how \
+             it was made; a division by zero gives NaN"
+        );
     }
     let norm = v.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
     if norm == 0.0 {
-        anyhow::bail!("A cosine index can't use a zero vector");
+        crate::error::fail!(
+            InvalidArgument,
+            "A cosine index can't use a zero vector: it has no direction\nhelp: leave it out, or \
+             use a euclidean index, where it is a point like any other"
+        );
     }
     Ok(v.iter().map(|&x| (f64::from(x) / norm) as f32).collect())
 }
