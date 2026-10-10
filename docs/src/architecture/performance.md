@@ -18,18 +18,17 @@ details and the commands.
 These came before distances were computed in groups ([ADR-0021](../adr/021-grouped-distances.md)),
 which made searches over vectors of a kilobyte or more another 11 to 60% faster out of cache.
 
-**Through Python, with grouped distances**: each engine through its Python package on one thread,
-queries a second for 0.95 recall, Chassis over the other engine (2026-10-10, one run, one machine
-per CPU). Zen 3 at 128 dims in full precision was 0.87 to 0.93 times hnswlib over four runs, where
-the measurements from Rust above start at 1.2; Python's own cost per search explains only a few
-percent of that.
+**Through Python**: each engine through its Python package on one thread, every query in one call
+(Chassis's `search_batch`), queries a second for 0.95 recall, Chassis over the other engine
+(2026-10-10, one run, one machine per CPU). With one call per query instead, Chassis lost a fifth to
+a third of its speed from Rust, 15 to 38 µs a query; in one call it is within 5% of it.
 
 | Vectors | Over hnswlib | Over FAISS's HNSW |
 | --- | --- | --- |
-| 128 dims × 1M | Zen 3 0.91×, Zen 5 1.73×, N2 2.64× | Zen 3 0.80×, Zen 5 1.45×, N2 1.22× |
-| 128 dims × 1M, half | Zen 3 1.19×, Zen 5 1.90×, N2 2.96× | Zen 3 1.04×, Zen 5 1.59×, N2 1.37× |
-| 1,536 dims × 99k | Zen 4 0.99×, Xeon 0.99×, N2 2.50× | Zen 4 0.69×, Xeon 0.87×, N2 0.94× |
-| 1,536 dims × 99k, half | Zen 4 1.48×, Xeon 1.61×, N2 2.73× | Zen 4 1.04×, Xeon 1.41×, N2 1.02× |
+| 128 dims × 1M | Zen 3 1.13×, Xeon 1.33×, N2 3.46× | Zen 3 0.98×, Xeon 1.22×, N2 1.69× |
+| 128 dims × 1M, half | Zen 3 1.61×, Xeon 2.01×, N2 3.63× | Zen 3 1.40×, Xeon 1.85×, N2 1.77× |
+| 1,536 dims × 99k | Zen 4 1.26×, Xeon 1.05×, N2 2.92× | Zen 4 0.78×, Xeon 0.95×, N2 1.09× |
+| 1,536 dims × 99k, half | Zen 4 1.91×, Xeon 1.55×, N2 2.92× | Zen 4 1.19×, Xeon 1.40×, N2 1.09× |
 
 **From a cold start** ([ADR-0019](../adr/019-warm.md), Apple M5, 99,000 × 1,536 dims, the file not
 in memory): the first result came 0.11 s after the process started, where hnswlib, which loads its

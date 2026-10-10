@@ -47,7 +47,9 @@ faster, but searches for 0.99 recall at 128 and 384 dimensions take up to 14% lo
 `search_batch(queries, k)` searches a `(count, dimensions)` array in one call and returns the ids
 and distances as two `(count, k)` arrays. A call from Python into the library costs 15 to 38 µs on
 the server CPUs measured, which `search` pays once per query and `search_batch` once per batch. On
-an Apple M5, 2,000 queries over 50,000 vectors of 128 dimensions ran 1.23 times as fast.
+GitHub's server runners a batch made 1.20 to 1.42 times the queries a second of one call per query
+over a million vectors of 128 dimensions, and 1.10 to 1.13 times over 99,000 of 1,536, within 5% of
+the same searches from Rust (0.95 recall).
 
 ## Batch Insertion Strategy
 
