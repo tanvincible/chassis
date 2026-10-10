@@ -3,7 +3,16 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.7.0...HEAD)
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.7.1...HEAD)
+
+## [v0.7.1](https://github.com/tanvincible/chassis/compare/v0.7.0...v0.7.1) - 10 October 2026
+
+A README on chassis-core's crates.io page. Nothing changes in the library or the Python package.
+
+### Infrastructure
+
+- chore: the Python package's folder named chassisdb, as the package is (#51) ([e3a7d2d](https://github.com/tanvincible/chassis/commit/e3a7d2d2f45d2aeccb0c516ef2559e7a9806b5c5))
+- ci: publish to crates.io through trusted publishing, or a token while one is set
 
 ## [v0.7.0](https://github.com/tanvincible/chassis/compare/v0.6.3...v0.7.0) - 10 October 2026
 
