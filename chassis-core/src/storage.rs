@@ -628,10 +628,11 @@ impl Storage {
     /// access to migrate it), has different dimensions, or is corrupt.
     pub fn open_read_only<P: AsRef<Path>>(path: P, dimensions: u32) -> Result<Self> {
         let path = path.as_ref();
-        let file = File::open(path).map_err(|e| open_failed(path, e, false))?;
-        if file.metadata()?.is_dir() {
+        // Windows refuses to open a directory with "access denied", which would read as permissions.
+        if path.is_dir() {
             return Err(open_failed(path, std::io::ErrorKind::IsADirectory.into(), false));
         }
+        let file = File::open(path).map_err(|e| open_failed(path, e, false))?;
         let mut prefix = [0u8; 12];
         read_prefix(&file, &mut prefix)?;
         if is_legacy(&prefix) {
