@@ -1,0 +1,82 @@
+name: Release
+
+# On a version tag: the Build workflow's wheels go to PyPI, chassis-core to crates.io, and the
+# C libraries with their header to a GitHub release whose notes are the version's CHANGELOG entry.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Tag matches the version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          python=$(sed -n 's/^version = "\(.*\)"$/\1/p' pychassis/pyproject.toml | head -1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ] || [ "$python" != "$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but Cargo.toml says $version and pyproject.toml $python"
+            exit 1
+          fi
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+
+  pypi:
+    name: PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # PyPI trusts this workflow and environment to publish chassisdb (trusted publishing).
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chassisdb-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  crates:
+    name: crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::notice::No CARGO_REGISTRY_TOKEN secret, so chassis-core is not published"
+            exit 0
+          fi
+          cargo publish -p chassis-core
+
+  github:
+    name: GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="## [$GITHUB_REF_NAME]" 'index($0, v) == 1 {on = 1; next} on && /^## \[/ {exit} on' CHANGELOG.md > notes.md
+          mkdir assets
+          for dir in artifacts/chassis-ffi-*; do tar -czf "assets/$(basename "$dir").tar.gz" -C "$dir" .; done
+          cp artifacts/chassisdb-*/*.whl assets/
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md assets/*

@@ -1,14 +1,26 @@
 name: Deploy Docs
+
+# The Chassis book at the site's root and the Python docs under /python/. A Pages site is one
+# upload, so both are built and deployed together; separately, each would replace the other.
 on:
   push:
     branches: ["main"]
-    paths: ["docs/**"]
+    paths:
+      - "docs/**"
+      - "pychassis/docs/**"
+      - "pychassis/mkdocs.yml"
+      - "pychassis/chassis/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
 
-# Allow the job to push to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -19,13 +31,24 @@ jobs:
       - name: Install mdbook
         uses: taiki-e/install-action@mdbook
 
-      - name: Build Book
-        run: cd docs && mdbook build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Build the book and the Python docs
+        run: |
+          (cd docs && mdbook build)
+          pip install "./pychassis[docs]"
+          (cd pychassis && mkdocs build)
+          mkdir site
+          cp -r docs/book/. site/
+          cp -r pychassis/site site/python
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: docs/book
+          path: site
 
       - name: Deploy to GitHub Pages
         id: deployment

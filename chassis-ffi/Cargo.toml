@@ -7,6 +7,8 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description.workspace = true
+# A C library, shipped with each release, not on crates.io.
+publish = false
 
 [lib]
 crate-type = ["cdylib"]  # Create dynamic library for C FFI

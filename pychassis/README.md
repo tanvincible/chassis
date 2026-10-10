@@ -12,26 +12,19 @@ Python bindings for Chassis, an embedded vector index for local semantic search:
 
 ## Installation
 
-The package is named `chassisdb` and imported as `chassis`. It is not on PyPI yet.
+```bash
+pip install chassisdb
+```
 
-### Prerequisites
-
-1. Build the Chassis FFI library:
-   ```bash
-   cd ../chassis-ffi
-   cargo build --release
-   ```
-
-2. Install PyChassis:
-   ```bash
-   cd ../pychassis
-   pip install -e .
-   ```
+The package is named `chassisdb` and imported as `chassis`. Wheels are built for Python 3.13 and
+later on Linux (x86-64 and ARM), macOS on Apple silicon and Windows (x86-64). Elsewhere, or from a
+checkout of the repository, `pip install .` in this directory builds it, which needs Rust.
 
 ### Development Installation
 
 ```bash
-# Install with dev dependencies
+# Build the library, then install with dev dependencies
+cargo build --release -p chassis-ffi
 pip install -e ".[dev]"
 
 # Run tests

@@ -1,10 +1,8 @@
-/* Chassis, an embedded vector index - C API */
-/* Version 0.1.0 */
+/* Chassis, an embedded vector index for local semantic search - C API */
 
-/* Thread Safety: */
-/* - chassis_open, chassis_free: Thread-safe if called with different indices */
-/* - chassis_add, chassis_add_batch, chassis_flush: Single-writer (exclusive access required) */
-/* - chassis_search: Multi-reader (shared access allowed) */
+/* Thread safety: every function but chassis_free may be called from any thread on a shared
+   handle. Searches run concurrently; adds, deletes and flushes take the handle's write lock.
+   chassis_free must not race any other call. A reader handle runs one call at a time. */
 
 
 #ifndef CHASSIS_H

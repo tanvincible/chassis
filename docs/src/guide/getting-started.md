@@ -6,7 +6,7 @@ Add Chassis to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chassis-core = "0.4.0-alpha"
+chassis-core = "0.7"
 ```
 
 ## Quick Start

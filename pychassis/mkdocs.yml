@@ -1,6 +1,6 @@
 site_name: PyChassis
 site_description: Python bindings for Chassis, an embedded vector index for local semantic search
-site_url: https://tanvincible.github.io/pychassis/
+site_url: https://tanvincible.github.io/chassis/python/
 
 theme:
   name: material
