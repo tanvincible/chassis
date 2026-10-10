@@ -20,13 +20,13 @@ use crate::header::{FLAG_SUPERSEDED, FileHeader, HEADER_STRIDE, MAX_TABLE_PAGES,
 use crate::hnsw::node::NodeRecordParams;
 use crate::legacy::{LegacyIndex, is_legacy};
 use anyhow::{Context, Result, bail};
-use memmap2::{MmapOptions, MmapRaw};
+use memmap2::{Mmap, MmapOptions, MmapRaw};
 use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
-use std::sync::{Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::{Arc, Mutex, PoisonError};
 use xxhash_rust::xxh3::xxh3_64_with_seed;
 
 #[cfg(target_endian = "big")]
@@ -309,6 +309,102 @@ impl Region {
     }
 }
 
+/// How much the warming thread asks the system for at a time, so that it can be stopped between.
+const WARM_STEP: usize = 8 << 20;
+
+/// A thread reading the index into memory (`IndexOptions::warm`, ADR-0019). It hands the system
+/// address ranges and never reads them itself. It has to be stopped before any of them is
+/// unmapped: the system would take the same advice about whatever is mapped there next.
+#[derive(Debug)]
+struct Warming {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    /// The process that started the thread. A forked child has the handle and no thread.
+    process: u32,
+}
+
+// A thread's handle isn't unwind safe, and an index was before it held one. A panic elsewhere
+// leaves nothing here half done.
+impl std::panic::UnwindSafe for Warming {}
+impl std::panic::RefUnwindSafe for Warming {}
+
+impl Warming {
+    /// Starts reading `ranges` of (address, length) in, in order, holding `view` mapped until it
+    /// is done; `None` if no thread could be started.
+    fn start(ranges: Vec<(usize, usize)>, view: Option<Mmap>) -> Option<Self> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        let work = move || {
+            let _view = view;
+            for (at, len) in steps(ranges) {
+                if stopped.load(Ordering::Relaxed) {
+                    return;
+                }
+                read_in(at, len);
+            }
+        };
+        let thread = std::thread::Builder::new().name("chassis-warm".into()).spawn(work).ok()?;
+        Some(Self { stop, thread: Some(thread), process: std::process::id() })
+    }
+
+    fn running(&self) -> bool {
+        self.process == std::process::id()
+            && self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
+    }
+}
+
+impl Drop for Warming {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        let Some(thread) = self.thread.take() else { return };
+        if self.process == std::process::id() {
+            let _ = thread.join();
+        } else {
+            // Joining a thread this process never had panics, or worse.
+            std::mem::forget(thread);
+        }
+    }
+}
+
+/// `ranges` in pieces of at most `WARM_STEP` bytes.
+fn steps(ranges: Vec<(usize, usize)>) -> impl Iterator<Item = (usize, usize)> {
+    ranges.into_iter().flat_map(|(at, len)| {
+        (0..len).step_by(WARM_STEP).map(move |offset| (at + offset, WARM_STEP.min(len - offset)))
+    })
+}
+
+/// Asks the system to read the pages of the `len` bytes at address `at` into memory.
+#[cfg(unix)]
+fn read_in(at: usize, len: usize) {
+    let at = at as *mut libc::c_void;
+    // SAFETY (both calls): advice about an address range, which nothing here reads or writes.
+    // `Warming` is stopped before a range it was given is unmapped.
+    #[cfg(target_os = "linux")]
+    // Reads the pages in and maps them, as touching each would, and leaves them clean. Linux 5.14
+    // and later; before that, the request below, which the kernel honors only in part.
+    if unsafe { libc::madvise(at, len, libc::MADV_POPULATE_READ) } == 0 {
+        return;
+    }
+    unsafe { libc::madvise(at, len, libc::MADV_WILLNEED) };
+}
+
+#[cfg(not(unix))]
+fn read_in(_: usize, _: usize) {}
+
+/// The `len` bytes at `at` from the start of their first page of `page` bytes: the system takes
+/// advice about whole pages.
+fn from_page_start(page: usize, (at, len): (usize, usize)) -> (usize, usize) {
+    (at / page * page, len + at % page)
+}
+
+fn page_size() -> usize {
+    #[cfg(unix)]
+    // SAFETY: sysconf only reads.
+    return unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    #[cfg(not(unix))]
+    4096
+}
+
 #[derive(Debug)]
 struct Segment {
     region: Region,
@@ -397,6 +493,9 @@ impl Undo {
 /// Storage engine for one index file.
 #[derive(Debug)]
 pub struct Storage {
+    /// The thread reading the index into memory, if `warm` started one. First, so that a drop
+    /// stops it before the regions it was told about are unmapped.
+    warming: Option<Warming>,
     /// File handle (owns the file lock)
     file: File,
     /// A reader maps the file read-only and takes no lock.
@@ -568,6 +667,7 @@ impl Storage {
         copy: usize,
     ) -> Result<Self> {
         Ok(Self {
+            warming: None,
             file,
             writable,
             headers,
@@ -587,6 +687,68 @@ impl Storage {
             undo: None,
             huge_slots: None,
         })
+    }
+
+    /// Starts another thread reading what the index holds into memory (`IndexOptions::warm`,
+    /// ADR-0019), unless one is at it already, and returns at once.
+    pub(crate) fn warm(&mut self) {
+        if self.warming.as_ref().is_some_and(Warming::running) {
+            return;
+        }
+        if !cfg!(unix) || self.written(None).is_empty() {
+            return;
+        }
+        // Asked to read pages in through a writable mapping, macOS marks them all as written to,
+        // and writes them back. A writer there asks through a read-only view of the file instead,
+        // whose pages its own mappings then fault in.
+        let view = match self.writable && !cfg!(target_os = "linux") {
+            // SAFETY: nothing reads through the view; it is only named in advice.
+            true => match unsafe { Mmap::map(&self.file) } {
+                Ok(view) => Some(view),
+                Err(_) => return,
+            },
+            false => None,
+        };
+        let page = page_size();
+        let ranges = self.written(view.as_ref()).into_iter().map(|r| from_page_start(page, r));
+        self.warming = Warming::start(ranges.collect(), view);
+    }
+
+    /// The address ranges, in the index's mappings or else in `view` of the whole file, of what
+    /// has been written: each segment's three arrays up to the last slot counted, the heap chunks
+    /// before the one in use, and that one up to its last entry. What lies past them was never
+    /// written, and in a sparse file is a hole. A reader counts slots its writer hasn't committed,
+    /// and not their heap entries.
+    fn written(&self, view: Option<&Mmap>) -> Vec<(usize, usize)> {
+        let start = |region: &Region| match view {
+            Some(view) => view.as_ptr() as usize + region.offset as usize,
+            None => region.map.as_ptr() as usize,
+        };
+        let g = self.geometry;
+        let mut ranges = Vec::new();
+        for (k, segment) in self.segments.iter().enumerate() {
+            let k = k as u64;
+            let slots = self.count.saturating_sub(g.capacity(k)).min(g.segment_slots(k)) as usize;
+            let base = start(&segment.region);
+            let arrays = [
+                (0, SLOT_HEADER),
+                (segment.vectors, g.vector_bytes()),
+                (segment.level0, g.level0_bytes()),
+            ];
+            ranges.extend(arrays.map(|(at, per_slot)| (base + at, per_slot * slots)));
+        }
+        let (last, used) =
+            ((self.state.heap_used >> 32) as usize, (self.state.heap_used & 0xffff_ffff) as usize);
+        for (c, chunk) in self.chunks.iter().enumerate() {
+            let len = match c.cmp(&last) {
+                std::cmp::Ordering::Less => chunk.len(),
+                std::cmp::Ordering::Equal => used,
+                std::cmp::Ordering::Greater => 0,
+            };
+            ranges.push((start(chunk), len));
+        }
+        ranges.retain(|&(_, len)| len > 0);
+        ranges
     }
 
     /// Asks for huge pages under the committed vectors, and from here on under vectors as they
@@ -668,6 +830,7 @@ impl Storage {
             || g.capacity(u64::from(s.segments)) < s.count
             || (s.entry_point != u64::MAX && s.entry_point >= s.count)
             || s.heap_used >> 32 > u64::from(s.heap_chunks)
+            || s.heap_used & 0xffff_ffff > g.chunk_bytes(s.heap_used >> 32) as u64
         {
             bail!("Corrupt file header: counts don't match its tables");
         }
@@ -716,6 +879,8 @@ impl Storage {
             let committed = k < u64::from(self.state.segments);
             let Some(offset) = self.table_entry(Table::Segments, k) else { break };
             if self.segments.get(k as usize).is_some_and(|s| s.region.offset != offset) {
+                // What this unmaps, the warming thread may still have to ask for.
+                self.warming = None;
                 self.segments.truncate(k as usize);
             }
             if self.segments.len() as u64 == k {
@@ -738,6 +903,7 @@ impl Storage {
             let committed = c < u64::from(self.state.heap_chunks);
             let Some(offset) = self.table_entry(Table::Chunks, c) else { break };
             if self.chunks.get(c as usize).is_some_and(|chunk| chunk.offset != offset) {
+                self.warming = None;
                 self.chunks.truncate(c as usize);
             }
             if self.chunks.len() as u64 == c {
@@ -1836,6 +2002,135 @@ mod tests {
     }
 
     #[test]
+    fn test_warming_asks_for_what_was_written_and_nothing_past_it() {
+        let dir = tempdir().unwrap();
+        let mut storage = Storage::open(dir.path().join("index.chassis"), 8).unwrap();
+        assert!(storage.written(None).is_empty());
+        // Segments of 16, 32 and 64 slots here: the third is left with 40 written.
+        let written = 16 + 32 + 40;
+        for slot in 0..written {
+            storage.insert(&[slot as f32; 8]).unwrap();
+            // Every eighth node has lists above layer 0, in the heap.
+            let lists = vec![vec![]; if slot % 8 == 0 { 3 } else { 1 }];
+            storage.write_record(slot, &lists).unwrap();
+        }
+        storage.commit().unwrap();
+
+        let g = storage.geometry;
+        let ranges = storage.written(None);
+        let per_slot = SLOT_HEADER + g.vector_bytes() + g.level0_bytes();
+        // Heap chunks before the one in use count whole; that one up to its last entry.
+        let (chunk, used) = (storage.state.heap_used >> 32, storage.state.heap_used & 0xffff_ffff);
+        let heap = (0..chunk).map(|c| g.chunk_bytes(c)).sum::<usize>() + used as usize;
+        assert!(heap > 0);
+        assert_eq!(ranges.iter().map(|r| r.1).sum::<usize>(), written as usize * per_slot + heap);
+        // Each range lies inside one region, and the last segment's arrays end at its last slot.
+        let regions: Vec<(usize, usize)> = (storage.segments.iter().map(|s| &s.region))
+            .chain(&storage.chunks)
+            .map(|r| (r.map.as_ptr() as usize, r.len()))
+            .collect();
+        for &(at, len) in &ranges {
+            assert!(regions.iter().any(|&(base, size)| base <= at && at + len <= base + size));
+        }
+        let last = &storage.segments[2];
+        let at = last.region.map.as_ptr() as usize;
+        for (start, per_slot) in [
+            (at, SLOT_HEADER),
+            (at + last.vectors, g.vector_bytes()),
+            (at + last.level0, g.level0_bytes()),
+        ] {
+            assert!(ranges.contains(&(start, per_slot * 40)));
+        }
+
+        // Reading it in changes nothing.
+        storage.warm();
+        storage.warming.as_mut().unwrap().thread.take().unwrap().join().unwrap();
+        assert_eq!(storage.get_vector(87).unwrap(), vec![87.0; 8]);
+        // Asked again once that is done, it starts another; while one is under way, none.
+        let done = Arc::clone(&storage.warming.as_ref().unwrap().stop);
+        storage.warm();
+        assert!(!Arc::ptr_eq(&storage.warming.as_ref().unwrap().stop, &done));
+        let (busy, _) = stand_in();
+        let stop = Arc::clone(&busy.stop);
+        storage.warming = Some(busy);
+        storage.warm();
+        assert!(Arc::ptr_eq(&storage.warming.as_ref().unwrap().stop, &stop));
+
+        // In pieces the thread can be stopped between.
+        let pieces: Vec<_> = steps(vec![(5, 2 * WARM_STEP + 1), (9, 3)]).collect();
+        let step = WARM_STEP;
+        assert_eq!(pieces, [(5, step), (5 + step, step), (5 + 2 * step, 1), (9, 3)]);
+        // From the start of a range's first page to where it ended.
+        assert_eq!(from_page_start(4096, (3 * 4096 + 24, 100)), (3 * 4096, 124));
+        assert_eq!(from_page_start(16384, (16384, 5)), (16384, 5));
+        // Through a view of the file, the same ranges at the same offsets in it.
+        let view = unsafe { Mmap::map(&storage.file) }.unwrap();
+        let base = view.as_ptr() as usize;
+        let offsets = (storage.segments.iter().map(|s| &s.region))
+            .chain(&storage.chunks)
+            .map(|r| (r.map.as_ptr() as usize, r.offset as usize));
+        let to_view = |at: usize| {
+            let (mapped, offset) =
+                offsets.clone().filter(|&(mapped, _)| mapped <= at).max().unwrap();
+            base + offset + (at - mapped)
+        };
+        let through_view: Vec<_> = ranges.iter().map(|&(at, len)| (to_view(at), len)).collect();
+        assert_eq!(storage.written(Some(&view)), through_view);
+    }
+
+    /// A stand-in for a warming thread: it works until it is told to stop, or for ten seconds,
+    /// then a moment more, and records whether it was told.
+    fn stand_in() -> (Warming, Arc<AtomicBool>) {
+        let (stop, told) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let (stopped, record) = (Arc::clone(&stop), Arc::clone(&told));
+        let thread = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            while !stopped.load(Ordering::Relaxed) && start.elapsed().as_secs() < 10 {
+                std::thread::yield_now();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            record.store(stopped.load(Ordering::Relaxed), Ordering::Relaxed);
+        });
+        (Warming { stop, thread: Some(thread), process: std::process::id() }, told)
+    }
+
+    #[test]
+    fn test_dropping_a_warming_stops_its_thread_and_waits_for_it() {
+        let (warming, told) = stand_in();
+        drop(warming);
+        assert!(told.load(Ordering::Relaxed));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_a_forked_child_drops_a_warming_it_has_no_thread_for() {
+        let (warming, _) = stand_in();
+        // SAFETY: the child drops one value and exits.
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(warming)));
+            unsafe { libc::_exit(i32::from(dropped.is_err())) };
+        }
+        let mut status = -1;
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        assert_eq!(status, 0);
+    }
+
+    #[test]
+    fn test_a_heap_that_ends_past_its_chunk_is_a_corrupt_header() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let mut storage = Storage::open(&path, 4).unwrap();
+        storage.insert(&[0.0; 4]).unwrap();
+        storage.write_record(0, &[vec![], vec![]]).unwrap();
+        storage.state.heap_used += storage.geometry.chunk_bytes(0) as u64;
+        storage.commit().unwrap();
+        drop(storage);
+        let error = Storage::open(&path, 4).unwrap_err().to_string();
+        assert!(error.contains("Corrupt file header"), "{error}");
+    }
+
+    #[test]
     fn test_roll_back_keeps_the_first_entry_saved_for_a_slot() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("index.chassis");
@@ -1947,6 +2242,7 @@ mod tests {
         }
         reader.refresh().unwrap();
         assert_eq!(reader.segments.len(), 2);
+        reader.warm();
         drop(writer);
         // The next writer puts a heap chunk's table page where that segment was, and the segment
         // after it.
@@ -1959,6 +2255,8 @@ mod tests {
         writer.publish_routing(20);
         reader.refresh().unwrap();
         assert_eq!(reader.get_vector(19).unwrap(), vec![3.0; 4]);
+        // Its warming thread was told about the segment that went, and was stopped for that.
+        assert!(reader.warming.is_none());
     }
 
     #[test]
