@@ -118,8 +118,10 @@ skip = "*-musllinux_*"
 # The library is built for the runner's own 64-bit architecture.
 archs = ["auto64"]
 test-requires = ["pytest", "numpy"]
+# Stable as installed: rust-toolchain.toml would add clippy, rustfmt and cross targets to each build.
+environment = { RUSTUP_TOOLCHAIN = "stable" }
 test-command = "python -c \"import chassis._ffi as f, pathlib; assert pathlib.Path(f._lib_path).parent == pathlib.Path(f.__file__).parent, f._lib_path\" && pytest {package}/tests --import-mode=importlib -o addopts= -q"
 
 [tool.cibuildwheel.linux]
 before-all = "curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
-environment = { PATH = "$HOME/.cargo/bin:$PATH" }
+environment = { PATH = "$HOME/.cargo/bin:$PATH", RUSTUP_TOOLCHAIN = "stable" }
