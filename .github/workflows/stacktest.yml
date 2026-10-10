@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
+  RUN: 2
   CHASSIS: feat/errors
 
 jobs:
@@ -43,5 +43,6 @@ jobs:
         shell: bash
         run: |
           pip install -q numpy pytest
+          cargo build --release -p chassis-ffi
           cd pychassis
           python -m pytest -o addopts="" -q tests 2>&1 | tail -15
