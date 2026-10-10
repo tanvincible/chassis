@@ -1,0 +1,141 @@
+name: Benchmark
+
+# Each pull request against main, on x86 and ARM runners: small benchmarks built from main and
+# from the pull request, run in turns on one machine so that its speed cancels out. The last job
+# posts the result as a comment on the pull request, and fails if anything got markedly slower.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "chassis-core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "bench/**"
+      - ".github/workflows/bench.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    name: ${{ matrix.case.label }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        case:
+          - { label: "128 dims × 100k", dataset: sift-128, n: 100000, precision: full }
+          - { label: "1,536 dims × 20k", dataset: dbpedia-openai3-1536, n: 20000, precision: full }
+          - { label: "1,536 dims × 20k, half", dataset: dbpedia-openai3-1536, n: 20000, precision: half }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: bench
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/cache@v4
+        with:
+          path: bench/ann/data
+          key: bench-data-${{ matrix.case.dataset }}-v1
+
+      - name: Data
+        run: |
+          if [ ! -f "bench/ann/data/${{ matrix.case.dataset }}.train.f32" ]; then
+            pip install -q numpy h5py pyarrow
+            python bench/ann/prepare.py bench/ann/data ${{ matrix.case.dataset }}
+            rm -f bench/ann/data/*.hdf5 bench/ann/data/*.parquet
+          fi
+
+      # The pull request's harness, built against main too; if main's API can't take it, main's own.
+      - name: Build main and this pull request
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        run: |
+          cargo build --release -p chassis-core --example bench
+          cp target/release/examples/bench "$RUNNER_TEMP/bench-head"
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+          harness="$RUNNER_TEMP/base/chassis-core/examples/bench.rs"
+          cp "$harness" "$RUNNER_TEMP/base-harness.rs" 2>/dev/null || true
+          cp chassis-core/examples/bench.rs "$harness"
+          build() { (cd "$RUNNER_TEMP/base" && cargo build --release -p chassis-core --example bench --target-dir "$GITHUB_WORKSPACE/target/base"); }
+          if ! build; then
+            cp "$RUNNER_TEMP/base-harness.rs" "$harness"
+            build
+          fi
+          cp target/base/release/examples/bench "$RUNNER_TEMP/bench-base"
+
+      - name: Run in turns
+        run: |
+          mkdir -p results
+          python bench/compare.py run --base "$RUNNER_TEMP/bench-base" --head "$RUNNER_TEMP/bench-head" \
+            --data bench/ann/data --dataset ${{ matrix.case.dataset }} --n ${{ matrix.case.n }} \
+            --precision ${{ matrix.case.precision }} --label "${{ matrix.case.label }}" \
+            --out "results/result.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ strategy.job-index }}
+          path: results/result.json
+
+  report:
+    name: Report
+    needs: bench
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bench-*
+          path: results
+
+      - name: Compare
+        id: compare
+        run: |
+          set +e
+          python3 bench/compare.py report results > comment.md
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # One comment per pull request, updated on every push.
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- chassis-bench -->")) | .id' | head -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md > /dev/null
+          else
+            gh pr comment "$PR" --body-file comment.md
+          fi
+
+      - name: Fail on a slowdown
+        if: steps.compare.outputs.status != '0'
+        run: |
+          echo "A benchmark got markedly slower or lost recall; see the comment or the summary."
+          exit 1
