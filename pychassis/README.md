@@ -142,18 +142,21 @@ index.add((0.1, 0.2, 0.3))
 ### Error Handling
 
 ```python
-from chassis import VectorIndex, DimensionMismatchError, ChassisError
+from chassis import VectorIndex, DimensionMismatchError, IndexLockedError
+
+index = VectorIndex("vectors.chassis", dimensions=128)
+try:
+    index.add([0.1] * 64)
+except DimensionMismatchError as e:
+    print(e)
+    # The vector has 64 components, but this index holds vectors of 128
+    # help: make the vector with the same model as the index's vectors; this index was created for 128 dimensions
 
 try:
-    index = VectorIndex("vectors.chassis", dimensions=128)
-    
-    # This will raise DimensionMismatchError
-    index.add([0.1] * 64)
-    
-except DimensionMismatchError as e:
-    print(f"Dimension error: {e}")
-except ChassisError as e:
-    print(f"General error: {e}")
+    VectorIndex("vectors.chassis", dimensions=128)
+except IndexLockedError:
+    # One writer at a time; a reader searches while it writes.
+    reader = VectorIndex("vectors.chassis", dimensions=128, read_only=True)
 ```
 
 ## API Reference
@@ -242,11 +245,22 @@ class SearchResult:
 
 ### Exceptions
 
-- **`ChassisError`** - Base exception for all errors
-- **`DimensionMismatchError`** - Vector dimensions don't match
-- **`InvalidPathError`** - Path is invalid or inaccessible
-- **`IndexNotFoundError`** - Index file not found
-- **`NullPointerError`** - FFI returned NULL pointer
+Each says what was wrong, with the value, and on a line starting `help:` what to do instead. Each
+is a `ChassisError` and also the built-in exception it is a kind of, so `except ValueError`
+catches a bad argument. The [errors reference](https://github.com/tanvincible/chassis/blob/main/docs/src/guide/errors.md)
+lists their causes and fixes.
+
+- **`InvalidArgumentError`** (`ValueError`) - an argument out of range: dimensions, an option, an
+  id, a vector with NaN or infinity. A wrong type is a plain `TypeError`.
+- **`DimensionMismatchError`** (`ValueError`) - a vector or query of other dimensions than the index's
+- **`OptionsMismatchError`** (`ValueError`) - reopened with another metric or precision
+- **`IndexNotFoundError`** (`FileNotFoundError`) - no index at the path, for `read_only=True`
+- **`NotAnIndexError`** (`ValueError`) - the file isn't a Chassis index
+- **`IdInUseError`** (`ValueError`) - the id is taken; delete it first to replace it
+- **`IndexLockedError`** - another writer has the index open
+- **`ReadOnlyError`** - a `read_only=True` index asked to write
+- **`CorruptIndexError`**, **`IndexFullError`**, **`InvalidPathError`** (`OSError`) - a damaged
+  file, a full index, an operating-system error
 
 ## Thread Safety
 

@@ -243,6 +243,10 @@ _lib.chassis_precision.restype = ctypes.c_int
 _lib.chassis_last_error_message.argtypes = []
 _lib.chassis_last_error_message.restype = ctypes.c_char_p
 
+# chassis_last_error_code
+_lib.chassis_last_error_code.argtypes = []
+_lib.chassis_last_error_code.restype = ctypes.c_int
+
 # chassis_version
 _lib.chassis_version.argtypes = []
 _lib.chassis_version.restype = ctypes.c_char_p
@@ -263,6 +267,13 @@ def get_last_error() -> Optional[str]:
     return None
 
 
+def last_error(default: str):
+    """The exception for the last error on this thread, of the class its code names."""
+    from chassis.exceptions import from_code
+
+    return from_code(_lib.chassis_last_error_code(), get_last_error() or default)
+
+
 def get_version() -> str:
     """Get the Chassis library version.
 
@@ -279,5 +290,6 @@ __all__ = [
     "ChassisIndex",
     "ChassisIndexPtr",
     "get_last_error",
+    "last_error",
     "get_version",
 ]

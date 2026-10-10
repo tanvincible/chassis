@@ -8,6 +8,7 @@ from chassis import VectorIndex, IndexOptions, SearchResult
 from chassis.exceptions import (
     ChassisError,
     DimensionMismatchError,
+    ReadOnlyError,
 )
 
 
@@ -409,7 +410,7 @@ class TestReadOnly:
 
         reader = VectorIndex(path, dimensions=3, read_only=True)
         assert reader.search([1.0, 0.0, 0.0], k=1)[0].id == 10
-        with pytest.raises(ChassisError, match="read-only"):
+        with pytest.raises(ReadOnlyError, match="opened with read_only=True"):
             reader.add([0.0, 1.0, 0.0])
 
         writer.add([0.0, 1.0, 0.0], id=11)
