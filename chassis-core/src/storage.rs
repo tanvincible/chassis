@@ -1900,6 +1900,10 @@ fn dimension_mismatch(path: &Path, held: u32, asked: u32) -> anyhow::Error {
 
 /// Opens (creating if missing) and locks `path`, making sure the lock is on the file now at it.
 fn open_locked(path: &Path) -> Result<File> {
+    // Windows refuses to open a directory with "access denied", which would read as permissions.
+    if path.is_dir() {
+        return Err(open_failed(path, std::io::ErrorKind::IsADirectory.into(), true));
+    }
     for _ in 0..8 {
         let file = OpenOptions::new()
             .read(true)
