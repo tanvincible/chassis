@@ -124,3 +124,71 @@ is lossless on these integers (a fixed [0, 255] in steps of 1) gave 1.0000. Half
 holds integers up to 2,048 exactly, gave 1.0000 in the run itself. The known pass is now that:
 half precision on SIFT, recall@10 exactly 1. This is the second planted check that was a guess
 and not a certainty; both were replaced, and both are recorded here. Nothing else changed.
+
+## Results
+
+Run 38090885820, at b408e61; this report is `quant.py report` at f4dd9a1 over its eight
+artifacts. Both planted outcomes held: half precision on SIFT 1.0000, shuffled at most 0.0001
+everywhere.
+
+**The decision: int8 only with re-ranking.** No arm was within 0.01 of half precision at r=1 at
+ef 64 and 128 on all seven text configurations. Every arm was within it at r=2; the closest,
+i8-q99/first1k on openai3-384 at ef 64, lost 0.0034 [0.0004, 0.0065]. Recomputed from this plan's
+words, not `decide()`, the verdict is the same and all 252 losses agree within bootstrap noise.
+
+The predictions:
+
+1. Fails. i8-dim/first1k lost 0.0075 to 0.0210.
+2. Holds. i8-unit lost 0.0286 to 0.0497 at 1,536 dimensions.
+3. Fails. On minilm-384 i8-global lost less than i8-dim (0.0033 against 0.0116 at ef 64); on
+   bge-384 more, within noise.
+4. Fails. i8-vec lost 0.010 to 0.013 more than i8-dim on ada, and less on openai3 and minilm.
+5. Fails. cluster1k cost 0.006 to 0.032 more than first1k.
+6. Fails, all three parts, on the good side. b1-sign at r=1 was 0.770 to 0.796 at 1,536
+   dimensions and 0.553 to 0.636 at 384, and reached 0.95 by r=4 everywhere.
+7. Partly. With the all and first1k calibrations RaBitQ was never below b1-sign, and above it
+   wherever neither had reached its ceiling; with cluster1k it was below on 10 of 42.
+8. Not tested at this power. From 99,000 to 306,000 vectors (the same 1,000 queries, paired)
+   losses moved by under 0.008, every interval spanning zero, except cluster1k's, whose cluster is
+   drawn around a different vector at each size and so is not a comparison.
+9. Fails. 0.9405.
+
+## The skeptic pass
+
+Each claim was attacked by running it again under the assumption most likely to break it.
+
+* **Builds.** No verdict changes with any one build of an arm against any one of half's;
+  build-to-build differences were at most 0.0046, under half of every deciding margin.
+* **No configuration decides it alone.** Dropping any one, or both ada configurations, lets no
+  arm pass at r=1. The two best arms fail in opposite places: i8-dim/first1k passes only on ada,
+  i8-vec fails only on ada and bge.
+* **The graph is not the cause.** Stage 2's loss at r=1 and ef 128 is 0 to 0.006 smaller than
+  stage 1's, without a graph, and the same queries lose in both.
+* **What is lost is near-ties** (openai3-384, Euclidean distance). The neighbors lost are the
+  true 9th and 10th, and the result returned in their place is a median 0.12% farther for
+  i8-dim/first1k and 0.03% for i8-vec; counting any result within 0.5% of the 10th distance,
+  recall is at least 0.998. Half precision's own graph misses at ef 64 are twice as far.
+* **i8-dim fails on its calibration, not on eight bits.** The first 1,000 vectors' ranges clip
+  0.2% of components. A clipped vector is shorter, so it looks nearer to every query: 93% of the
+  results that displaced a neighbor had a clipped component, against 55% of all vectors. Rounding
+  with the same steps and no clipping gives 0.9947 in stage 1, against 0.9783. Built in Chassis on
+  openai3-384, after the results and on that one configuration: i8-dim/all lost 0.0036 and 0.0058
+  at ef 64 and 128, and first1k with each range widened by a quarter on each side 0.0082 and
+  0.0076. Both are within the bar.
+* **i8-vec and i8-global fail on ada because of an offset.** Every ada-002 vector has about -0.64
+  in dimension 194 and +0.20 in 954, which set its minimum and maximum, so its steps are 4.4 times
+  as coarse as openai3's. Leaving the nine offset dimensions out of the range, or subtracting
+  their mean, takes i8-vec's loss in stage 1 from 0.021 to 0.003 (one ada shard, 30,000 vectors).
+  i8-unit's larger loss on ada has another cause: its neighbors are 2.7 times as close together.
+
+## What it means
+
+As pre-registered: eight bits alone, with these calibrations, lose too much, and eight bits
+re-ranked keep both copies, smaller in memory and not on disk. But the losses at r=1 come from
+clipping and from ada's offset, and both have a fix this run did not include: a margin on the
+first vectors' ranges, and centering. That is not decided. It needs its own run, planned first,
+on all seven configurations and with cluster1k.
+
+One bit did better than predicted. In stage 1, RaBitQ with 40 candidates re-ranked reached 0.998
+at 1,536 dimensions, and with 100, 0.982 to 0.991 at 384, at a sixteenth of half precision's
+size. Whether that holds when a graph is searched by those distances was not measured.
