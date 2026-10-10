@@ -207,13 +207,17 @@ class ChassisPy:
     """Chassis through its Python package, one call a query, opened as a reader."""
 
     file, settings, queries = "chassis-full.chassis", EF, 1000
-    precision = "full"
+    precision, warm = "full", False
 
     def options(self, ef):
         from chassis import IndexOptions
 
         return IndexOptions(
-            max_connections=16, ef_construction=200, ef_search=ef, precision=self.precision
+            max_connections=16,
+            ef_construction=200,
+            ef_search=ef,
+            precision=self.precision,
+            warm=self.warm,
         )
 
     def build(self, train, path):
@@ -248,6 +252,16 @@ class ChassisPyHalf(ChassisPy):
     file, precision = "chassis-half.chassis", "half"
 
 
+class ChassisPyWarm(ChassisPy):
+    """The same file as chassis-py, opened with `warm`: only its cold run means anything new."""
+
+    warm = True
+
+
+class ChassisPyHalfWarm(ChassisPyHalf):
+    warm = True
+
+
 ENGINES = {
     "hnswlib": Hnswlib,
     "usearch": Usearch,
@@ -258,6 +272,8 @@ ENGINES = {
     "lancedb": Lance,
     "chassis-py": ChassisPy,
     "chassis-py-half": ChassisPyHalf,
+    "chassis-py-warm": ChassisPyWarm,
+    "chassis-py-half-warm": ChassisPyHalfWarm,
 }
 
 
@@ -314,8 +330,15 @@ def main() -> None:
 
     pagetool = os.environ.get("PAGETOOL")
     if pagetool:
+        # A file this process still maps stays in memory whatever it is told.
+        del engine
+        import gc
+
+        gc.collect()
         for f in files(path):
             subprocess.run([pagetool, "evict", str(f)], check=False, stdout=subprocess.DEVNULL)
+            resident = subprocess.run([pagetool, "resident", str(f)], capture_output=True, text=True)
+            print(f"inc-resident\t{name}\t{resident.stdout.strip()}", flush=True)
         subprocess.run([sys.executable, __file__, *sys.argv[1:7], "cold"], check=False)
 
 
