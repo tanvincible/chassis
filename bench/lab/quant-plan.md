@@ -246,3 +246,77 @@ i8-dim+25/first1k on openai3-384 (0.0082 and 0.0076) and centered i8-vec on one 
 every new arm was within 0.01, i8-vec-c lost least (0.0036 to 0.0050), and at that size cluster1k
 is a quarter of the data, so it says nothing about clusters. Nothing of minilm or bge beyond run
 1's numbers. 25% is the margin tried after run 1; 10% was added with only the smoke test seen.
+
+### Results
+
+Run 38131118757, at a51445b; this is `quant2.py report` over its eight artifacts, the same as the
+report the run made. Both planted outcomes held: half precision on SIFT 1.0000, shuffled at most
+0.0001 everywhere.
+
+**The decision: int8 alone, calibrated on the first vectors added, with i8-vec-c.** It passed
+with first1k and with cluster1k. The per-dimension ranges with a margin passed with first1k only,
+both close calls on bge-384.
+
+| arm | largest loss at r=1, ef 64 or 128 [95%] | where | passes |
+|---|---|---|---|
+| i8-vec-c/first1k | 0.0052 [0.0036, 0.0071] | openai3-384, ef 128 | yes |
+| i8-vec-c/cluster1k | 0.0061 [0.0043, 0.0081] | bge-384, ef 128 | yes |
+| i8-dim+10/first1k | 0.0085 [0.0062, 0.0107] | bge-384, ef 128 | yes, a close call |
+| i8-dim+25/first1k | 0.0094 [0.0068, 0.0121] | bge-384, ef 64 | yes, a close call |
+| i8-dim+25/cluster1k | 0.0110 [0.0086, 0.0134] | ada-306k, ef 128 | no |
+| i8-dim+10/cluster1k | 0.0242 [0.0211, 0.0276] | ada-306k, ef 128 | no |
+| i8-dim/first1k, run 1's | 0.0211 [0.0179, 0.0242] | bge-384, ef 128 | not decided on |
+
+The predictions:
+
+1. Holds. i8-vec-c/first1k lost at most 0.0052.
+2. Holds where it was decided: cluster1k was within 0.0017 of first1k at ef 64 and 128. In stage
+   1, with no graph, it was 0.0031 below first1k on bge-384.
+3. Fails. i8-dim+25/first1k lost 0.0094 on bge-384 at ef 128, in the range predicted, but that
+   passes.
+4. Fails. i8-dim+10/first1k passed on all seven, but lost less than i8-dim+25/first1k at both ef
+   on four configurations, not five, and by at most 0.0019.
+5. Holds. i8-dim+25/cluster1k failed on ada-306k alone, at ef 128, with any one build of each;
+   i8-dim+10/cluster1k on six.
+6. Holds. Stage 1 is bit-identical to run 1's, and stage 2 within 0.0016 at ef 64 and 128.
+
+### The skeptic pass, on the follow-up
+
+* **Recomputed** from the raw results without the harness's code: the 84 deciding losses agree
+  within 0.00005, and the decision is the same, with a second bootstrap too.
+* **Builds.** With any one build of i8-vec-c against any one of half's, its largest loss is
+  0.0063, and no interval's upper end passes 0.0083. Its smallest margin, 0.0039, is about ten
+  times the standard deviation build noise gives a loss (0.0004).
+* **The scheme that ran is centered.** On ada, i8-vec lost 0.018 to 0.021 in run 1, and i8-vec-c
+  0.001 to 0.003. Elsewhere centering moves recall by about 0.001. Nothing can clip with a
+  vector's own range, so the clipped fraction of 0 shows nothing.
+* **The graph hides some of the loss.** The loss rises with ef toward stage 1's, where every
+  vector is ranked: i8-vec-c's largest there is 0.0082 [0.0063, 0.0101], cluster1k on bge-384,
+  within the bar by less. i8-dim+25/first1k loses 0.0109 on bge-384 in stage 1, and
+  i8-dim+10/first1k 0.0094: their passes rest on the graph.
+* **cluster1k's seed was not lucky.** In stage 1, with 40 seeds, i8-vec-c lost 0.0046 to 0.0066
+  on openai3-384 and 0.0052 to 0.0082 on bge-384; the run's seed ranked 10th and 38th of 40. Most
+  of the loss is the rounding: with the mean of every vector as the center, openai3-384 loses
+  0.0050. The data was rebuilt from scratch, openai3 bit-identical and bge re-encoded on ARM,
+  within 0.0002 of the run in stage 1.
+* **Fewer vectors.** A center from the first 10 or 100 vectors, or the 100 or 300 nearest one
+  vector, lost about as much in stage 1: at most 0.0070 on openai3-384 and 0.0081 on bge-384.
+  Built in Chassis with the worst seeds of 1,000 and of 300, at most 0.0067 at ef 128.
+* **One vector is too few.** A center that is a single vector lost up to 0.0092 in stage 1, and
+  0.0086 and 0.0083 in Chassis at ef 128 (openai3-384's worst vector, and bge-384's first): within
+  the bar by 0.0014 to 0.0017.
+
+### What it means, after the follow-up
+
+As pre-registered: eight bits alone is within 0.01 of half precision, each vector rounded in its
+own range around a center taken from the first vectors added (LVQ-8). It goes on the roadmap, at
+8 bytes more a vector: 1,544 bytes against half's 3,072 at 1,536 dimensions, 392 against 768 at
+384.
+
+What was measured is recall@10, by rounding the vectors and building Chassis on them, at ef 64 and
+128, on seven configurations from four models. Not measured: a kernel and its speed, the file
+format, and the vectors added before there is a center. One vector is too few to center on; ten
+were enough. The loss grows with ef, toward at most 0.0082 when every vector is ranked.
+
+Per-dimension ranges with a margin are not the scheme to build: they pass with a random sample of
+first vectors only, and only because the graph hides part of their loss.
