@@ -190,5 +190,59 @@ first vectors' ranges, and centering. That is not decided. It needs its own run,
 on all seven configurations and with cluster1k.
 
 One bit did better than predicted. In stage 1, RaBitQ with 40 candidates re-ranked reached 0.998
-at 1,536 dimensions, and with 100, 0.982 to 0.991 at 384, at a sixteenth of half precision's
+at 1,536 dimensions, and with 100, 0.981 to 0.991 at 384, at a sixteenth of half precision's
 size. Whether that holds when a graph is searched by those distances was not measured.
+
+## The follow-up
+
+Written and committed before any of its results. The harness is `quant2.py`, run by
+`.github/workflows/quant2.yml`: quant.py's stages, data, calibrations, re-ranking and loss,
+with three schemes and a decision of its own.
+
+**The question.** Run 1's losses at r=1 came from clipping and from ada's offset. With ranges that
+leave room, or with the offset taken out, does eight bits alone come within 0.01 of half
+precision, calibrated on vectors Chassis would have?
+
+| scheme | range |
+|---|---|
+| i8-dim+10, i8-dim+25 | each dimension's range in the calibration set, widened by 10% or 25% of it on each side |
+| i8-vec-c | the calibration set's mean subtracted, then each vector's own min and max: LVQ-8 (Aguerrebere et al., VLDB 2023); 8 bytes more a vector |
+
+Each with first1k and cluster1k in stage 2, and with all too in stage 1. Stage 2 also builds half
+precision, the baseline, and run 1's i8-dim/first1k, to compare with run 1 and not decided on.
+The same eight configurations, data from the same caches, the same queries.
+
+**Checks on the harness.** `quant2.py selftest`: a margin clips nothing on its own calibration, and
+on a narrow one less than no margin does; errors are within half a step, and centering takes an offset all
+vectors share out of each vector's range. Then quant.py's own selftest. In the run, run 1's
+planted outcomes, both certain: half precision on SIFT exactly 1, shuffled at most 0.01.
+
+**Predictions.**
+
+1. i8-vec-c/first1k passes on all seven text configurations.
+2. i8-vec-c/cluster1k passes on all seven, within 0.003 of first1k everywhere.
+3. i8-dim+25/first1k passes everywhere but bge-384, where it loses 0.009 to 0.013 at ef 128.
+4. i8-dim+10/first1k passes on all seven, and loses less than i8-dim+25/first1k on at least five.
+5. i8-dim+10/cluster1k and i8-dim+25/cluster1k each fail on at least one configuration.
+6. i8-dim/first1k is within 0.005 of its run 1 loss everywhere in stage 2, and within 0.001 of
+   its run 1 recall in stage 1.
+
+**The decision.** The same bar as run 1: loss at r=1 at most 0.01 and its interval's upper end at
+most 0.02, at ef 64 and 128, on all seven text configurations. Arms: the six new ones.
+
+* A scheme passes with first1k and with cluster1k: **int8 alone, calibrated on the first vectors
+  added.** It goes on the roadmap, saying what was measured (recall) and what was not (a kernel,
+  its speed, the file format, the vectors added before there are 1,000).
+* An arm passes with first1k only: **only with a representative calibration**. It stays an idea,
+  needing ranges that are recomputed, at compaction for instance.
+* None passes: **not worth building with these calibrations**, recorded in ADR-0018's What Was
+  Left Out; eight bits re-ranked and one bit stay ideas.
+
+An arm that passes with a loss within 0.002 of the limit anywhere is reported as a close call.
+
+**What was seen before this was written.** Run 1's results and its skeptic pass, which built
+i8-dim+25/first1k on openai3-384 (0.0082 and 0.0076) and centered i8-vec on one ada shard in stage
+1 (0.0023). A smoke test of this harness on 4,000 openai3-384 vectors from one shard, not results:
+every new arm was within 0.01, i8-vec-c lost least (0.0036 to 0.0050), and at that size cluster1k
+is a quarter of the data, so it says nothing about clusters. Nothing of minilm or bge beyond run
+1's numbers. 25% is the margin tried after run 1; 10% was added with only the smoke test seen.
