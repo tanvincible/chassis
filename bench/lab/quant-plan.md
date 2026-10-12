@@ -391,3 +391,65 @@ decided on, as before.
 kernel lab's results. After the predictions were written, a smoke test of this harness on 8,000
 openai3-384 vectors from one shard, not results: q16 was the same as f32 everywhere, and on the same
 builds q8 lost 0.0013 to 0.0017 more than f32, q7 0.0039 to 0.0049. Nothing changed after it.
+
+### Results
+
+Run 38288917069, at 571e744; this is `quant3.py report` over its eight artifacts, the same as the
+report the run made. The planted outcomes held: half precision on SIFT 1.0000, shuffled at most
+0.0001 everywhere, and q16 within 0.0002 of f32 by distance in stage 1.
+
+**The decision: the integer kernel is next, with the query in eight bits.** q8 passed with first1k
+and with cluster1k on all seven text configurations, a close call on one: bge-384 with cluster1k
+at ef 128.
+
+| query | largest loss at r=1, ef 64 or 128 [95%] | where | passes |
+|---|---|---|---|
+| f32 | 0.0068 [0.0050, 0.0089] | bge-384, cluster1k, ef 128 | yes |
+| q16 | 0.0068 [0.0050, 0.0089] | the same | yes |
+| q8 | 0.0090 [0.0070, 0.0112] | the same | yes, a close call |
+| q7 | 0.0111 [0.0088, 0.0136] | the same | no |
+
+On the same builds, rounding the query cost q8 0.0000 to 0.0021 against f32, and q7 0.0015 to
+0.0043.
+
+The predictions:
+
+1. Holds, a close call: 0.0090.
+2. Holds. 0.27: rounding the query added 0.0072 to the vectors' 0.0264, summed at ef 128 with
+   first1k.
+3. Holds. 0.0090, on bge-384.
+4. Holds. q7 failed on bge-384 with cluster1k at ef 128, and nowhere else.
+5. Holds. q16 was the same as f32 to four decimals at ef 64 and 128.
+6. Holds. Within 0.0001, and identical in 21 of 24.
+
+### The skeptic pass, on the query
+
+* **Recomputed** from the raw results without the harness's code: the same losses to four
+  decimals, and the same decision with another bootstrap.
+* **The harness ranks as an integer kernel would.** On 20,000 openai3 vectors at 384 and 1,536
+  dimensions, a kernel computed from the codes, its dot products in exact integers, returned the
+  same ten as the harness for every one of 1,000 queries, with q8 and with q7.
+* **Builds.** With any one build of q8 against any one of half's, its largest loss is 0.0096. A
+  build's recall at ef 128 varies with a standard deviation of 0.0003 (77 pairs of builds, both
+  runs), so the close call's margin of 0.0010 is about three and a half of them.
+* **The pass does not rest on the cluster's seed, and the run's was the worst.** In stage 1 over 40
+  seeds, q8 lost 0.0072 to 0.0099 on bge-384 and 0.0051 to 0.0084 on openai3-384; the run's seed
+  was the worst of the 40 on bge-384 and 8th on openai3-384. Built in Chassis with bge-384's four
+  worst seeds, q8 lost 0.0076 to 0.0094 at ef 128 (upper ends at most 0.0114): all within the bar,
+  the worst by two standard deviations of build noise. The data was rebuilt, openai3 identical and
+  bge re-encoded on ARM, within 0.0002 of the run in stage 1.
+* **The graph hides some of the loss**, as it did with the query in f32. On bge-384 with cluster1k,
+  q8 lost 0.0093 at ef 256 and 0.0102 in stage 1, where every vector is ranked, against f32's
+  0.0082 there.
+
+### What it means, for the query
+
+As pre-registered: the integer kernel is next, with the query in eight bits, timed as
+`byte-plan.md` timed the f32-query kernels and with a plan of its own. Rounding the query costs up
+to 0.002 on top of rounding the vectors. That makes the worst case, bge-384 calibrated on one
+topic, a close call at ef 64 and 128 (at most 0.0094 over the worst seeds), and just over the bar
+when every vector is ranked.
+
+q7 failed, so on plain AVX2 (Zen 3 among the runners) the kernel cannot use `vpmaddubsw` with this
+rounding, and multiplies 16-bit pairs (`vpmaddwd`) instead. q16 is f32 to four decimals, if eight
+bits for the query ever proves too few.
