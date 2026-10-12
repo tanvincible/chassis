@@ -128,6 +128,18 @@ impl Timed for HH {
     }
 }
 
+/// Z: the loop with no kernel, picking and asking ahead only: what the loop itself costs.
+pub struct Z;
+impl Timed for Z {
+    const NAME: &'static str = "Z";
+    const COMPONENT: usize = 2;
+    #[inline(always)]
+    unsafe fn group<const W: usize>(_: &Query, v: [&[u8]; W]) -> [f32; W] {
+        black_box(v);
+        [0.0; W]
+    }
+}
+
 /// D, direct: `sum((q' - (lo + step * k))^2)`.
 pub struct D;
 impl Timed for D {
@@ -483,7 +495,7 @@ pub fn bench() -> anyhow::Result<()> {
             let query = Query::new(&x, &center);
             let rounds = 40_000_000 / dims / 32;
             let (wh, wb) = (group_width(dims * H::COMPONENT), group_width(dims * E::COMPONENT));
-            let mut ns = [f64::MAX; 6];
+            let mut ns = [f64::MAX; 7];
             for _ in 0..3 {
                 let times = [
                     best::<H>(&query, half_bytes, 2 * dims, wh, rounds),
@@ -492,11 +504,12 @@ pub fn bench() -> anyhow::Result<()> {
                     best::<E4>(&query, &records, stride, 4, rounds),
                     best::<H2>(&query, half_bytes, 2 * dims, wh, rounds),
                     best::<HH>(&query, half_bytes, 2 * dims, wh, rounds),
+                    best::<Z>(&query, half_bytes, 2 * dims, wh, rounds),
                 ];
                 ns.iter_mut().zip(times).for_each(|(n, t)| *n = n.min(t));
             }
-            let names = [H::NAME, D::NAME, E::NAME, E4::NAME, H2::NAME, HH::NAME];
-            let widths = [wh, wb, wb, 4, wh, wh];
+            let names = [H::NAME, D::NAME, E::NAME, E4::NAME, H2::NAME, HH::NAME, Z::NAME];
+            let widths = [wh, wb, wb, 4, wh, wh, wh];
             for ((name, width), time) in names.into_iter().zip(widths).zip(ns) {
                 println!("bytebench\t{regime}\t{dims}\t{name}\t{width}\t{time:.1}\t{:.3}", ns[0] / time);
             }
