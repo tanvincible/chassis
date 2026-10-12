@@ -1,0 +1,70 @@
+name: x86 bytebench
+
+# Experiment branch only: eight bits a component, two kernels timed against main's half-precision
+# kernel, in cache and out of it, per CPU. The plan and the decision rule are in
+# bench/lab/byte-plan.md. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/bytebench.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  SHA: fd3ed346ed3bb2d9aa4c4972b4b6c5c3a96d8d10
+
+jobs:
+  kernel:
+    name: bytebench (${{ matrix.runner }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest]
+        shard: [a, b, c, d, e, f, g, h]
+        include:
+          - { runner: ubuntu-24.04-arm, shard: a }
+          - { runner: ubuntu-24.04-arm, shard: b }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+
+      - name: Build the branch
+        run: |
+          git fetch -q origin lab/exp-int8
+          git worktree add --detach "$RUNNER_TEMP/src" "$SHA"
+          cd "$RUNNER_TEMP/src"
+          git log --oneline -1 | tee "$GITHUB_WORKSPACE/results/sha.txt"
+          cargo test -q --release -p chassis-core --lib byte
+          cargo build -q --release -p chassis-core --example bytebench
+
+      - name: Checks and timing
+        run: |
+          "$RUNNER_TEMP/src/target/release/examples/bytebench" | tee results/bytebench.tsv
+          { echo '```'; cat results/bytebench.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bytebench-${{ matrix.runner }}-${{ matrix.shard }}
+          path: results/

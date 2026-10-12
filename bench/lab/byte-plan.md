@@ -74,3 +74,16 @@ every CPU decided on and at every dimension:
 
 If D and E both qualify, E is the one, unless D is within 5% of it everywhere: D stores 4 bytes
 less a vector.
+
+## Amendment, before any run on the runners
+
+The harness ran on the Apple M5 twice, after this plan was committed and before any job on the
+runners. One planted check was a guess. HH at least 1.8 times H's time assumed the loop costs
+nothing but the kernel. Picking the vectors and asking for them ahead are not doubled, and on the
+M5 at 384 dimensions HH took 1.74 times H's time. The loop is now timed with no kernel too
+(**Z**), and the check is on the kernel's own time: HH less Z at least 1.5 times H less Z, in
+cache. On the M5 that was 1.95 to 2.06. The predictions and the decision are as committed.
+
+What the M5 showed, not decided on: H2 was within 3% of H in cache and up to 17% from it out of
+cache. E was 0.88 to 1.00 of H's speed in cache, and 0.95 to 1.10 out of it. D was 0.61 to 0.77.
+E4 was 1.04 to 1.17 out of cache where the width rule gives 1.
