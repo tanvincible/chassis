@@ -217,6 +217,11 @@ half precision it is level.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
+* **One Zen 3 ran the grouped half-precision kernel at 2.4 times its time** in cache, at 768 and
+  1,536 dimensions, against two other jobs on the same CPU (`bytebench.yml`, 2026-10-12, job f).
+  The same kernel called twice in a row took its usual time there, and so did the eight-bit
+  kernels. On x86 a group of four keeps sixteen sums, all sixteen registers, and spills three to
+  the stack inside its loop; whether that is the cause was not looked into.
 
 ## Not yet measured at all
 
