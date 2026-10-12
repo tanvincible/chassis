@@ -3,7 +3,8 @@
     python bench/lab/bytebench.py <artifact dir>...
 
 Each dir holds lscpu.txt and bytebench.tsv. A job whose H2 is more than 5% from H anywhere is
-too noisy to decide on; the rest are taken by CPU model, the median over jobs of each speed.
+too noisy to decide on, and one where the planted HH check fails is left out; the rest are taken
+by CPU model, the median over jobs of each speed.
 """
 
 import re
@@ -34,7 +35,8 @@ def main(dirs: list[Path]) -> None:
         doubled = min((ns[("cache", n, "HH")] - ns[("cache", n, "Z")]) / (ns[("cache", n, "H")] - ns[("cache", n, "Z")]) for n in DIMS)
         planted.append(f"* {d.name}, {model}: H2 at most {off:.1%} from H; HH less Z at least {doubled:.2f} times H less Z in cache")
         if doubled < 1.5:
-            planted[-1] += " **(planted check fails)**"
+            planted[-1] += " **(planted check fails: left out)**"
+            continue
         if off > 0.05:
             noisy.append(f"{d.name} ({model})")
             continue
