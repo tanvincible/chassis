@@ -320,3 +320,74 @@ were enough. The loss grows with ef, toward at most 0.0082 when every vector is 
 
 Per-dimension ranges with a margin are not the scheme to build: they pass with a random sample of
 first vectors only, and only because the graph hides part of their loss.
+
+## The query in eight bits
+
+Written and committed before any of its results. The harness is `quant3.py`, run by
+`.github/workflows/quant3.yml`: quant.py's data, calibrations, truth, recall and loss, quant2.py's
+LVQ-8, and query rounding with a decision of its own.
+
+**The question.** A kernel that keeps the query in f32 has to turn each byte into a float, and on
+Zen 3 and Zen 4 that cost a quarter or more of half precision's speed in cache (`byte-plan.md`).
+With the query in eight bits too, a distance is an integer dot product: VNNI on x86 where it is
+present, UDOT on ARM, 16-bit multiply-adds on plain AVX2, and no conversion. But the query is
+rounded as well as the vectors. With the query in eight bits, does LVQ-8 stay within 0.01 of half
+precision?
+
+**What is measured.** Vectors as LVQ-8 (i8-vec-c), centered on first1k and on cluster1k in stage 2,
+and on all too in stage 1. Each query is rounded as the vectors are: less the same center, in steps
+over its own range, the center added back. Queries:
+
+| query | levels | for |
+|---|---|---|
+| f32 | not rounded | the follow-up's arm, again |
+| q16 | 65,536 | 16-bit multiply-adds, x86 and ARM |
+| q8 | 256 | VNNI, UDOT, and 16-bit multiply-adds on plain AVX2 |
+| q7 | 128 | the most plain AVX2's 8-bit multiply-add (`vpmaddubsw`) takes without its 16-bit pair sums saturating |
+
+An integer kernel ranks by `|q - c|^2 - 2 (q' - c).(x' - c) + |x' - c|^2`, with `q'` and `x'` the
+rounded query and vector; that differs from the squared distance between them by the same amount for
+every vector of one query, so ranking by it is ranking by the distance from the rounded query to the
+rounded vector. Stage 1 ranks every vector that way, at r=1. Stage 2 builds Chassis on the rounded
+vectors as the follow-up did, twice (a, b), and half precision twice, and searches each build with
+every query, so a query's own cost is paired on the same graph; ef 16 to 256, k=10. Rounded as a
+query, a stored vector gives back its own codes, so these builds are the ones an integer kernel would
+make. Recall is always against the query as given. The same eight configurations, data caches,
+queries and Chassis (2b3ccb2).
+
+**Checks on the harness.** `quant3.py selftest`: a stored vector is its own eight-bit query; each
+query's error is within half a step of its own centered range, with an offset every vector shares
+(so the query is centered); a query not rounded is untouched; on synthetic data a query in 4 levels
+loses neighbors and one in 65,536 none. Then quant2.py's and quant.py's selftests. In the run,
+planted and certain: half precision on SIFT exactly 1; shuffled, ranked by the eight-bit queries, at
+most 0.01; and q16 within 0.002 of f32 in stage 1, by distance, on every configuration and center,
+its steps being 256 times finer than q8's. If any fails, the harness is wrong and no result counts.
+
+**Predictions.**
+
+1. q8 passes with first1k and with cluster1k on all seven text configurations.
+2. Rounding the query costs less than rounding the vectors: summed over the seven configurations at
+   ef 128 with first1k, q8's loss less f32's, on the same builds, is 0.2 to 0.8 times f32's loss.
+3. q8's largest loss at ef 64 or 128 is between 0.007 and 0.010, on bge-384.
+4. q7 fails on at least one configuration.
+5. q16 is within 0.001 of f32 at ef 64 and 128, everywhere.
+6. f32 in stage 1 is within 0.0005 of the follow-up's i8-vec-c, everywhere.
+
+**The decision.** The same bar: loss at r=1 at most 0.01 and its interval's upper end at most 0.02,
+at ef 64 and 128, on all seven text configurations, with first1k and with cluster1k.
+
+* f32 fails: **the follow-up does not reproduce.** That is reported before anything else, and
+  nothing else here is decided.
+* q8 passes: **the integer kernel is next, with the query in eight bits**, timed as `byte-plan.md`
+  timed the f32-query kernels, with its own plan. q7 is recorded, not decided on: whether plain AVX2
+  could use `vpmaddubsw`.
+* q8 fails and q16 passes: **the integer kernel is next, with the query in sixteen bits.**
+* Neither: **eight bits waits.** The query stays in f32, and that kernel's cost in cache stands.
+
+A pass with a loss within 0.002 of the limit is reported as a close call. Stage 1 is reported, not
+decided on, as before.
+
+**What was seen before this was committed.** Run 1, the follow-up and its skeptic pass, and the
+kernel lab's results. After the predictions were written, a smoke test of this harness on 8,000
+openai3-384 vectors from one shard, not results: q16 was the same as f32 everywhere, and on the same
+builds q8 lost 0.0013 to 0.0017 more than f32, q7 0.0039 to 0.0049. Nothing changed after it.

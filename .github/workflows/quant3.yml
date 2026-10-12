@@ -1,0 +1,118 @@
+name: x86 quant, the query in eight bits
+
+# Experiment branch only: LVQ-8 with the query rounded too, in 16, 8 and 7 bits. The plan and the
+# decision rule are in bench/lab/quant-plan.md, "The query in eight bits".
+# Data from the same caches as quant.yml. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/quant3.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  CHASSIS_SHA: 2b3ccb2f0ca9442fcbe6863d1ee9a8b93b21dfa2
+
+jobs:
+  quant:
+    name: quant (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { config: openai3-1536, dataset: openai3, n: 99000, dims: "" }
+          - { config: openai3-768, dataset: openai3, n: 99000, dims: "768" }
+          - { config: openai3-384, dataset: openai3, n: 99000, dims: "384" }
+          - { config: ada-99000, dataset: ada, n: 99000, dims: "" }
+          - { config: ada-306000, dataset: ada, n: 306000, dims: "" }
+          - { config: minilm-384, dataset: minilm, n: 99000, dims: "" }
+          - { config: bge-384, dataset: bge, n: 99000, dims: "" }
+          - { config: sift-128, dataset: sift, n: 200000, dims: "", graph: --no-graph }
+    env:
+      DATA: ${{ github.workspace }}/qdata
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(free -g | awk '/Mem/ {print $2}') GB" | tee -a "$GITHUB_STEP_SUMMARY"
+          df -h / | tail -1
+          mkdir results
+          lscpu > results/lscpu.txt
+
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: ${{ env.DATA }}
+          key: quant-data-${{ matrix.dataset }}-v1
+
+      - name: Prepare the data
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          pip install -q numpy pyarrow h5py
+          if [ "${{ matrix.dataset }}" = minilm ] || [ "${{ matrix.dataset }}" = bge ]; then
+            pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+            pip install -q sentence-transformers
+          fi
+          python bench/lab/quant.py prepare ${{ matrix.dataset }} "$DATA"
+          rm -f "$DATA"/*.parquet "$DATA"/*.hdf5 "$DATA"/*.partial
+          ls -la "$DATA"
+
+      - name: Build Chassis at ${{ env.CHASSIS_SHA }} and its Python package
+        run: |
+          git fetch -q origin "$CHASSIS_SHA"
+          git worktree add --detach "$RUNNER_TEMP/src" "$CHASSIS_SHA"
+          (cd "$RUNNER_TEMP/src" && git log --oneline -1 && cargo build -q --release -p chassis-ffi --target-dir "$RUNNER_TEMP/t")
+          pip install -q numpy pyarrow h5py
+          pip install -q --no-deps -e "$RUNNER_TEMP/src/chassisdb"
+          pip list 2>/dev/null | grep -iE "^(numpy|chassis)" | tee results/versions.txt
+
+      - name: Check the harness
+        run: python bench/lab/quant3.py selftest
+
+      - name: Round, rank and search
+        env:
+          CHASSIS_LIB_PATH: ${{ runner.temp }}/t/release
+        run: |
+          python bench/lab/quant3.py run ${{ matrix.dataset }} "$DATA" results ${{ matrix.n }} ${{ matrix.dims }} ${{ matrix.graph }} | tee results/run.log
+          python bench/lab/quant3.py report results >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quant3-${{ matrix.config }}
+          path: results/
+
+  report:
+    needs: quant
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: quant3-*
+          path: all
+      - name: The pre-registered report
+        run: |
+          pip install -q numpy
+          python bench/lab/quant3.py report all/* | tee report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report3
+          path: report.md
