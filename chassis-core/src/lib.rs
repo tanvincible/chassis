@@ -47,6 +47,8 @@
 //! These concerns are left to the application. Chassis is embedded the way
 //! SQLite is: a library in your process, with everything in one file.
 
+#[doc(hidden)]
+pub mod byte;
 pub mod distance;
 mod error;
 mod half;
