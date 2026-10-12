@@ -87,3 +87,63 @@ cache. On the M5 that was 1.95 to 2.06. The predictions and the decision are as 
 What the M5 showed, not decided on: H2 was within 3% of H in cache and up to 17% from it out of
 cache. E was 0.88 to 1.00 of H's speed in cache, and 0.95 to 1.10 out of it. D was 0.61 to 0.77.
 E4 was 1.04 to 1.17 out of cache where the width rule gives 1.
+
+## Results
+
+Run 38242852959, at aff0d14, the branch at fd3ed34; `bytebench.py` over its ten artifacts. The
+checks held in every job: every kernel within 4e-7 of the f64 reference, and groups the same bits
+as alone. The jobs landed on Zen 3 (EPYC 7763, three), Zen 4 (9V74, one), Zen 5 (9V45, three), a
+Xeon Platinum 8573C and two Neoverse-N2.
+
+**Planted.** HH less Z was 1.61 to 2.00 times H less Z in cache, except in one Zen 3 job, where
+it was 0.72: there H, and H2, took 98 and 187 ns at 768 and 1,536 dimensions, where the other two
+Zen 3 jobs took 40 to 42 and 73 to 75, and HH and the eight-bit kernels took what they took
+elsewhere. That job's H is not to be trusted, and it flatters eight bits; left out, the decision
+is the same. H2 was more than 5% from H, out of cache only, in both Neoverse-N2 jobs (6.4%, 9.0%)
+and on the Xeon (10.4%): not decided on.
+
+**The decision: no format yet.** Speed is H's time over the kernel's, the median by CPU:
+
+| CPU | regime | E at 384 | E at 768 | E at 1,536 | E4 at 384 | E4 at 768 | D at 1,536 |
+|---|---|---|---|---|---|---|---|
+| Zen 3 | cache | 1.03 | 0.90 | 0.75 | 0.99 | 0.79 | 0.60 |
+| Zen 4 | cache | 1.04 | 0.92 | 0.74 | 0.96 | 0.78 | 0.55 |
+| Zen 5 | cache | 1.14 | 1.18 | 1.20 | 1.07 | 1.03 | 0.64 |
+| Zen 3 | memory | 1.17 | 0.84 | 1.09 | 1.54 | 1.07 | 0.88 |
+| Zen 4 | memory | 1.75 | 0.91 | 1.21 | 2.10 | 1.30 | 0.97 |
+| Zen 5 | memory | 1.30 | 0.65 | 1.32 | 1.76 | 1.09 | 1.02 |
+
+E's worst was 0.74 in cache and 0.65 out of it; D's 0.55 and 0.54. Neither reaches the second
+outcome's 0.75 and 1.0.
+
+Not decided on: on Neoverse-N2, E was 0.92 to 0.93 in cache, where its H2 was within 1.5%, and
+0.86 to 1.40 out of it; on the Xeon 0.86 to 0.99 in cache and 1.01 to 1.53 out of it.
+
+The predictions:
+
+1. Fails. In cache at 1,536 dimensions E was 0.75 on Zen 3 and 0.74 on Zen 4.
+2. Holds. D was 0.55 to 0.64 where E was 0.74 to 1.20, and slower than E on every machine.
+3. Fails. At 768 dimensions out of cache E was 0.65 to 0.91, and at 1,536 on Zen 3 1.09.
+4. Not tested: both Neoverse-N2 jobs were too noisy out of cache. In cache E was 0.93 at 1,536,
+   so it would have failed.
+5. Holds. 1.17 to 1.75.
+6. Fails.
+
+**Two causes, one of them not the kernel.** Out of cache at 768 dimensions, E's vectors are 768
+bytes and the width rule computes them one at a time, while H's 1,536 bytes go four or eight at a
+time. In groups of four (E4) they were 1.07 to 1.30 times as fast as H. The width rule counts
+bytes; for eight bits it should count components. In cache at 1,536, on Zen 3 and Zen 4, the
+kernel is slower: each eight components take a widening load and a conversion to float, where H
+takes one conversion. Its loop has the same shape as `main`'s: four sums a vector, in groups of
+four, and, on x86, three of the sixteen spilled to the stack in both. Zen 5 was faster in cache
+with eight bits, 1.20.
+
+## What it means
+
+As pre-registered: no file format yet. The out-of-cache shortfall goes with the width rule. The
+cost in cache is the conversion, a quarter on Zen 3 and Zen 4, and a kernel that keeps the query
+in f32 cannot avoid it. Next is the query in eight bits too, multiplied as integers, which needs
+a recall run of its own first: its own rounding is added to the vectors'.
+
+The one Zen 3 job where `main`'s grouped half-precision kernel ran 2.4 times as slow, and the
+same kernel run twice did not, is not explained.
