@@ -33,7 +33,9 @@ retriever.invoke("how long does a refund take?")
   `similarity_search_with_relevance_scores` gives 0 to 1. `max_marginal_relevance_search` picks
   documents that are close to the query and different from each other.
 - **Options**: `metric="cosine"` (the default) or `"euclidean"`; `precision="half"` keeps vectors
-  in half the space at the same recall. A store keeps the options it was created with.
+  in about half the space, with the same recall on the embeddings measured. They're fixed when the
+  store is created: open it again with the same ones, or an `OptionsMismatchError` says which to
+  pass. A `read_only` store takes them from the file.
 - **More processes**: one process writes a store at a time. Others open it with
   `read_only=True`, take no lock, and see what the writer last saved.
 

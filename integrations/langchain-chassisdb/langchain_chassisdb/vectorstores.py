@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from chassisdb import IndexOptions, VectorIndex
+from chassisdb import IndexNotFoundError, IndexOptions, VectorIndex
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
@@ -55,8 +55,14 @@ class ChassisVectorStore(VectorStore):
         self._read_only = read_only
         # LangChain runs the async methods on worker threads: one call at a time, through `_lock`.
         self._lock = threading.RLock()
+        documents = self.path.with_suffix(".db")
+        if read_only and not documents.exists():
+            raise IndexNotFoundError(
+                f"No store at {self.path}: {documents} doesn't exist\nhelp: check the path, or "
+                "create the store first by opening it without read_only where it is written"
+            )
         self._db = sqlite3.connect(
-            self.path.with_suffix(".db"), isolation_level=None, check_same_thread=False, timeout=30
+            documents, isolation_level=None, check_same_thread=False, timeout=30
         )
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(
@@ -82,6 +88,15 @@ class ChassisVectorStore(VectorStore):
     def _dimensions(self) -> int | None:
         row = self._db.execute("SELECT value FROM meta WHERE name = 'dimensions'").fetchone()
         return int(row[0]) if row else None
+
+    def _current(self) -> VectorIndex | None:
+        """The index, opened once the store holds a vector: a reader may open the store before
+        its writer has added anything."""
+        if self._index is None:
+            dimensions = self._dimensions()
+            if dimensions is not None:
+                self._open(dimensions)
+        return self._index
 
     def _open(self, dimensions: int) -> VectorIndex:
         if self._index is None:
@@ -201,7 +216,7 @@ class ChassisVectorStore(VectorStore):
         self, embedding: list[float], k: int = 4, filter: dict | None = None
     ) -> list[tuple[Document, float]]:
         with self._lock:
-            if self._index is None:
+            if self._current() is None:
                 return []
             allowed = self._matching(filter)
             if allowed == []:
@@ -236,7 +251,7 @@ class ChassisVectorStore(VectorStore):
         """`k` documents close to `embedding` and different from each other, chosen among the
         `fetch_k` closest. `lambda_mult` 1 is closest only, 0 most different."""
         with self._lock:
-            if self._index is None:
+            if self._current() is None:
                 return []
             allowed = self._matching(filter)
             if allowed == []:
@@ -250,7 +265,9 @@ class ChassisVectorStore(VectorStore):
         return [_document(rows[hits[i].id]) for i in chosen if hits[i].id in rows]
 
     def _select_relevance_score_fn(self) -> Callable[[float], float]:
-        if self._options.metric == "cosine":
+        # The file's metric: a read_only store takes it from there, whatever was asked for.
+        index = self._current()
+        if (index.metric if index is not None else self._options.metric) == "cosine":
             return self._cosine_relevance_score_fn
         return self._euclidean_relevance_score_fn
 

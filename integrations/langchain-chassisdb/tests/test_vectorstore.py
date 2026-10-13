@@ -76,3 +76,27 @@ def test_readers_and_their_errors(tmp_path, embeddings):
         reader.add_texts(["no"])
     with pytest.raises(ValueError, match="help: pass path="):
         ChassisVectorStore.from_texts(["x"], embeddings)
+
+
+def test_a_reader_opened_first_finds_what_is_added_later(tmp_path, embeddings):
+    writer = ChassisVectorStore(tmp_path / "docs.chassis", embeddings)
+    reader = ChassisVectorStore(tmp_path / "docs.chassis", embeddings, read_only=True)
+    assert reader.similarity_search("anything", k=1) == []
+    writer.add_texts(["added after the reader opened"], ids=["late"])
+    assert [doc.id for doc in reader.similarity_search("added after", k=1)] == ["late"]
+
+
+def test_a_reader_on_a_missing_store_says_so(tmp_path, embeddings):
+    from chassisdb import IndexNotFoundError
+
+    with pytest.raises(IndexNotFoundError, match="help: check the path"):
+        ChassisVectorStore(tmp_path / "typo.chassis", embeddings, read_only=True)
+    assert not (tmp_path / "typo.db").exists()
+
+
+def test_scores_follow_the_files_metric(tmp_path, embeddings):
+    ChassisVectorStore.from_texts(
+        ["a b c"], embeddings, metric="euclidean", path=tmp_path / "e.chassis"
+    )
+    reader = ChassisVectorStore(tmp_path / "e.chassis", embeddings, read_only=True)
+    assert reader._select_relevance_score_fn() == reader._euclidean_relevance_score_fn
