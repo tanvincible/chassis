@@ -9,6 +9,7 @@ description = "LangChain vector store on Chassis: semantic search in one file, i
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 authors = [{name = "Chassis Contributors"}]
 keywords = ["langchain", "vector store", "semantic search", "rag", "embeddings"]
 dependencies = [
