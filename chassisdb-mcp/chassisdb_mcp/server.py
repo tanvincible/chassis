@@ -31,9 +31,6 @@ from chassisdb import (
     IndexOptions,
     VectorIndex,
 )
-from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import ValidationError
 from typing_extensions import TypedDict  # pydantic needs this one before Python 3.12
 
 try:
@@ -142,7 +139,10 @@ class Embedder:
     def _load(self) -> Callable[[list[str]], object]:
         with self._lock:
             if self._embed is None:
+                log(f"loading {self.spec}")
+                start = time.monotonic()
                 self._embed = LOADERS[self.kind](self.model)
+                log(f"{self.spec} ready in {time.monotonic() - start:.1f} s")
             return self._embed
 
     def __call__(self, texts: list[str]) -> np.ndarray:
@@ -176,7 +176,6 @@ def _fastembed(model: str) -> Callable[[list[str]], object]:
             f"fastembed has no model {model!r}\nhelp: {did_you_mean}fastembed's models are "
             f"{', '.join(names)}"
         )
-    log(f"loading {model} (the first time, it downloads from Hugging Face)")
     try:
         fast = TextEmbedding(model)
     except Exception as e:
@@ -192,7 +191,6 @@ def _sentence_transformers(model: str) -> Callable[[list[str]], object]:
         from sentence_transformers import SentenceTransformer
     except ImportError:
         raise _missing("sentence-transformers") from None
-    log(f"loading {model} (the first time, it downloads from Hugging Face)")
     try:
         st = SentenceTransformer(model)
     except Exception as e:
@@ -398,9 +396,13 @@ class Memory:
             return [row[0] for row in self.db.execute("SELECT id FROM memories")]
         ids = [row[0] for row in self.db.execute(_TAGGED, (tag,))]
         if not ids and self.db.execute("SELECT 1 FROM memories LIMIT 1").fetchone():
-            tags = ", ".join(f"{t} ({n})" for t, n in self._tag_counts().items())
+            counts = self._tag_counts()
+            close = difflib.get_close_matches(tag.lower(), [t.lower() for t in counts], n=1)
+            meant = next((t for t in counts if close and t.lower() == close[0]), None)
+            tags = ", ".join(f"{t} ({n})" for t, n in counts.items())
             raise Problem(
                 f"No memory has the tag {tag!r}\nhelp: "
+                + (f"did you mean {meant!r}? " if meant else "")
                 + (f"the tags are {tags}" if tags else "no memory has a tag yet")
             )
         return ids
@@ -488,7 +490,9 @@ class Memory:
                 raise self._mismatch(e) from e
             return self._rows(hits)
 
-    def forget(self, id: int) -> Forgotten:
+    def forget(self, id: int | str) -> Forgotten:
+        if isinstance(id, str) and id.lstrip("#").isdigit():
+            id = int(id.lstrip("#"))  # As ids are shown: "#23"
         with self.lock, self._writing():
             row = None
             if isinstance(id, int) and 0 <= id < 2**63:
@@ -609,81 +613,12 @@ def _memory(row: tuple) -> Remembered:
     return {"id": id, "text": text, "tags": json.loads(tags), "created": created}
 
 
-class _Server(MCPServer):
-    """Arguments that don't fit a tool's schema are said plainly, with what to do, and without
-    the link pydantic adds to each."""
+def build_server(memory: "Memory | Problem"):  # -> MCPServer
+    """The MCP server with its tools on `memory` (`_serve`). The MCP SDK takes half a second to
+    import, so only serving imports it: the other commands start without it."""
+    from chassisdb_mcp._serve import build_server as build
 
-    async def call_tool(self, name, arguments, context=None):  # type: ignore[no-untyped-def]
-        try:
-            return await super().call_tool(name, arguments, context)
-        except ToolError as e:
-            if not isinstance(e.__cause__, ValidationError):
-                raise
-            wrong = "; ".join(
-                f"{'.'.join(map(str, error['loc']))}: {error['msg']}"
-                + ("" if error["type"] == "missing" else f" (given {error['input']!r:.40})")
-                for error in e.__cause__.errors()
-            )
-            raise ToolError(
-                f"The arguments don't fit {name}: {wrong}\nhelp: pass them as the tool's input "
-                "schema says"
-            ) from e.__cause__
-
-
-def build_server(memory: "Memory | Problem") -> MCPServer:
-    """The server, with its tools on `memory`; or, when the memory couldn't be opened, tools that
-    say why, so an agent learns what to fix instead of seeing a server that failed to start."""
-    server = _Server(
-        "chassis-memory",
-        version=VERSION,
-        instructions=(
-            "Long-term memory that lasts across sessions, on this machine: use it for anything to "
-            "keep for later sessions. Recall before answering anything earlier sessions may have "
-            "settled, such as the user's preferences or a project's decisions. Remember what is "
-            "worth knowing next time, one fact per memory, written to stand on its own. When "
-            "remember returns a similar memory that the new one repeats or makes wrong, forget it. "
-            "Tags match whatever their case; list_memories shows them."
-        ),
-    )
-
-    def run(call: Callable[[Memory], object]) -> object:
-        try:
-            if isinstance(memory, Problem):
-                raise memory
-            return call(memory)
-        except (Problem, ChassisError) as e:
-            raise ToolError(str(e)) from e
-        except Exception as e:  # MCP would show only "Error executing tool"
-            raise ToolError(f"{type(e).__name__}: {e}") from e
-
-    @server.tool()
-    def remember(text: str, tags: list[str] | str | None = None) -> Stored:
-        """Store a memory: one fact, decision, preference or note worth knowing in later sessions,
-        written to stand on its own. Tags, such as a project's name, let recall look among them
-        only. Returns its id and the most similar memories already kept, with their distance
-        (0 is the same meaning): forget one that the new memory repeats or makes wrong."""
-        return run(lambda m: m.remember(text, tags))  # type: ignore[return-value]
-
-    @server.tool()
-    def recall(query: str, k: int = 5, tag: str | None = None) -> list[Found]:
-        """Find the k memories closest in meaning to the query, nearest first: their ids, text,
-        tags, when each was made, and distance (smaller is closer; 0 is the same meaning). With a
-        tag, only memories that have it."""
-        return run(lambda m: m.recall(query, k, tag))  # type: ignore[return-value]
-
-    @server.tool()
-    def forget(id: int) -> Forgotten:
-        """Delete the memory with this id, as recall or list_memories showed it. Returns what was
-        forgotten."""
-        return run(lambda m: m.forget(id))  # type: ignore[return-value]
-
-    @server.tool()
-    def list_memories(tag: str | None = None, limit: int = 20, offset: int = 0) -> Overview:
-        """The memories, newest first, with how many there are, every tag and its count, the
-        folder they are kept in and the embedding model: to show the user what is remembered."""
-        return run(lambda m: m.overview(tag, limit, offset))  # type: ignore[return-value]
-
-    return server
+    return build(memory)
 
 
 def _plural(n: int, noun: str) -> str:
@@ -769,7 +704,7 @@ def main(argv: list[str] | None = None) -> None:
     remember.add_argument("text")
     remember.add_argument("--tag", action="append", default=[], dest="tags")
     forget = command("forget", "delete a memory by id")
-    forget.add_argument("id", type=int)
+    forget.add_argument("id", help="as shown: 23 or #23")
     command("reembed", "move every memory to --embedder's model")
     args = parser.parse_args(argv)
     # Not set_defaults: the subcommands share these options, defaults and all.

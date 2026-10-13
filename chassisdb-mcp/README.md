@@ -27,6 +27,12 @@ claude mcp add --scope user chassis-memory -- \
   uvx --from 'chassisdb-mcp[fastembed]' chassisdb-mcp --embedder fastembed:BAAI/bge-small-en-v1.5
 ```
 
+The first launch installs the package and the model's runtime, which can take a minute, longer
+than a client waits for a server to connect: run the command once in a terminal first (`uvx
+--from 'chassisdb-mcp[fastembed]' chassisdb-mcp --version`). For a memory the whole team's
+sessions in one project use, `--scope project` writes the setup to `.mcp.json` in the repository
+instead, and `--dir` names the folder.
+
 Claude Code keeps a memory of its own, and an agent uses that one when both are there. To have it
 use this one, turn Claude Code's off in `~/.claude/settings.json`:
 
@@ -87,6 +93,36 @@ folder's, until you move the memories, as below.
 - `forget(id)` deletes one and returns what it was.
 - `list_memories(tag=None, limit=20)` shows what is remembered: the memories, newest first, every
   tag and its count, the folder and the model.
+
+A distance is 0 for the same meaning and grows as meanings part, but how far apart is "related"
+depends on the model, and changes with a `reembed`: rank by it rather than cut at a fixed number
+where you can. As a rough guide, on one project's memories, bge-small-en-v1.5 put the right
+answer within about 0.30 of a question and two wordings of one fact within about 0.15;
+bge-base-en-v1.5 within 0.40 and 0.19.
+
+From your own code, the MCP Python SDK (2.x) talks to the server like this:
+
+```python
+import anyio
+from mcp import Client, StdioServerParameters
+
+server = StdioServerParameters(
+    command="uvx",
+    args=["--from", "chassisdb-mcp[fastembed]", "chassisdb-mcp",
+          "--embedder", "fastembed:BAAI/bge-small-en-v1.5"],
+)
+
+async def main():
+    async with Client(server) as client:
+        await client.call_tool("remember", {"text": "Releases go out on Thursdays", "tags": ["ops"]})
+        found = await client.call_tool("recall", {"query": "when do we release", "k": 3})
+        if found.is_error:
+            print(found.content[0].text)  # What was wrong, then what to do
+        else:
+            print(found.structured_content["result"])  # A list comes wrapped in "result"
+
+anyio.run(main)
+```
 
 ## See and change what it remembers
 

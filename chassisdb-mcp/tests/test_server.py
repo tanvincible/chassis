@@ -57,6 +57,8 @@ def test_remember_recall_forget(tmp_path):
     assert [h["id"] for h in memory.recall("coffee", 5, "CHASSIS")] == [tabs["id"]]
     with pytest.raises(Problem, match=r"No memory has the tag 'nope'\nhelp: the tags are chassis"):
         memory.recall("coffee", 5, "nope")
+    with pytest.raises(Problem, match=r"help: did you mean 'chassis'\? the tags are"):
+        memory.recall("coffee", 5, "chasis")
 
     # A new memory shows the old one it contradicts, to forget.
     black = memory.remember("The user drinks black coffee now, never green tea", ["prefs"])
@@ -240,7 +242,7 @@ def test_the_command_line(tmp_path, capsys):
     assert json.loads(run("recall", "tabs or spaces", "-k", "1", "--json", *d))[0]["id"] in (1, 2)
     empty = ("--dir", str(tmp_path / "empty"), "--embedder", "openai:64")
     assert run("recall", "anything", *empty) == "No memory matches.\n"
-    assert run("forget", "1", *d).startswith("forgot #1: Tabs, not spaces")
+    assert run("forget", "#1", *d).startswith("forgot #1: Tabs, not spaces")
     assert run("status", *d).startswith("1 memory in")
     with pytest.raises(SystemExit):
         run("forget", "1", *d)
