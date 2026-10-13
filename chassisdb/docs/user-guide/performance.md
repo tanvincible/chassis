@@ -1,5 +1,12 @@
 # Performance & Tuning
 
+A search over tens of thousands of vectors takes about a tenth of a millisecond, and adding a few
+thousand vectors with `add_batch` a tenth of a second, so in most apps the embedding model sets the
+speed: embedding a query takes milliseconds, and embedding a corpus most of the time an index takes
+to build. With several worker processes on one machine, limit each model's threads (fastembed's
+`threads=`, PyTorch's `torch.set_num_threads`) so they don't fight over the cores; embed texts of
+similar length together, since a batch is padded to its longest text.
+
 Chassis is built on HNSW (Hierarchical Navigable Small World) graphs. You can tune the trade-off between build speed, search speed, and recall accuracy using `IndexOptions`.
 
 ## Configuration Options

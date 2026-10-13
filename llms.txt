@@ -12,6 +12,12 @@ Chassis stores vectors and integer ids only: keep text and metadata where the ap
 - [Rust API](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/api-reference.md): `VectorIndex`, `IndexReader`, `IndexOptions`
 - [C API](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/c-api.md): every `chassis_*` function
 - [Errors](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/errors.md): each kind, and what to do about it
+- [Next to your database](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/with-a-database.md): one id for both, the write order, what a crash leaves and how to mend it
+
+## Integrations
+
+- [LangChain](https://raw.githubusercontent.com/tanvincible/chassis/main/integrations/langchain-chassisdb/README.md): `pip install langchain-chassisdb`, a vector store with metadata filters and MMR
+- [MCP memory server](https://raw.githubusercontent.com/tanvincible/chassis/main/chassisdb-mcp/README.md): `chassisdb-mcp`, long-term memory for coding agents
 
 ## Examples
 

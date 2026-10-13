@@ -100,8 +100,15 @@ reader.close()
 - **Ids** are ints from 0 to 2**64 - 2. `add` without an id takes one past the largest so far and
   never reuses one. Use the app's own row ids with `add(vector, id=...)` or
   `add_batch(vectors, ids=...)`.
+- **Next to a database**: give each vector its row's id; flush the index inside the database
+  transaction, before committing; search with `allowed=` the ids of rows that exist; replace a
+  vector by delete, then add, under one flush. The guide, with what a crash leaves:
+  https://tanvincible.github.io/chassis/guide/with-a-database.html
+- **Compacting**: deletes cost speed, not recall; compact once `deleted_count()` nears `len()`.
 - **Many at once**: `add_batch` links on every core, far faster than `add` in a loop;
   `search_batch(queries, k)` returns `(ids, distances)` arrays for many queries in one call.
+- **Speed**: a search over tens of thousands of vectors takes about 0.1 ms, so the embedding model
+  sets the latency. With several worker processes, give each model a thread or two.
 - **Memory**: `IndexOptions(precision="half")` keeps vectors as 16-bit floats: about half the file
   and memory for long vectors; recall was the same on the embeddings measured.
 - **Errors** say what was wrong and what to do on a `help:` line: read it before changing code.
