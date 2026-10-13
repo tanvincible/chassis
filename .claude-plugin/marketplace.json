@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "chassis",
+  "description": "Chassis, an embedded vector index for local semantic search",
+  "owner": {
+    "name": "Chassis contributors",
+    "url": "https://github.com/tanvincible/chassis"
+  },
+  "plugins": [
+    {
+      "name": "chassis",
+      "description": "Add local semantic search to an app with Chassis: vectors in one file, searched in-process, no server.",
+      "source": "./plugins/chassis",
+      "category": "development"
+    }
+  ]
+}

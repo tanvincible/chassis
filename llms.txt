@@ -1,0 +1,25 @@
+# Chassis
+
+> Chassis is an embedded vector index for local semantic search: approximate nearest-neighbor search (HNSW) over embeddings kept in one file, inside your own process, with no server. Python: `pip install chassisdb`, `import chassisdb` (Python 3.11+). Rust: `cargo add chassisdb`. C: a library and `chassis.h` with each GitHub release.
+
+Chassis stores vectors and integer ids only: keep text and metadata where the app keeps its data (SQLite, files) under the same id. An index's dimensions, metric, precision and `max_connections` are fixed when it is created and must be given again to reopen it. Adds and deletes are durable after `flush()`; closing or dropping an index without one discards them, as a crash would. One process writes a file at a time; readers take no lock, in any process, and see the last flush. Every error says what was wrong and, on a `help:` line, what to do.
+
+## Docs
+
+- [Everything below on one page](https://tanvincible.github.io/chassis/llms-full.txt): the guides, the Python, Rust and C references, the errors, and an example
+- [Getting started](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/getting-started.md): Rust, with pointers to Python and C
+- [Python API](https://raw.githubusercontent.com/tanvincible/chassis/main/chassisdb/README.md): `VectorIndex`, `IndexOptions`, exceptions
+- [Rust API](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/api-reference.md): `VectorIndex`, `IndexReader`, `IndexOptions`
+- [C API](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/c-api.md): every `chassis_*` function
+- [Errors](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/errors.md): each kind, and what to do about it
+
+## Examples
+
+- [Notes search](https://raw.githubusercontent.com/tanvincible/chassis/main/chassisdb/examples/notes_search.py): text in SQLite, vectors in Chassis, "more like this", deletes
+- [Agent skill](https://raw.githubusercontent.com/tanvincible/chassis/main/plugins/chassis/skills/chassis/SKILL.md): the pattern and the rules, for coding agents
+
+## Optional
+
+- [How it works](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/architecture/overview.md)
+- [Performance](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/architecture/performance.md)
+- [Changelog](https://raw.githubusercontent.com/tanvincible/chassis/main/CHANGELOG.md)

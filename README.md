@@ -39,11 +39,20 @@ An index opens in about a millisecond: only its headers are read until a search 
 
 It is not a database server or a distributed system, and it stores vectors and ids, not metadata.
 
+## When to use it
+
+Chassis fits an app that embeds its own data and searches it on the same machine: a desktop or command-line app, a local RAG or agent memory, a cache shared by a few worker processes. Other tools fit other shapes:
+
+* [sqlite-vec](https://github.com/asg017/sqlite-vec), when the data is in SQLite already and the search should be part of SQL queries.
+* [LanceDB](https://github.com/lancedb/lancedb), when you want one store for vectors and their columns, with filters in the query and versions of the data.
+* A server such as pgvector or Qdrant, when many machines write to one index, or other services query it over the network.
+
 ## Learn More
 
 * [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](chassisdb/README.md)
 * [How it works](docs/src/architecture/overview.md), and why, in the [decision records](docs/src/adr)
 * [Benchmarks](docs/src/architecture/performance.md), and what is [planned](ROADMAP.md)
+* Coding with an agent? In Claude Code, `/plugin install chassis --marketplace tanvincible/chassis`; for Cursor, Codex and the rest, see [Chassis for coding agents](docs/src/guide/agents.md), and [llms.txt](llms.txt)
 
 ## Status
 

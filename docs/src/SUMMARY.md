@@ -9,6 +9,7 @@
 - [API Reference](./guide/api-reference.md)
 - [C API Reference](./guide/c-api.md)
 - [Errors](./guide/errors.md)
+- [Chassis for Coding Agents](./guide/agents.md)
 
 # Architecture
 

@@ -1,0 +1,129 @@
+---
+description: Add local semantic search with Chassis, an embedded vector index (pip install chassisdb, cargo add chassisdb). Use for vector search, similarity search, "more like this", RAG retrieval, agent memory or nearest neighbors, in-process with the index in one file and no server.
+globs:
+alwaysApply: false
+---
+
+# Local semantic search with Chassis
+
+Chassis keeps embeddings in one file and searches them (HNSW) inside the app's process. It stores
+vectors and integer ids only: keep the text and metadata where the app already keeps data (SQLite,
+JSON, files), and use the same id in both.
+
+## Pick it, or something else
+
+- **Chassis**: an app that embeds its own data and searches it locally: a desktop or CLI app, a
+  local RAG, agent memory, a cache, workers on one machine.
+- **sqlite-vec**: the data is in SQLite already and vector search should run inside SQL queries.
+- **LanceDB**: one store for vectors and their columns, with filters in the query and versions.
+- **A server (pgvector, Qdrant, Milvus)**: many machines write to one index, or other services query
+  it over the network.
+
+## Install
+
+```sh
+pip install chassisdb   # Python 3.11+; import chassisdb
+cargo add chassisdb     # Rust; use chassisdb
+```
+
+C: download the library and `chassis.h` from https://github.com/tanvincible/chassis/releases.
+
+## The pattern (Python)
+
+`embed(texts)` stands for the app's embedding model: it returns one row of floats per text, all of
+the model's dimensions.
+
+```python
+import sqlite3
+
+from chassisdb import IndexOptions, VectorIndex
+
+DIMENSIONS = 384  # The embedding model's output size, fixed for the life of the index
+OPTIONS = IndexOptions(metric="cosine")  # Most text embedding models compare by cosine
+
+db = sqlite3.connect("notes.db")
+db.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)")
+
+def add_notes(index, texts):
+    ids = [db.execute("INSERT INTO notes (text) VALUES (?)", (t,)).lastrowid for t in texts]
+    db.commit()
+    index.add_batch(embed(texts), ids=ids)  # The SQLite row id is the Chassis id
+    index.flush()  # Durable from here; unflushed writes are lost on close or crash
+
+def search(index, query, k=5):
+    hits = index.search(embed([query])[0], k=k)
+    return [
+        (hit.distance, db.execute("SELECT text FROM notes WHERE id = ?", (hit.id,)).fetchone()[0])
+        for hit in hits
+    ]
+
+with VectorIndex("notes.chassis", dimensions=DIMENSIONS, options=OPTIONS) as index:
+    add_notes(index, ["Buy bread on the way home", "The report is due on Friday"])
+    for distance, text in search(index, "when is the report due"):
+        print(f"{distance:.3f} {text}")
+```
+
+More of the API:
+
+```python
+with VectorIndex("notes.chassis", dimensions=DIMENSIONS, options=OPTIONS) as index:
+    index.add(embed(["Call the dentist"])[0], id=42)       # One vector, under your own id
+    hits = index.search(embed(["dentist"])[0], k=5, allowed=[42, 7])   # Only these ids
+    like = index.search(index.get(42), k=5, excluded=[42])  # "More like this", leaving 42 out
+    if 42 in index:
+        index.delete(42)                                    # Replace = delete, then add again
+    ids = index.ids()                                       # Every live id, in add order
+    index.compact()  # Drops deleted vectors (index.deleted_count()); as slow as a full build
+
+# Another process or thread that only searches; it sees the writer's last flush.
+reader = VectorIndex("notes.chassis", dimensions=DIMENSIONS, read_only=True)
+results = reader.search(embed(["report"])[0], k=5)
+reader.close()
+```
+
+## Rules that matter
+
+- **Dimensions and options are fixed at creation.** Reopen with the same `dimensions`, `metric`,
+  `precision` and `max_connections`; a mismatch raises an error saying which to pass. A new
+  embedding model means a new index file.
+- **Durability**: adds and deletes are saved by `flush()`. `close()`, garbage collection and a crash
+  discard what wasn't flushed; leaving a `with` block flushes unless an exception is leaving it.
+- **One writer per file.** A second writer gets `IndexLockedError` at once. Readers
+  (`read_only=True`) take no lock, in any number of processes.
+- **Ids** are ints from 0 to 2**64 - 2. `add` without an id takes one past the largest so far and
+  never reuses one. Use the app's own row ids with `add(vector, id=...)` or
+  `add_batch(vectors, ids=...)`.
+- **Many at once**: `add_batch` links on every core, far faster than `add` in a loop;
+  `search_batch(queries, k)` returns `(ids, distances)` arrays for many queries in one call.
+- **Memory**: `IndexOptions(precision="half")` keeps vectors as 16-bit floats: about half the file
+  and memory for long vectors, with the same recall.
+- **Errors** say what was wrong and what to do on a `help:` line: read it before changing code.
+
+## Rust
+
+```rust,no_run
+use chassisdb::{DistanceMetric, IndexOptions, VectorIndex};
+
+fn index_and_search(ids: &[u64], vectors: &[f32], query: &[f32]) -> chassisdb::Result<()> {
+    let options = IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() };
+    let mut index = VectorIndex::open("notes.chassis", 384, options)?;
+    index.add_batch_with_ids(ids, vectors)?; // `vectors` holds one 384-float vector per id
+    index.flush()?;
+    for hit in index.search(query, 5)? {
+        println!("{} {}", hit.id, hit.distance);
+    }
+    let like = index.get(ids[0])?.expect("just added");
+    let others = index.search_filtered(&like, 5, |id| id != ids[0])?;
+    println!("{} like it", others.len());
+    Ok(())
+}
+```
+
+`chassisdb::IndexReader` searches from other threads or processes. Dropping a `VectorIndex`
+doesn't flush.
+
+## More
+
+- Everything on one page, for agents: https://tanvincible.github.io/chassis/llms-full.txt
+- C API: https://tanvincible.github.io/chassis/guide/c-api.html
+- Errors and what to do about each: https://tanvincible.github.io/chassis/guide/errors.html
