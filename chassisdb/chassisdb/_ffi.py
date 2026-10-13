@@ -8,7 +8,10 @@ import ctypes
 import os
 import platform
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from chassisdb.exceptions import ChassisError
 
 
 # Determine library name based on platform
@@ -301,19 +304,19 @@ _lib.chassis_version.restype = ctypes.c_char_p
 # Helper functions
 
 
-def get_last_error() -> Optional[str]:
+def get_last_error() -> str | None:
     """Get the last error message from the Chassis library.
 
     Returns:
         Error message string, or None if no error
     """
-    err_ptr = _lib.chassis_last_error_message()
+    err_ptr: bytes | None = _lib.chassis_last_error_message()
     if err_ptr:
         return err_ptr.decode("utf-8")
     return None
 
 
-def last_error(default: str):
+def last_error(default: str) -> "ChassisError":
     """The exception for the last error on this thread, of the class its code names."""
     from chassisdb.exceptions import from_code
 
@@ -326,7 +329,7 @@ def get_version() -> str:
     Returns:
         Version string (e.g., "0.1.0")
     """
-    version_ptr = _lib.chassis_version()
+    version_ptr: bytes = _lib.chassis_version()
     return version_ptr.decode("utf-8")
 
 

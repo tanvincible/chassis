@@ -5,10 +5,11 @@ import dataclasses
 import difflib
 import functools
 import numbers
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Union
+from types import TracebackType
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -22,14 +23,18 @@ from chassisdb.exceptions import (
     ReadOnlyError,
 )
 
-
 _METRICS = {"euclidean": 0, "cosine": 1}
 _PRECISIONS = {"full": 0, "half": 1}
 # Other names for them, as other libraries spell them.
 _METRIC_NAMES = {"l2": "euclidean", "euclid": "euclidean", "cos": "cosine", "angular": "cosine"}
 _PRECISION_NAMES = {
-    "f32": "full", "float32": "full", "fp32": "full", "single": "full",
-    "f16": "half", "float16": "half", "fp16": "half",
+    "f32": "full",
+    "float32": "full",
+    "fp32": "full",
+    "single": "full",
+    "f16": "half",
+    "float16": "half",
+    "fp16": "half",
 }
 _MAX_DIMENSIONS = 4096
 
@@ -104,35 +109,44 @@ class IndexOptions:
 
 # What other libraries call the options, for a hint when one of those names is given.
 _OPTION_NAMES = {
-    "M": "max_connections", "m": "max_connections", "ef": "ef_search", "efSearch": "ef_search",
-    "efConstruction": "ef_construction", "ef_c": "ef_construction", "space": "metric",
-    "distance": "metric", "dtype": "precision",
+    "M": "max_connections",
+    "m": "max_connections",
+    "ef": "ef_search",
+    "efSearch": "ef_search",
+    "efConstruction": "ef_construction",
+    "ef_c": "ef_construction",
+    "space": "metric",
+    "distance": "metric",
+    "dtype": "precision",
 }
 
 
-def _check_option_names(keys) -> None:
+def _check_option_names(keys: Iterable[str]) -> None:
     """Raises TypeError for a key that isn't an option, saying which was likely meant."""
     names = [field.name for field in dataclasses.fields(IndexOptions)]
     for key in keys:
         if key in names:
             continue
-        near = _OPTION_NAMES.get(key) or next(iter(difflib.get_close_matches(str(key), names, 1)), None)
+        near = _OPTION_NAMES.get(key) or next(
+            iter(difflib.get_close_matches(str(key), names, 1)), None
+        )
         hint = f"did you mean {near!r}? " if near else ""
         raise TypeError(f"{key!r} is not an option\nhelp: {hint}the options are {', '.join(names)}")
 
 
-def _named_options(init):
+def _named_options(init: Callable[..., None]) -> Callable[..., None]:
     """IndexOptions' __init__, saying which option was meant when one is misspelled."""
 
     @functools.wraps(init)
-    def checked(self, *args, **kwargs):
+    def checked(self: "IndexOptions", *args: Any, **kwargs: Any) -> None:
         _check_option_names(kwargs)
         init(self, *args, **kwargs)
 
     return checked
 
 
-IndexOptions.__init__ = _named_options(IndexOptions.__init__)
+# The dataclass's own __init__ would only say "unexpected keyword argument".
+IndexOptions.__init__ = _named_options(IndexOptions.__init__)  # type: ignore[method-assign]
 
 
 @dataclass
@@ -185,9 +199,9 @@ class VectorIndex:
 
     def __init__(
         self,
-        path: Union[str, Path],
+        path: str | Path,
         dimensions: int,
-        options: Optional[IndexOptions] = None,
+        options: IndexOptions | None = None,
         read_only: bool = False,
     ):
         """Open or create a vector index.
@@ -215,7 +229,7 @@ class VectorIndex:
             ChassisError: For other errors; every class above is one too
         """
         # Set before anything can raise: __del__ calls close(), which reads them.
-        self._ptr: Optional[_ffi.ChassisIndexPtr] = None
+        self._ptr: ctypes._Pointer[_ffi.ChassisIndex] | None = None
         self._closed = False
         self._read_only = read_only
         self._path = Path(path)
@@ -258,14 +272,24 @@ class VectorIndex:
             _ffi._lib.chassis_use_huge_pages(ptr)
         if self._options.warm:
             _ffi._lib.chassis_warm(ptr)
-        # A reader takes the file's metric; say so rather than search by another.
-        if explicit and options.metric != (metric := self.metric):
+        # A reader takes the file's metric and precision; say so rather than use others.
+        metric, precision = self.metric, self.precision
+        if explicit and options.metric != metric:
             self.close()
             raise OptionsMismatchError(
                 f"The index at {self._path} was created with {metric} distance, not "
                 f"{options.metric}\nhelp: open it with metric={metric!r}, or leave the metric "
                 "out: a read_only index takes it from the file"
             )
+        if explicit and options.precision != precision:
+            self.close()
+            raise OptionsMismatchError(
+                f"The index at {self._path} keeps its vectors in {precision} precision, not "
+                f"{options.precision}\nhelp: open it with precision={precision!r}, or leave the "
+                "precision out: a read_only index takes it from the file"
+            )
+        # `options` reports what the index really uses.
+        self._options = dataclasses.replace(self._options, metric=metric, precision=precision)
 
     @property
     def metric(self) -> str:
@@ -279,15 +303,20 @@ class VectorIndex:
         self._check_closed()
         return {v: k for k, v in _PRECISIONS.items()}[_ffi._lib.chassis_precision(self._ptr)]
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Clean up resources when index is garbage collected."""
         self.close()
 
-    def __enter__(self):
+    def __enter__(self) -> "VectorIndex":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
         """Flush, unless an exception is leaving the block, then close."""
         try:
             if exc_type is None and not self._read_only and not self._closed:
@@ -328,8 +357,8 @@ class VectorIndex:
 
     def add(
         self,
-        vector: Union[Sequence[float], npt.NDArray[np.float32]],
-        id: Optional[int] = None,
+        vector: Sequence[float] | npt.NDArray[np.float32],
+        id: int | None = None,
     ) -> int:
         """Add a vector to the index.
 
@@ -371,8 +400,8 @@ class VectorIndex:
 
     def add_batch(
         self,
-        vectors: Union[Sequence[Sequence[float]], npt.NDArray[np.float32]],
-        ids: Optional[Union[Iterable[int], npt.NDArray[np.uint64]]] = None,
+        vectors: Sequence[Sequence[float]] | npt.NDArray[np.float32],
+        ids: Iterable[int] | npt.NDArray[np.uint64] | None = None,
     ) -> npt.NDArray[np.uint64]:
         """Add many vectors at once, linking them on every core.
 
@@ -416,9 +445,12 @@ class VectorIndex:
             )
         id_array = np.array(ids, dtype=np.uint64)
         ids_ptr = id_array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
-        if _ffi._lib.chassis_add_batch_with_ids(
-            self._ptr, ids_ptr, vectors_ptr, count, self._dimensions
-        ) != 0:
+        if (
+            _ffi._lib.chassis_add_batch_with_ids(
+                self._ptr, ids_ptr, vectors_ptr, count, self._dimensions
+            )
+            != 0
+        ):
             raise _ffi.last_error("The batch couldn't be added")
         return id_array
 
@@ -439,12 +471,12 @@ class VectorIndex:
             Safe from any thread; writes run one at a time.
         """
         self._check_writable("delete")
-        result = _ffi._lib.chassis_delete(self._ptr, _check_id(id))
+        result: int = _ffi._lib.chassis_delete(self._ptr, _check_id(id))
         if result < 0:
             raise _ffi.last_error("The vector couldn't be deleted")
         return result == 1
 
-    def get(self, id: int) -> Optional[npt.NDArray[np.float32]]:
+    def get(self, id: int) -> npt.NDArray[np.float32] | None:
         """The vector with this id, or None if no live vector has it.
 
         It comes back as the index keeps it: scaled to length 1 in a cosine
@@ -461,7 +493,7 @@ class VectorIndex:
         self._check_closed()
         out = np.empty(self._dimensions, dtype=np.float32)
         out_ptr = out.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        result = _ffi._lib.chassis_get(self._ptr, _check_id(id), out_ptr, self._dimensions)
+        result: int = _ffi._lib.chassis_get(self._ptr, _check_id(id), out_ptr, self._dimensions)
         if result < 0:
             raise _ffi.last_error("The vector couldn't be read")
         return out if result == 1 else None
@@ -473,7 +505,7 @@ class VectorIndex:
             id = _check_id(id)
         except InvalidArgumentError:
             return False  # no vector has an id out of range
-        result = _ffi._lib.chassis_contains(self._ptr, id)
+        result: int = _ffi._lib.chassis_contains(self._ptr, id)
         if result < 0:
             raise _ffi.last_error("The id couldn't be looked up")
         return result == 1
@@ -499,11 +531,11 @@ class VectorIndex:
 
     def search(
         self,
-        query: Union[Sequence[float], npt.NDArray[np.float32]],
+        query: Sequence[float] | npt.NDArray[np.float32],
         k: int = 10,
-        allowed: Optional[Union[Iterable[int], npt.NDArray[np.uint64]]] = None,
-        excluded: Optional[Union[Iterable[int], npt.NDArray[np.uint64]]] = None,
-    ) -> List[SearchResult]:
+        allowed: Iterable[int] | npt.NDArray[np.uint64] | None = None,
+        excluded: Iterable[int] | npt.NDArray[np.uint64] | None = None,
+    ) -> list[SearchResult]:
         """Search for k nearest neighbors.
 
         Args:
@@ -574,15 +606,14 @@ class VectorIndex:
 
         # Convert to SearchResult objects
         results = [
-            SearchResult(id=int(out_ids[i]), distance=float(out_dists[i]))
-            for i in range(count)
+            SearchResult(id=int(out_ids[i]), distance=float(out_dists[i])) for i in range(count)
         ]
 
         return results
 
     def search_batch(
         self,
-        queries: Union[Sequence[Sequence[float]], npt.NDArray[np.float32]],
+        queries: Sequence[Sequence[float]] | npt.NDArray[np.float32],
         k: int = 10,
     ) -> tuple[npt.NDArray[np.uint64], npt.NDArray[np.float32]]:
         """Search for the k nearest neighbors of many queries, in one call.
@@ -783,21 +814,21 @@ def _id_array(name: str, given: object) -> npt.NDArray[np.uint64]:
     return np.ascontiguousarray(ids, dtype=np.uint64)
 
 
-def _check_int(name: str, value) -> int:
+def _check_int(name: str, value: object) -> int:
     """`value` as an int, or TypeError: a bool or a float isn't one."""
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise TypeError(f"{name} is {value!r}, but has to be an int\nhelp: pass {name}=int(...)")
     return int(value)
 
 
-def _check_id(id) -> int:
+def _check_id(given: object) -> int:
     # ctypes would silently wrap a negative or oversized id into a different one.
-    if isinstance(id, (str, bytes)):
+    if isinstance(given, (str, bytes)):
         raise TypeError(
-            f"id is {id!r}, but ids have to be ints\nhelp: keep a dict from your own keys to int "
-            "ids, or leave ids out to have them chosen"
+            f"id is {given!r}, but ids have to be ints\nhelp: keep a dict from your own keys to "
+            "int ids, or leave ids out to have them chosen"
         )
-    id = _check_int("id", id)
+    id = _check_int("id", given)
     if not 0 <= id < 2**64 - 1:
         raise InvalidArgumentError(
             f"id is {id}, but ids go from 0 to 2**64 - 2\nhelp: pass an id in that range, or "
@@ -806,8 +837,8 @@ def _check_id(id) -> int:
     return id
 
 
-def _check_dimensions(dimensions) -> int:
-    dimensions = _check_int("dimensions", dimensions)
+def _check_dimensions(given: object) -> int:
+    dimensions = _check_int("dimensions", given)
     if not 1 <= dimensions <= _MAX_DIMENSIONS:
         raise InvalidArgumentError(
             f"dimensions is {dimensions}, but has to be between 1 and {_MAX_DIMENSIONS}\nhelp: "
@@ -816,36 +847,41 @@ def _check_dimensions(dimensions) -> int:
     return dimensions
 
 
-def _check_options(options) -> IndexOptions:
-    """`options` as checked IndexOptions; a dict of their fields is taken too."""
-    if options is None:
+def _check_options(given: object) -> IndexOptions:
+    """`given` as checked IndexOptions; a dict of their fields is taken too."""
+    if given is None:
         options = IndexOptions()
-    elif isinstance(options, Mapping):
-        options = IndexOptions(**options)
-    elif not isinstance(options, IndexOptions):
+    elif isinstance(given, Mapping):
+        options = IndexOptions(**given)
+    elif isinstance(given, IndexOptions):
+        options = given
+    else:
         raise TypeError(
-            f"options is a {type(options).__name__}, but has to be IndexOptions or a dict\nhelp: "
+            f"options is a {type(given).__name__}, but has to be IndexOptions or a dict\nhelp: "
             "pass options=IndexOptions(metric='cosine'), or options={'metric': 'cosine'}"
         )
     options.validate()
     return options
 
 
-def _named(option: str, value, names: dict, aliases: dict) -> str:
+def _named(option: str, value: object, names: dict[str, int], aliases: dict[str, str]) -> str:
     """`value` as one of `names`, taking any case and the aliases other libraries use."""
     key = value.lower() if isinstance(value, str) else value
-    key = aliases.get(key, key)
-    if key in names:
-        return key
+    if isinstance(key, str):
+        key = aliases.get(key, key)
+        if key in names:
+            return key
     known = ", ".join(repr(name) for name in names)
     hint = ""
     if option == "metric" and key in ("ip", "dot", "inner_product", "dot_product"):
         hint = "; for inner product on vectors of length 1, cosine orders results the same way"
-    raise InvalidArgumentError(f"{option} is {value!r}, but has to be one of {known}\nhelp: pass "
-                               f"{option}={next(iter(names))!r} or another of them{hint}")
+    raise InvalidArgumentError(
+        f"{option} is {value!r}, but has to be one of {known}\nhelp: pass "
+        f"{option}={next(iter(names))!r} or another of them{hint}"
+    )
 
 
-def _as_vector(value, dims: int, what: str) -> npt.NDArray[np.float32]:
+def _as_vector(value: Any, dims: int, what: str) -> npt.NDArray[np.float32]:
     """`value` as one contiguous float32 vector of `dims` components; `what` names it."""
     if value is None or isinstance(value, (str, bytes)):
         none = "; get(id) gives None when no live vector has the id" if value is None else ""
@@ -882,7 +918,9 @@ def _as_vector(value, dims: int, what: str) -> npt.NDArray[np.float32]:
     )
 
 
-def _as_batch(value, dims: int, what: str = "vector", one: str = "add") -> npt.NDArray[np.float32]:
+def _as_batch(
+    value: Any, dims: int, what: str = "vector", one: str = "add"
+) -> npt.NDArray[np.float32]:
     """`value` as a contiguous (count, dims) float32 array of `what`s, which `one` takes singly."""
     try:
         array = np.ascontiguousarray(value, dtype=np.float32)
@@ -896,8 +934,10 @@ def _as_batch(value, dims: int, what: str = "vector", one: str = "add") -> npt.N
     if array.ndim == 1 and len(array) == dims:
         fix = f"for one {what}, pass [{what}], or call {one}"
     elif array.ndim == 2:
-        fix = (f"each {what} has to have {dims} components: make them with the same model as the "
-               "index's vectors")
+        fix = (
+            f"each {what} has to have {dims} components: make them with the same model as the "
+            "index's vectors"
+        )
     else:
         fix = f"pass a (count, {dims}) array, one {what} per row"
     raise DimensionMismatchError(

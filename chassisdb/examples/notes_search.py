@@ -29,7 +29,9 @@ def embed(texts):
     vectors = np.zeros((len(texts), DIMENSIONS), dtype=np.float32)
     for row, text in enumerate(texts):
         for word in re.findall(r"[a-z]{4,}", text.lower()):
-            bucket = int.from_bytes(hashlib.blake2b(word.encode(), digest_size=4).digest(), "little")
+            bucket = int.from_bytes(
+                hashlib.blake2b(word.encode(), digest_size=4).digest(), "little"
+            )
             vectors[row, bucket % DIMENSIONS] += 1.0
     return vectors
 

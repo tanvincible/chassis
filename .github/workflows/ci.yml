@@ -74,6 +74,24 @@ jobs:
           pip install "${{ matrix.numpy }}" pytest pytest-cov
           pytest
 
+  python-lint:
+    name: Python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: ruff, black and mypy, as pyproject.toml sets them
+        working-directory: chassisdb
+        run: |
+          pip install ruff black mypy numpy
+          ruff check chassisdb tests examples
+          black --check chassisdb tests examples
+          mypy chassisdb
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
