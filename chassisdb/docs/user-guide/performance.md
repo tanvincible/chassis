@@ -7,7 +7,7 @@ Chassis is built on HNSW (Hierarchical Navigable Small World) graphs. You can tu
 You can pass an `IndexOptions` object when opening the index.
 
 ```python
-from chassis import VectorIndex, IndexOptions
+from chassisdb import VectorIndex, IndexOptions
 
 options = IndexOptions(
     max_connections=32,    # 'M' in HNSW papers

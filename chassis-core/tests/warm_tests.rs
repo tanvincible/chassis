@@ -1,7 +1,7 @@
 //! `IndexOptions::warm` (ADR-0019): asking changes no result, an index can go away while it is
 //! being read in, and where a test can put a file out of memory, asking brings it back.
 
-use chassis_core::{IndexOptions, IndexReader, SearchResult, VectorIndex};
+use chassisdb::{IndexOptions, IndexReader, SearchResult, VectorIndex};
 use tempfile::tempdir;
 
 const DIMS: u32 = 64;

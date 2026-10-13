@@ -1,6 +1,6 @@
 # VectorIndex
 
-::: chassis.index.VectorIndex
+::: chassisdb.index.VectorIndex
     options:
         members:
             - __init__

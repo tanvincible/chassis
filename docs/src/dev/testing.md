@@ -21,28 +21,28 @@ cargo test --workspace -- --test-threads=4
 
 ```bash
 # Storage layer tests
-cargo test --package chassis-core --test storage_tests
+cargo test --package chassisdb --test storage_tests
 
 # Graph I/O tests
-cargo test --package chassis-core --test graph_io_tests
+cargo test --package chassisdb --test graph_io_tests
 
 # Linking tests
-cargo test --package chassis-core --test link_tests
+cargo test --package chassisdb --test link_tests
 
 # Search tests
-cargo test --package chassis-core --test search_tests
+cargo test --package chassisdb --test search_tests
 
 # Compile-time safety tests
-cargo test --package chassis-core --test compile_fail
+cargo test --package chassisdb --test compile_fail
 ```
 
 ### Unit Tests (Embedded)
 
 ```bash
 # Run unit tests in a specific module
-cargo test --package chassis-core storage::tests
-cargo test --package chassis-core distance::tests
-cargo test --package chassis-core hnsw::node::tests
+cargo test --package chassisdb storage::tests
+cargo test --package chassisdb distance::tests
+cargo test --package chassisdb hnsw::node::tests
 ```
 
 ## Test Coverage
@@ -198,7 +198,7 @@ Uses `trybuild` to verify borrow checker enforcement:
 
 **Run UI Tests**:
 ```bash
-cargo test --package chassis-core --test compile_fail
+cargo test --package chassisdb --test compile_fail
 ```
 
 Expected output: All tests pass (compilation failures are expected).
@@ -406,7 +406,7 @@ jobs:
         run: cargo test --workspace --verbose
       
       - name: Run compile-fail tests
-        run: cargo test --package chassis-core --test compile_fail
+        run: cargo test --package chassisdb --test compile_fail
       
       - name: Check formatting
         run: cargo fmt -- --check

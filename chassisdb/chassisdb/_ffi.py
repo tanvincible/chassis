@@ -54,7 +54,7 @@ def _find_library() -> Path:
     if lib_path.exists():
         return lib_path
 
-    # 3. Development location (../../target/release from chassis/)
+    # 3. Development location (../../target/release from chassisdb/)
     dev_path = this_dir.parent.parent / "target" / "release" / lib_name
     if dev_path.exists():
         return dev_path
@@ -315,7 +315,7 @@ def get_last_error() -> Optional[str]:
 
 def last_error(default: str):
     """The exception for the last error on this thread, of the class its code names."""
-    from chassis.exceptions import from_code
+    from chassisdb.exceptions import from_code
 
     return from_code(_lib.chassis_last_error_code(), get_last_error() or default)
 

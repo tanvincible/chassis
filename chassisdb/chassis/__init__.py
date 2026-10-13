@@ -1,50 +1,19 @@
-"""
-Chassis - Python bindings for Chassis, an embedded vector index
+"""The old name of `chassisdb`, kept for one release: `import chassisdb` instead."""
 
-Chassis keeps an index of vectors in one file and searches it inside your
-process, with no server. It is written in Rust; this package calls its C API.
+import sys
+import warnings
 
-Example:
-    >>> import chassis
-    >>> index = chassis.VectorIndex("vectors.chassis", dimensions=768)
-    >>> vector_id = index.add([0.1] * 768)
-    >>> results = index.search([0.1] * 768, k=10)
-    >>> for result in results:
-    ...     print(f"ID: {result.id}, Distance: {result.distance}")
-    >>> index.flush()
-"""
+import chassisdb
+from chassisdb import *  # noqa: F401,F403
+from chassisdb import __all__, __version__  # noqa: F401
 
-from chassis.index import VectorIndex, SearchResult, IndexOptions
-from chassis.exceptions import (
-    ChassisError,
-    CorruptIndexError,
-    DimensionMismatchError,
-    IdInUseError,
-    IndexFullError,
-    IndexLockedError,
-    IndexNotFoundError,
-    InvalidArgumentError,
-    InvalidPathError,
-    NotAnIndexError,
-    OptionsMismatchError,
-    ReadOnlyError,
+warnings.warn(
+    "The chassis module is now chassisdb, as the package is named; `import chassis` stops "
+    "working in a later release\nhelp: import chassisdb instead",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__version__ = "0.7.2"
-__all__ = [
-    "VectorIndex",
-    "SearchResult",
-    "IndexOptions",
-    "ChassisError",
-    "CorruptIndexError",
-    "DimensionMismatchError",
-    "IdInUseError",
-    "IndexFullError",
-    "IndexLockedError",
-    "IndexNotFoundError",
-    "InvalidArgumentError",
-    "InvalidPathError",
-    "NotAnIndexError",
-    "OptionsMismatchError",
-    "ReadOnlyError",
-]
+# `from chassis.exceptions import ...` and the like keep working too.
+for _name in ("index", "exceptions", "_ffi"):
+    sys.modules[f"{__name__}.{_name}"] = getattr(chassisdb, _name)

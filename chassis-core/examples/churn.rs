@@ -5,7 +5,7 @@
 //!
 //! `cargo run --release --example churn -- <data_dir> <dataset>`
 
-use chassis_core::{IndexOptions, IndexReader, VectorIndex, euclidean_distance};
+use chassisdb::{IndexOptions, IndexReader, VectorIndex, euclidean_distance};
 use std::path::Path;
 use std::time::Instant;
 

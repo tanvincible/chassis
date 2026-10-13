@@ -10,7 +10,7 @@ Using Chassis involves three steps:
 ## 1. Initialization
 
 ```rust
-use chassis_core::{VectorIndex, IndexOptions};
+use chassisdb::{VectorIndex, IndexOptions};
 
 let options = IndexOptions {
     max_connections: 16,

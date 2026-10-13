@@ -7,7 +7,7 @@
 //! `cargo run --release --example filtered -- <data_dir> <dataset> <index_path> <queries>`
 //! builds the index at `<index_path>` unless it is already there.
 
-use chassis_core::{IndexOptions, IndexReader, VectorIndex, euclidean_distance};
+use chassisdb::{IndexOptions, IndexReader, VectorIndex, euclidean_distance};
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;

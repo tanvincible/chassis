@@ -1,7 +1,7 @@
 //! `IndexOptions::huge_pages` (ADR-0016). Whether the kernel grants huge pages differs by machine
 //! and can't be told from here; what must hold everywhere is that asking changes no result.
 
-use chassis_core::{IndexOptions, IndexReader, Precision, SearchResult, VectorIndex};
+use chassisdb::{IndexOptions, IndexReader, Precision, SearchResult, VectorIndex};
 use tempfile::tempdir;
 
 /// 4 KiB a vector, so a thousand of them cover whole huge pages.

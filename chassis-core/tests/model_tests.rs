@@ -5,7 +5,7 @@
 //! A reopen that loses adds must leave the committed graph as the last flush left it (ADR-0012),
 //! so every check holds after one too.
 
-use chassis_core::{
+use chassisdb::{
     DistanceMetric, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
     cosine_distance, euclidean_distance,
 };

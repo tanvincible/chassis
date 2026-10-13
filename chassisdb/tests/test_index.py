@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from pathlib import Path
 
-from chassis import VectorIndex, IndexOptions, SearchResult
-from chassis.exceptions import (
+from chassisdb import VectorIndex, IndexOptions, SearchResult
+from chassisdb.exceptions import (
     ChassisError,
     DimensionMismatchError,
     ReadOnlyError,
@@ -693,3 +693,19 @@ class TestCompact:
         assert index.search(vectors[1], k=1)[0].id != 1
         assert index.add(vectors[1]) == 3000
         index.close()
+
+
+def test_the_old_import_name_still_works():
+    import importlib
+    import sys
+
+    for name in [n for n in sys.modules if n == "chassis" or n.startswith("chassis.")]:
+        del sys.modules[name]
+    with pytest.warns(DeprecationWarning, match="import chassisdb instead"):
+        chassis = importlib.import_module("chassis")
+    from chassis.exceptions import ChassisError as OldError
+
+    import chassisdb
+
+    assert chassis.VectorIndex is chassisdb.VectorIndex
+    assert OldError is chassisdb.ChassisError

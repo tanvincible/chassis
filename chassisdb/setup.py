@@ -1,4 +1,4 @@
-"""Builds the C library with cargo and puts it inside the package, where `chassis._ffi` looks for
+"""Builds the C library with cargo and puts it inside the package, where `chassisdb._ffi` looks for
 it first, so a wheel carries everything it needs. Building needs Rust and the repository around
 this directory."""
 
@@ -25,7 +25,7 @@ class BuildWithLibrary(build_py):
         subprocess.run(["cargo", "build", "--release", "-p", "chassis-ffi"], cwd=ROOT, check=True)
         target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
         name = LIBRARY[platform.system()]
-        package = Path(self.build_lib) / "chassis"
+        package = Path(self.build_lib) / "chassisdb"
         package.mkdir(parents=True, exist_ok=True)
         shutil.copy(target / "release" / name, package / name)
 

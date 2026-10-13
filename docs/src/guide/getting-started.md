@@ -6,14 +6,14 @@ Add Chassis to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chassis-core = "0.7"
+chassisdb = "0.8"
 ```
 
 A debug build runs Chassis's arithmetic many times slower. To build Chassis optimized while your
 own crate stays in debug:
 
 ```toml
-[profile.dev.package.chassis-core]
+[profile.dev.package.chassisdb]
 opt-level = 3
 ```
 
@@ -23,7 +23,7 @@ from C, see the [C API](c-api.md).
 ## Quick Start
 
 ```rust
-use chassis_core::{VectorIndex, IndexOptions};
+use chassisdb::{VectorIndex, IndexOptions};
 use anyhow::Result;
 
 fn main() -> Result<()> {

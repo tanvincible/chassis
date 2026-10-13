@@ -69,13 +69,13 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || 'origin/main' }}
         run: |
-          cargo build --release -p chassis-core --example bench
+          cargo build --release --manifest-path chassis-core/Cargo.toml --example bench
           cp target/release/examples/bench "$RUNNER_TEMP/bench-head"
           git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
           harness="$RUNNER_TEMP/base/chassis-core/examples/bench.rs"
           cp "$harness" "$RUNNER_TEMP/base-harness.rs" 2>/dev/null || true
           cp chassis-core/examples/bench.rs "$harness"
-          build() { (cd "$RUNNER_TEMP/base" && cargo build --release -p chassis-core --example bench --target-dir "$GITHUB_WORKSPACE/target/base"); }
+          build() { (cd "$RUNNER_TEMP/base" && cargo build --release --manifest-path chassis-core/Cargo.toml --example bench --target-dir "$GITHUB_WORKSPACE/target/base"); }
           if ! build; then
             cp "$RUNNER_TEMP/base-harness.rs" "$harness"
             build
