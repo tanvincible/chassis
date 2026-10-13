@@ -51,11 +51,10 @@ Repository = "https://github.com/tanvincible/chassis"
 Issues = "https://github.com/tanvincible/chassis/issues"
 
 [tool.setuptools]
-packages = ["chassisdb", "chassis"]
+packages = ["chassisdb"]
 
 [tool.setuptools.package-data]
 chassisdb = ["py.typed"]
-chassis = ["py.typed"]
 
 [tool.black]
 line-length = 100
