@@ -36,10 +36,15 @@ println!("Stored vector at ID: {}", id);
 index.flush()?;
 ```
 
+Dropping the index without `flush()` discards what was added since the last one, as a crash
+would. To store vectors under your application's own ids instead, use `add_with_id(id, &embedding)`.
+
 ## 3. Search
 
-Search is thread-safe and can run concurrently with other searches (but not with writes). Other
-processes can search the same file with `IndexReader` while this one writes.
+`search` takes `&self`, so many threads can search one `VectorIndex` at once; `add`, `delete` and
+`flush` take `&mut self`, so they wait for those searches. To search while it writes, open an
+`IndexReader` on the same file, in another thread or another process: it sees what the writer's
+last `flush()` committed.
 
 ```rust
 let query = compute_embedding("Search query");

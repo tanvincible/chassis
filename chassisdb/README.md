@@ -91,12 +91,14 @@ index = VectorIndex("tuned.chassis", dimensions=768, options=options)
 ### Context Manager
 
 ```python
-# Automatic resource cleanup
 with VectorIndex("vectors.chassis", dimensions=128) as index:
     index.add([0.1] * 128)
-    index.flush()
-# Index is automatically closed here
+# Flushed and closed here
 ```
+
+Leaving the block flushes, unless an exception is leaving it, then closes the index. Closing
+without a flush, with `close()` or by garbage collection, discards what was added or deleted since
+the last `flush()`, as a crash would.
 
 ### Batch Operations
 
@@ -162,8 +164,12 @@ Main class for interacting with Chassis indexes.
 #### Constructor
 
 ```python
-VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = None)
+VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = None, read_only: bool = False)
 ```
+
+An existing index is reopened with the metric, precision and `max_connections` it was created
+with. With `read_only=True` it only searches, takes no lock, and takes the metric and precision
+from the file; any number can search while one writer writes, in this process or others.
 
 #### Methods
 
@@ -173,6 +179,10 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
 - **`add_batch(vectors: ndarray, ids: Iterable[int] | None = None) -> ndarray`**  
   Add a `(count, dimensions)` array at once, linking it on every core: much faster than `add` in a
   loop. Returns the ids. All or nothing: if any vector or id is rejected, none is added.
+
+- **`delete(id: int) -> bool`**  
+  Delete the vector with this id. Returns whether there was one. Search stops returning it at
+  once; the delete is durable after the next `flush()`.
 
 - **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
   Search for k nearest neighbors. Returns sorted list of results. With `allowed`, only those ids
@@ -198,7 +208,8 @@ VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = No
   Ids don't change. Takes as long as building the index and needs disk for a second copy.
 
 - **`close() -> None`**  
-  Close the index and free resources. Called automatically.
+  Close the index and free resources. Adds and deletes since the last `flush()` are discarded, as
+  after a crash; leaving a `with` block flushes first, unless an exception is leaving it.
 
 - **`__len__() -> int`**  
   Get number of vectors in the index.
@@ -252,7 +263,8 @@ lists their causes and fixes.
 - **`InvalidArgumentError`** (`ValueError`) - an argument out of range: dimensions, an option, an
   id, a vector with NaN or infinity. A wrong type is a plain `TypeError`.
 - **`DimensionMismatchError`** (`ValueError`) - a vector or query of other dimensions than the index's
-- **`OptionsMismatchError`** (`ValueError`) - reopened with another metric or precision
+- **`OptionsMismatchError`** (`ValueError`) - reopened with another metric, precision or
+  `max_connections`
 - **`IndexNotFoundError`** (`FileNotFoundError`) - no index at the path, for `read_only=True`
 - **`NotAnIndexError`** (`ValueError`) - the file isn't a Chassis index
 - **`IdInUseError`** (`ValueError`) - the id is taken; delete it first to replace it

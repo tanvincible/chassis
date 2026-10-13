@@ -80,6 +80,7 @@ gcc -o myapp myapp.c -L./target/release -lchassis_ffi -lm
 
 # Run (Linux)
 LD_LIBRARY_PATH=./target/release ./myapp
+# Or link with -Wl,-rpath,$PWD/target/release to run without LD_LIBRARY_PATH
 
 # macOS
 gcc -o myapp myapp.c -L./target/release -lchassis_ffi
@@ -125,8 +126,8 @@ ChassisIndex* chassis_open_with_metric(
     uint32_t metric
 );
 ```
-Like `chassis_open_with_options`, with a distance metric: `0` for Euclidean, `1` for cosine
-(`1 - cosine similarity`; vectors are stored at unit length and zero vectors are rejected). The
+Like `chassis_open_with_options`, with a distance metric: `CHASSIS_METRIC_EUCLIDEAN` (0) or
+`CHASSIS_METRIC_COSINE` (1, `1 - cosine similarity`; vectors are stored at unit length and zero vectors are rejected). The
 metric is fixed when the index is created; reopening with another one fails.
 
 #### `chassis_open_with_precision`
@@ -141,8 +142,8 @@ ChassisIndex* chassis_open_with_precision(
     uint32_t precision
 );
 ```
-Like `chassis_open_with_metric`, with a precision: `0` keeps each component of a vector as a
-32-bit float, `1` as a 16-bit float ([ADR-0018](../adr/018-half-precision.md)). Half precision
+Like `chassis_open_with_metric`, with a precision: `CHASSIS_PRECISION_FULL` (0) keeps each
+component of a vector as a 32-bit float, `CHASSIS_PRECISION_HALF` (1) as a 16-bit float ([ADR-0018](../adr/018-half-precision.md)). Half precision
 halves the vectors' size in the file and in memory, and a search over an index too large for the
 CPU's caches is faster for it. Each component is rounded to about three decimal digits, and a
 vector with a component of 65,520 or more in magnitude is refused. The precision is fixed when
@@ -163,6 +164,8 @@ no lock, so any number of readers can open the file next to one writer. Each sea
 writer's newest flush, which becomes visible just before its final fsync; `chassis_len` takes a new
 snapshot first. Adds, deletes and flushes on the
 handle fail. A file in an older format must be opened once with `chassis_open` to migrate it.
+The metric and precision come from the file; `max_connections` has to be the one the index was
+created with.
 
 #### `chassis_use_huge_pages`
 ```c
@@ -191,7 +194,8 @@ later. Returns `0`, or `-1` for a NULL handle.
 ```c
 void chassis_free(ChassisIndex* index);
 ```
-Free an index and release resources. Safe to call with `NULL`.
+Free an index and release resources. Safe to call with `NULL`. It doesn't flush: adds and deletes
+since the last `chassis_flush` are discarded, as after a crash.
 
 ### Operations
 

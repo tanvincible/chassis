@@ -9,6 +9,17 @@ Add Chassis to your `Cargo.toml`:
 chassis-core = "0.7"
 ```
 
+A debug build runs Chassis's arithmetic many times slower. To build Chassis optimized while your
+own crate stays in debug:
+
+```toml
+[profile.dev.package.chassis-core]
+opt-level = 3
+```
+
+From Python, `pip install chassisdb` (see the [Python bindings](https://github.com/tanvincible/chassis/blob/main/chassisdb/README.md));
+from C, see the [C API](c-api.md).
+
 ## Quick Start
 
 ```rust
