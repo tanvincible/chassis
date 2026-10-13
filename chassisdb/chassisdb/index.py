@@ -466,7 +466,7 @@ class VectorIndex:
             raise _ffi.last_error("The vector couldn't be read")
         return out if result == 1 else None
 
-    def __contains__(self, id) -> bool:
+    def __contains__(self, id: object) -> bool:
         """Whether a live vector has this id: ``id in index``."""
         self._check_closed()
         try:
@@ -753,14 +753,22 @@ class VectorIndex:
         )
 
 
-def _id_array(name: str, ids) -> npt.NDArray[np.uint64]:
+def _id_array(name: str, given: object) -> npt.NDArray[np.uint64]:
     # Like _check_id: numpy and ctypes would silently wrap, truncate or flatten bad ids.
-    if callable(ids):
+    if callable(given):
         raise TypeError(
             f"{name} is a function, but has to be a list of ids\nhelp: pass "
             f"{name}=[i for i in candidate_ids if test(i)], or a set or numpy array of ids"
         )
-    ids = np.asarray(ids if isinstance(ids, np.ndarray) else list(ids))
+    if isinstance(given, (numbers.Integral, str, bytes)):
+        raise TypeError(
+            f"{name} is {given!r:.40}, but has to be a list of ids\nhelp: pass {name}=[{given!r:.40}]"
+        )
+    listed = given if isinstance(given, np.ndarray) else list(given)  # type: ignore[call-overload]
+    ids = np.asarray(listed)
+    if not isinstance(given, np.ndarray) and ids.dtype.kind in "fO":
+        # Ids of 2**63 and more with smaller ones make numpy guess floats: check each instead.
+        return np.fromiter((_check_id(i) for i in listed), dtype=np.uint64, count=len(listed))
     if ids.size == 0:
         return np.zeros(0, dtype=np.uint64)
     if ids.ndim != 1 or ids.dtype == np.bool_ or not np.issubdtype(ids.dtype, np.integer):
@@ -840,9 +848,10 @@ def _named(option: str, value, names: dict, aliases: dict) -> str:
 def _as_vector(value, dims: int, what: str) -> npt.NDArray[np.float32]:
     """`value` as one contiguous float32 vector of `dims` components; `what` names it."""
     if value is None or isinstance(value, (str, bytes)):
+        none = "; get(id) gives None when no live vector has the id" if value is None else ""
         raise TypeError(
             f"The {what} is {value!r:.40}, but has to be {dims} numbers\nhelp: pass a list or "
-            f"numpy array of {dims} floats"
+            f"numpy array of {dims} floats{none}"
         )
     try:
         array = np.ascontiguousarray(value, dtype=np.float32)

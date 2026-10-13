@@ -18,8 +18,9 @@ jobs:
       - run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
           python=$(sed -n 's/^version = "\(.*\)"$/\1/p' chassisdb/pyproject.toml | head -1)
-          if [ "v$version" != "$GITHUB_REF_NAME" ] || [ "$python" != "$version" ]; then
-            echo "::error::The tag is $GITHUB_REF_NAME, but Cargo.toml says $version and pyproject.toml $python"
+          module=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' chassisdb/chassisdb/__init__.py)
+          if [ "v$version" != "$GITHUB_REF_NAME" ] || [ "$python" != "$version" ] || [ "$module" != "$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but Cargo.toml says $version, pyproject.toml $python and chassisdb.__version__ $module"
             exit 1
           fi
 

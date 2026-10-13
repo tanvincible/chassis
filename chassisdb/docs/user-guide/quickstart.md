@@ -57,6 +57,8 @@ for res in results:
 It is best practice to use the `with` statement to ensure resources are closed properly.
 
 ```python
+index.close()  # One writer per file: close the index from step 1 first
+
 with VectorIndex("data.chassis", dimensions=768) as index:
     index.add(vec)
     index.flush()

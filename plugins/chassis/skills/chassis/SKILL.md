@@ -16,7 +16,7 @@ JSON, files), and use the same id in both.
 ## Pick it, or something else
 
 - **Chassis**: an app that embeds its own data and searches it locally: a desktop or CLI app, a
-  local RAG, agent memory, a cache, workers on one machine.
+  local RAG, agent memory, a cache one process writes while others on the machine search it.
 - **sqlite-vec**: the data is in SQLite already and vector search should run inside SQL queries.
 - **LanceDB**: one store for vectors and their columns, with filters in the query and versions.
 - **A server (pgvector, Qdrant, Milvus)**: many machines write to one index, or other services query
@@ -45,7 +45,10 @@ DIMENSIONS = 384  # The embedding model's output size, fixed for the life of the
 OPTIONS = IndexOptions(metric="cosine")  # Most text embedding models compare by cosine
 
 db = sqlite3.connect("notes.db")
-db.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)")
+# AUTOINCREMENT: a deleted note's id is never given out again, even if a crash lost the delete's flush
+db.execute(
+    "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL)"
+)
 
 def add_notes(index, texts):
     ids = [db.execute("INSERT INTO notes (text) VALUES (?)", (t,)).lastrowid for t in texts]
@@ -54,11 +57,12 @@ def add_notes(index, texts):
     index.flush()  # Durable from here; unflushed writes are lost on close or crash
 
 def search(index, query, k=5):
-    hits = index.search(embed([query])[0], k=k)
-    return [
-        (hit.distance, db.execute("SELECT text FROM notes WHERE id = ?", (hit.id,)).fetchone()[0])
-        for hit in hits
-    ]
+    found = []
+    for hit in index.search(embed([query])[0], k=k):
+        row = db.execute("SELECT text FROM notes WHERE id = ?", (hit.id,)).fetchone()
+        if row:  # None if a crash came between deleting the row and flushing the index
+            found.append((hit.distance, row[0]))
+    return found
 
 with VectorIndex("notes.chassis", dimensions=DIMENSIONS, options=OPTIONS) as index:
     add_notes(index, ["Buy bread on the way home", "The report is due on Friday"])
@@ -79,7 +83,7 @@ with VectorIndex("notes.chassis", dimensions=DIMENSIONS, options=OPTIONS) as ind
     index.compact()  # Drops deleted vectors (index.deleted_count()); as slow as a full build
 
 # Another process or thread that only searches; it sees the writer's last flush.
-reader = VectorIndex("notes.chassis", dimensions=DIMENSIONS, read_only=True)
+reader = VectorIndex("notes.chassis", dimensions=DIMENSIONS, options=OPTIONS, read_only=True)
 results = reader.search(embed(["report"])[0], k=5)
 reader.close()
 ```
@@ -99,7 +103,7 @@ reader.close()
 - **Many at once**: `add_batch` links on every core, far faster than `add` in a loop;
   `search_batch(queries, k)` returns `(ids, distances)` arrays for many queries in one call.
 - **Memory**: `IndexOptions(precision="half")` keeps vectors as 16-bit floats: about half the file
-  and memory for long vectors, with the same recall.
+  and memory for long vectors; recall was the same on the embeddings measured.
 - **Errors** say what was wrong and what to do on a `help:` line: read it before changing code.
 
 ## Rust

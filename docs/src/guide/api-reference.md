@@ -23,8 +23,9 @@ let mut index = VectorIndex::open(
 
 * `path`: Path to the backing file (created if missing).
 * `dims`: Vector dimensionality (must be static for the file's lifetime).
-* `options`: Configuration for graph construction and search. An existing index is reopened with
-  the metric, precision and `max_connections` it was created with.
+* `options`: Configuration for graph construction and search. To reopen an existing index, pass the
+  metric, precision and `max_connections` it was created with; others are an `OptionsMismatch`
+  error that names them.
 
 **Returns**:
 
@@ -104,8 +105,8 @@ let k = 10; // Neighbors to retrieve
 
 let results = index.search(&query, k)?;
 
-for match in results {
-    println!("ID: {}, Distance: {}", match.id, match.distance);
+for hit in results {
+    println!("ID: {}, Distance: {}", hit.id, hit.distance);
 }
 ```
 
@@ -306,7 +307,7 @@ file again after a compaction reads the new one in too.
 
 * **High Recall**: Increase `ef_construction` to 400 and `max_connections` to 32.
 * **Fast Search**: Decrease `ef_search` to 20-30.
-* **Low Memory**: Decrease `max_connections` to 8-12.
+* **Low Memory**: `Precision::Half`, or vectors with fewer dimensions.
 
 ## Data Types
 
@@ -314,7 +315,7 @@ file again after a compaction reads the new one in too.
 
 ```rust
 pub struct SearchResult {
-    /// The internal sequential ID of the vector
+    /// The id the vector was added under
     pub id: u64,
     
     /// Distance from the query by the index's metric

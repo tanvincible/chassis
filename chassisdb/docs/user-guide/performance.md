@@ -45,8 +45,8 @@ faster, but searches for 0.99 recall at 128 and 384 dimensions take up to 14% lo
 ## Many Queries
 
 `search_batch(queries, k)` searches a `(count, dimensions)` array in one call and returns the ids
-and distances as two `(count, k)` arrays. A call from Python into the library costs 15 to 38 µs on
-the server CPUs measured, which `search` pays once per query and `search_batch` once per batch. On
+and distances as two `(count, k)` arrays. `search` adds 15 to 38 µs a query on the server CPUs
+measured (checking the query, buffers, result objects), which `search_batch` pays once per batch. On
 GitHub's server runners a batch made 1.20 to 1.42 times the queries a second of one call per query
 over a million vectors of 128 dimensions, and 1.10 to 1.13 times over 99,000 of 1,536, within 5% of
 the same searches from Rust (0.95 recall).
@@ -55,20 +55,17 @@ the same searches from Rust (0.95 recall).
 
 Calling `flush()` involves an `fsync` system call, which is expensive. For maximum write throughput:
 
-1. Add vectors in batches (e.g., 1,000 to 10,000).
-2. Call `flush()` only after the batch is complete.
+1. Add vectors with `add_batch`, which links them on every core, in chunks of, say, 10,000.
+2. Call `flush()` once at the end, or every few chunks to bound what a crash can lose.
 
 ```python
-# Bad: Slow due to excessive syscalls
+# Slow: one vector and one fsync at a time
 for vec in huge_dataset:
     index.add(vec)
-    index.flush() 
+    index.flush()
 
-# Good: High throughput
-batch_size = 1000
-for i, vec in enumerate(huge_dataset):
-    index.add(vec)
-    if i % batch_size == 0:
-        index.flush()
-index.flush() # Final flush
+# Fast: batches on every core, one fsync
+for start in range(0, len(huge_dataset), 10_000):
+    index.add_batch(huge_dataset[start : start + 10_000])
+index.flush()
 ```

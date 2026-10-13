@@ -15,6 +15,7 @@ on:
       - "README.md"
       - "chassisdb/README.md"
       - "chassisdb/examples/**"
+      - "scripts/llms_full.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -54,18 +55,7 @@ jobs:
       - name: Write llms.txt and llms-full.txt
         run: |
           cp llms.txt site/
-          {
-            cat llms.txt
-            for f in README.md docs/src/guide/getting-started.md docs/src/guide/basic-usage.md \
-                chassisdb/README.md docs/src/guide/api-reference.md docs/src/guide/c-api.md \
-                docs/src/guide/errors.md docs/src/guide/agents.md; do
-              printf '\n\n---\n\n<!-- %s -->\n\n' "$f"
-              cat "$f"
-            done
-            printf '\n\n---\n\n<!-- chassisdb/examples/notes_search.py -->\n\n```python\n'
-            cat chassisdb/examples/notes_search.py
-            printf '```\n'
-          } > site/llms-full.txt
+          python3 scripts/llms_full.py > site/llms-full.txt
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4

@@ -14,6 +14,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-# `from chassis.exceptions import ...` and the like keep working too.
+# `from chassis.exceptions import ...` and `chassis.exceptions.ChassisError` keep working too.
 for _name in ("index", "exceptions", "_ffi"):
-    sys.modules[f"{__name__}.{_name}"] = getattr(chassisdb, _name)
+    globals()[_name] = sys.modules[f"{__name__}.{_name}"] = getattr(chassisdb, _name)

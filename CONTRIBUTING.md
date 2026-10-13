@@ -10,7 +10,7 @@ If you like what we are doing but do not have the time to write code or document
 
 We maintain two primary sources of documentation:
 1. **[The Chassis book](docs/src/SUMMARY.md)**: guides, the API and error references, architecture, the file format, and the decision records.
-2. **[Python docs](chassisdb/docs/index.md)**: usage guides and API reference for the Python package (`chassisdb`, imported as `chassis`).
+2. **[Python docs](chassisdb/docs/index.md)**: usage guides and API reference for the Python package (`chassisdb`).
 
 Before asking a question, please check these resources. If the answer isn't there, search the existing [issues](https://github.com/tanvincible/chassis/issues) on GitHub.
 
@@ -49,7 +49,7 @@ Chassis is a monorepo containing three distinct components:
 
 * `chassis-core/`: the `chassisdb` crate, the index itself: storage, graph and search (Rust).
 * `chassis-ffi`: The C API (Rust).
-* `chassisdb`: The Python package, imported as `chassis` (Python, over the C API with ctypes).
+* `chassisdb`: The Python package (Python, over the C API with ctypes).
 
 #### 1. Rust Development (Core & FFI)
 

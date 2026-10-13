@@ -71,7 +71,7 @@ pub use header::{MAGIC, VERSION};
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
-#[cfg(doctest)]
+#[cfg(all(doctest, chassis_skill))]
 #[doc = include_str!("../../plugins/chassis/skills/chassis/SKILL.md")]
 struct SkillDoctests;
 pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
