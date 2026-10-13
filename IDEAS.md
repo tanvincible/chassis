@@ -211,38 +211,91 @@ half precision it is level.
 
 Four agents, given only a copy of the repository, each built an app on Chassis (2026-10-13): a
 notes search CLI and an LLM cache served by four worker processes in Python, storage for a desktop
-app in Rust, and a "more like this" catalog tool in C. What they had to work around is below; what
-they tripped on in the docs and errors was fixed in PR #59.
+app in Rust, and a "more like this" catalog tool in C. What they tripped on in the docs and errors
+was fixed in PR #59; looking up a vector or an id, leaving ids out of a search in C and Python, and
+the count of deleted vectors were built in PR #61.
 
-### Get a vector, check an id, list the ids
+Six more (2026-10-14) built apps people build now: a team's coding-agent memory on
+`chassisdb-mcp`, an MCP server over Markdown notes, docs retrieval with LangChain, semantic code
+search, a shop's search API on four web workers with an ingester, and a Rust desktop photo
+backend. All six met every requirement in 19 to 35 minutes; Chassis was never the slow part
+(0.05 to 0.23 ms a search). Their bugs and docs gaps were fixed in PRs #64, #65 and #68; what they
+asked for is below, most asked first.
 
-* **Known**: the C tool kept a 5.1 MB copy of every vector beside its 8.9 MB index, to look up a
-  product's vector for "more like this" and to know every id. The Rust app checked whether an id
-  exists with `search_filtered(q, 1, |x| x == id)`, a pass over the index each time. The index
-  holds both already.
-* **To validate**: whether `get(id)`, `contains(id)` and the ids, or a `search_by_id(id, k)` that
-  leaves the id out, are asked for often enough to add. Nothing to measure; search is unchanged.
+### Replace a vector in one call
 
-### Exclude ids in C and Python
+* **Known**: four apps wrote `if id in index: delete(id)` then `add(vector, id=id)`, the same three
+  lines each. Under one flush that is already atomic.
+* **To validate**: nothing to measure; whether `add(..., replace=True)` or an `upsert` in Rust, C and
+  Python is worth its surface.
 
-* **Known**: Rust's filter is a closure; C and Python take only ids to allow. To leave out a few
-  products, the C tool listed every other id, which it had only because of its copy above.
-* **To validate**: an exclude list, or a callback in C, against asking for `k` plus the excluded
-  count and dropping them.
+### Advice on compacting, from the index
 
-### A count of deleted vectors
+* **Known**: four apps had to decide when to compact; the docs now say compact once
+  `deleted_count()` nears `len()`, from ADR-0011's measurements (half deleted: searches at about 70%
+  of their speed). One found that compacting doesn't shrink the file until the live vectors fit in
+  fewer segments.
+* **To validate**: whether a call that reports bytes on disk and what a compaction would free,
+  with a `should_compact`, is used once the rule is documented.
 
-* **Known**: two apps had to decide when to compact, and `len()` counts live vectors only. One kept
-  its own count in SQLite; the other compacted on every run that deleted anything. The graph keeps
-  the count already.
-* **To validate**: recall and search time against the deleted share, for a rule on when compacting
-  pays, then whether to expose the count, the rule, or both.
+### "More like this id" in one call
+
+* **Known**: two apps (and the C tool before them) did `get(id)` and then searched with the id
+  excluded: a vector's round trip through the binding.
+* **To validate**: how often it's asked for beyond the docs' two-line recipe.
+
+### Everything within a distance
+
+* **Known**: the photo app grouped burst shots by searching each photo with k = 16 and doubling k
+  while every hit was within 0.25: 1 s for 20,000 photos, the same 2,760 groups as a brute-force
+  pass over 200 million pairs. The memory app wanted recall to stop at a distance, so its harness
+  cut-offs survive a change of model.
+* **To validate**: trimming top-k at a `max_distance` against a true range search that widens k
+  itself, and the widening's cost in dense clusters.
+
+### The same calls in every binding
+
+* **Known**: Python has no `snapshot()` or `refresh()`, which Rust's reader has; the shop's workers
+  wanted to report which flush each saw. Rust has no `search_batch`, which the photo app's
+  duplicates pass would have used.
+* **To validate**: nothing to measure for the Python half; Rust `search_batch` with the
+  across-cores idea above.
+
+### A cap on a build's threads
+
+* **Known**: in the photo app, a background `add_batch` on every core while the UI searched gave
+  search a 0.3 ms median and a 20 ms p99, on a machine loaded by other jobs; one-at-a-time adds
+  brought p99 to 7 ms and imported five times slower.
+* **To validate**: UI search latency against build threads on an idle machine, before an option.
+
+### Large allowed sets, cheaper
+
+* **Known**: the shop built its `allowed` ids per request, from SQLite through numpy: about 1.5 ms,
+  ten times the filtered search it fed (0.13 to 0.23 ms).
+* **To validate**: where the time goes (the query, the array, the copy into the library, its hash
+  set) before a reusable set handle.
+
+### Smaller ones, asked once each
+
+* **Collections in one file**: the notes server kept sections and whole notes in two files.
+* **String keys**: the shop mapped SKUs to integer row ids in SQLite, which the docs advise.
+* **A reader threads can share**: Rust's `IndexReader::search` takes `&mut self`, one per thread.
+* **A smaller minimum file**: 21 vectors took 2.1 MB, its header and first segment.
+* **Error help in each binding's spelling**: "open it with the cosine metric" reads as Rust to a
+  Python user, who writes `IndexOptions(metric="cosine")`.
+* **The LangChain store**: listing and counting documents (the app used LangChain's record
+  manager as a second database), `compact()`, a context manager, and replacing a file's chunks at
+  once so readers never see both.
+* **The MCP memory**: forgetting by tag or many ids, `update(id, text)`, export and import, a
+  `max_distance` on recall, and a hint on remember's `similar` when two memories are one fact.
 
 ### Several processes that each write
 
 * **Known**: a second writer fails at once with Locked. The LLM cache's four workers each opened the
   writer for each write, under a lock of their own on a side file: on 100,000 vectors of 384
-  dimensions, open took 0.3 ms, an add 10 to 13 and the flush 15 to 17, on an Apple M5.
+  dimensions, open took 0.3 ms, an add 10 to 13 and the flush 15 to 17, on an Apple M5. In the
+  second round the shop ran one ingester and readers in its four workers, as the docs advise, and
+  needed nothing more.
 * **To validate**: an open that waits for the lock, with a timeout, against a documented recipe;
   and the per-write cost at a million vectors and on Linux.
 
@@ -251,7 +304,8 @@ they tripped on in the docs and errors was fixed in PR #59.
 * **Known**: a writer reopened without options uses the defaults, so a cosine index fails to open
   until its options are given again. A reader takes the metric and precision from the file but not
   `max_connections`, so in Python a `read_only=True` index with no options fails on an index built
-  with 32. Both errors now say what to pass (PR #59).
+  with 32. Both errors now say what to pass (PR #59). The code-search app asked for it again: every
+  writer open restates `metric="cosine"`, and a reader still passes `dimensions`.
 * **To validate**: nothing to measure. Taking every option from the file when none are given is an
   API decision; C's `chassis_open_reader` would keep a `max_connections` it no longer needs.
 
