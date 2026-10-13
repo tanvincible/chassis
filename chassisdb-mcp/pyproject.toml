@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "chassisdb>=0.8",
     "mcp>=2.3,<3",
+    "typing_extensions>=4.12",
 ]
 
 [project.optional-dependencies]
@@ -35,3 +36,7 @@ Repository = "https://github.com/tanvincible/chassis"
 
 [tool.setuptools]
 packages = ["chassisdb_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

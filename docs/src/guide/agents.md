@@ -43,6 +43,12 @@ claude mcp add --scope user chassis-memory -- \
   uvx --from 'chassisdb-mcp[fastembed]' chassisdb-mcp --embedder fastembed:BAAI/bge-small-en-v1.5
 ```
 
+Claude Code keeps a memory of its own and uses it when both are there: set
+`"autoMemoryEnabled": false` in `~/.claude/settings.json` to have it use this one. Its
+[README](https://github.com/tanvincible/chassis/tree/main/chassisdb-mcp) has the setup for Cursor,
+Codex and other clients, the embedding models, and a command line to see and change what is
+remembered.
+
 ## Docs for agents
 
 - [llms.txt](https://tanvincible.github.io/chassis/llms.txt): an index of the docs

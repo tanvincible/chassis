@@ -100,7 +100,7 @@ jobs:
           CHASSIS_LIB_PATH: ${{ github.workspace }}/target/release
           PYTHONPATH: chassisdb:chassisdb-mcp
         run: |
-          pip install numpy pytest "mcp>=2.3,<3"
+          pip install numpy pytest "mcp>=2.3,<3" "typing_extensions>=4.12" "fastembed>=0.7"
           pytest chassisdb-mcp/tests
 
   fmt:
