@@ -126,6 +126,36 @@ jobs:
           black --check chassisdb tests examples
           mypy chassisdb
 
+  langchain:
+    name: LangChain integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: python
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the C library
+        run: cargo build --release -p chassis-ffi
+
+      - name: Run LangChain's standard tests and ours
+        working-directory: integrations/langchain-chassisdb
+        env:
+          CHASSIS_LIB_PATH: ${{ github.workspace }}/target/release
+          PYTHONPATH: ${{ github.workspace }}/chassisdb:.
+        run: |
+          pip install numpy pytest pytest-asyncio "langchain-core>=1.0,<2" langchain-tests
+          pytest -q tests
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
