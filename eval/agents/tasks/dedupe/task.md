@@ -1,0 +1,3 @@
+`tickets.txt` has one support ticket per line, about 500 of them, and many say the same thing in other words. Write `dedupe.py` that prints the groups of near-duplicate tickets: each group on one line, as the 1-based line numbers of its tickets, ascending and space-separated, and only groups of two or more. Two tickets are near-duplicates when the cosine distance between their embeddings is under 0.35; a group is every ticket connected through near-duplicates.
+
+It has to stay fast if the file grows to 100,000 tickets: don't compare every pair. `embed.py` here is the embedding model to use: `from embed import embed`.
