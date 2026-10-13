@@ -50,7 +50,10 @@ def main(folder: Path) -> None:
 
 
 def search_notes(folder: Path, db: sqlite3.Connection) -> None:
-    db.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)")
+    # AUTOINCREMENT: a deleted note's id is never given out again.
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL)"
+    )
 
     # Most text embedding models are compared by cosine distance.
     options = IndexOptions(metric="cosine")

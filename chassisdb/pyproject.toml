@@ -8,7 +8,7 @@ version = "0.7.2"
 description = "Python bindings for Chassis, an embedded vector index for local semantic search"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT OR Apache-2.0"}
+license = "MIT OR Apache-2.0"
 authors = [
     {name = "Chassis Contributors"}
 ]
@@ -16,8 +16,6 @@ keywords = ["vector", "search", "embedding", "ann", "hnsw"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -41,7 +39,7 @@ dev = [
 ]
 
 docs = [
-    "mkdocs>=1.6.0",
+    "mkdocs>=1.6.0,<2",
     "mkdocs-material>=9.7.0",
     "mkdocstrings[python]>=1.0",
 ]
@@ -57,13 +55,14 @@ packages = ["chassisdb", "chassis"]
 
 [tool.setuptools.package-data]
 chassisdb = ["py.typed"]
+chassis = ["py.typed"]
 
 [tool.black]
-line-length = 79
+line-length = 100
 target-version = ["py311", "py312", "py313", "py314"]
 
 [tool.ruff]
-line-length = 79
+line-length = 100
 target-version = "py311"
 select = [
     "E",   # pycodestyle errors

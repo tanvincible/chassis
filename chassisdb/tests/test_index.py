@@ -640,6 +640,14 @@ class TestFiltered:
         assert [r.id for r in both] == [110, 119]
         with pytest.raises(TypeError, match="excluded is a function"):
             index.search([0.0, 0.0], k=4, excluded=lambda i: i == 100)
+        with pytest.raises(TypeError, match=r"help: pass excluded=\[100\]"):
+            index.search([0.0, 0.0], k=4, excluded=100)
+        # 64-bit ids, as from a hash: numpy alone would read this list as floats.
+        index.add([0.5, 0.0], id=2**63 + 7)
+        near = index.search([0.5, 0.0], k=2, excluded=[100, 2**63 + 7])
+        assert 2**63 + 7 not in [r.id for r in near]
+        with pytest.raises(TypeError, match="get\\(id\\) gives None"):
+            index.search(index.get(12345), k=1)
         index.close()
 
 
@@ -709,3 +717,5 @@ def test_the_old_import_name_still_works():
 
     assert chassis.VectorIndex is chassisdb.VectorIndex
     assert OldError is chassisdb.ChassisError
+    assert chassis.exceptions.ChassisError is chassisdb.ChassisError
+    assert chassis.index.VectorIndex is chassisdb.VectorIndex

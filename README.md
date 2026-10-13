@@ -41,7 +41,7 @@ It is not a database server or a distributed system, and it stores vectors and i
 
 ## When to use it
 
-Chassis fits an app that embeds its own data and searches it on the same machine: a desktop or command-line app, a local RAG or agent memory, a cache shared by a few worker processes. Other tools fit other shapes:
+Chassis fits an app that embeds its own data and searches it on the same machine: a desktop or command-line app, a local RAG or agent memory, a cache one process writes while others search it. Other tools fit other shapes:
 
 * [sqlite-vec](https://github.com/asg017/sqlite-vec), when the data is in SQLite already and the search should be part of SQL queries.
 * [LanceDB](https://github.com/lancedb/lancedb), when you want one store for vectors and their columns, with filters in the query and versions of the data.

@@ -24,9 +24,8 @@ from C, see the [C API](c-api.md).
 
 ```rust
 use chassisdb::{VectorIndex, IndexOptions};
-use anyhow::Result;
 
-fn main() -> Result<()> {
+fn main() -> chassisdb::Result<()> {
     // 1. Open the index (creates file if missing)
     let mut index = VectorIndex::open(
         "quickstart.chassis", 

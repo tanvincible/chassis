@@ -71,7 +71,7 @@ pub use header::{MAGIC, VERSION};
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
-#[cfg(doctest)]
+#[cfg(all(doctest, chassis_skill))]
 #[doc = include_str!("../../plugins/chassis/skills/chassis/SKILL.md")]
 struct SkillDoctests;
 pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
@@ -272,11 +272,15 @@ impl VectorIndex {
                  another id"
             );
         }
-        if !self.graph.custom_ids && id != self.graph.node_count() {
+        // Ids differ from slots from here on, but only once the vector is in: a refused one
+        // mustn't leave the file paying for an id table.
+        let switch = !self.graph.custom_ids && id != self.graph.node_count();
+        if switch {
             self.id_table()?;
-            self.graph.custom_ids = true;
         }
-        self.insert(id, vector)
+        self.insert(id, vector)?;
+        self.graph.custom_ids |= switch;
+        Ok(())
     }
 
     /// Add many vectors at once, given back to back, `dims` floats each, and return their ids,
@@ -330,11 +334,14 @@ impl VectorIndex {
             }
         }
         let first = self.graph.node_count();
-        if !self.graph.custom_ids && ids.iter().zip(first..).any(|(&id, slot)| id != slot) {
+        let switch =
+            !self.graph.custom_ids && ids.iter().zip(first..).any(|(&id, slot)| id != slot);
+        if switch {
             self.id_table()?;
-            self.graph.custom_ids = true;
         }
-        self.insert_batch(ids, vectors)
+        self.insert_batch(ids, vectors)?;
+        self.graph.custom_ids |= switch;
+        Ok(())
     }
 
     fn dims(&self) -> usize {
@@ -785,12 +792,35 @@ impl VectorIndex {
 
 type IdMap = HashMap<u64, u64, IdHasher>;
 
-#[derive(Debug)]
 struct IdTable {
     /// id → slot of each live vector
     slots: IdMap,
     /// One past the largest id ever stored
     next: u64,
+}
+
+/// A count, not every id: `{:?}` on an index shouldn't print millions of them.
+impl std::fmt::Debug for IdTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdTable").field("ids", &self.slots.len()).field("next", &self.next).finish()
+    }
+}
+
+/// A reader's id → slot map for the slots below `mapped`, extended as lookups need: a later slot
+/// replaces an earlier one with its id, since an id is given again only after its vector is deleted.
+#[derive(Default)]
+struct MappedIds {
+    slots: IdMap,
+    mapped: u64,
+}
+
+impl std::fmt::Debug for MappedIds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MappedIds")
+            .field("ids", &self.slots.len())
+            .field("mapped", &self.mapped)
+            .finish()
+    }
 }
 
 /// Hashes an id with one 64×64→128-bit multiply folded to 64 bits, keyed per table: ids are
@@ -949,9 +979,7 @@ pub struct IndexReader {
     path: PathBuf,
     dims: u32,
     options: IndexOptions,
-    /// id → slot for the slots below `.1`, extended as lookups need: a later slot replaces an
-    /// earlier one with its id, since an id is given again only after its vector is deleted
-    ids: Option<(IdMap, u64)>,
+    ids: Option<MappedIds>,
 }
 
 impl IndexReader {
@@ -1037,7 +1065,7 @@ impl IndexReader {
         self.sync()
     }
 
-    /// Identifies the last snapshot: committed slots and the last delete flush. Two snapshots with
+    /// Identifies the last snapshot (see `len`): committed slots and the last delete flush. Two snapshots with
     /// the same value have the same contents, so it can key a cache of search results, unless a
     /// power loss discarded a flush readers had already seen.
     pub fn snapshot(&self) -> (u64, u64) {
@@ -1096,12 +1124,14 @@ impl IndexReader {
         let graph = &self.graph;
         let committed = graph.view.map_or(0, |view| view.committed);
         let slot = if graph.custom_ids {
-            let (slots, mapped) = self.ids.get_or_insert_with(Default::default);
-            for slot in *mapped..committed {
-                slots.insert(graph.id_of(slot)?, slot);
-                *mapped = slot + 1;
+            // ponytail: the first lookup maps every committed slot, O(n) once per snapshot file.
+            let ids = self.ids.get_or_insert_with(MappedIds::default);
+            ids.slots.reserve(committed.saturating_sub(ids.mapped) as usize);
+            for slot in ids.mapped..committed {
+                ids.slots.insert(graph.id_of(slot)?, slot);
+                ids.mapped = slot + 1;
             }
-            slots.get(&id).copied()
+            ids.slots.get(&id).copied()
         } else {
             Some(id)
         };
@@ -1111,12 +1141,13 @@ impl IndexReader {
         }
     }
 
-    /// Live vectors as of the last snapshot, taken by `search` or `refresh`.
+    /// Live vectors as of the last snapshot. `search`, `get`, `contains`, `ids` and `refresh` each
+    /// take a new one, so a search's result can be gone by the `get` after it.
     pub fn len(&self) -> u64 {
         self.graph.view.map_or(0, |view| view.committed) - self.graph.deleted_count
     }
 
-    /// Deleted vectors in the last snapshot that the file still holds.
+    /// Deleted vectors in the last snapshot that the file still holds; see `len`.
     pub fn deleted_count(&self) -> u64 {
         self.graph.deleted_count
     }

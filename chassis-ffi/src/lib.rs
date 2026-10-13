@@ -1081,12 +1081,12 @@ pub unsafe extern "C" fn chassis_delete(ptr: *mut ChassisIndex, id: u64) -> c_in
 ///
 /// ```c
 /// float query[768] = {0.1, 0.2, ...};
-/// u64 ids[10];
+/// uint64_t ids[10];
 /// float dists[10];
 ///
 /// size_t count = chassis_search(index, query, 768, 10, ids, dists);
 /// for (size_t i = 0; i < count; i++) {
-///     printf("ID: %llu, Distance: %f\n", ids[i], dists[i]);
+///     printf("ID: %" PRIu64 ", Distance: %f\n", ids[i], dists[i]);
 /// }
 /// ```
 ///
@@ -1727,7 +1727,12 @@ pub unsafe extern "C" fn chassis_ids(
 /// - `ptr` must be non-NULL and valid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
-    ffi_guard(|| unsafe { read(ptr, |index| index.len()) }.unwrap_or(0)).unwrap_or(0)
+    // A reader's refresh sets an error of its own after this clears the last one.
+    let len = |index: &mut dyn Readable| {
+        clear_last_error();
+        index.len()
+    };
+    ffi_guard(|| unsafe { read(ptr, len) }.unwrap_or(0)).unwrap_or(0)
 }
 
 /// Get the number of deleted vectors the index file still holds
@@ -1743,7 +1748,11 @@ pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
 /// - `ptr` must be non-NULL and valid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_deleted_count(ptr: *const ChassisIndex) -> u64 {
-    ffi_guard(|| unsafe { read(ptr, |index| index.deleted_count()) }.unwrap_or(0)).unwrap_or(0)
+    let deleted_count = |index: &mut dyn Readable| {
+        clear_last_error();
+        index.deleted_count()
+    };
+    ffi_guard(|| unsafe { read(ptr, deleted_count) }.unwrap_or(0)).unwrap_or(0)
 }
 
 /// Check if the index is empty
@@ -1761,8 +1770,11 @@ pub unsafe extern "C" fn chassis_deleted_count(ptr: *const ChassisIndex) -> u64 
 /// - `ptr` must be non-NULL and valid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_is_empty(ptr: *const ChassisIndex) -> c_int {
-    ffi_guard(|| unsafe { read(ptr, |index| c_int::from(index.len() == 0)) }.unwrap_or(0))
-        .unwrap_or(0)
+    let is_empty = |index: &mut dyn Readable| {
+        clear_last_error();
+        c_int::from(index.len() == 0)
+    };
+    ffi_guard(|| unsafe { read(ptr, is_empty) }.unwrap_or(0)).unwrap_or(0)
 }
 
 /// Get the dimensionality of vectors in the index
@@ -2292,7 +2304,9 @@ mod tests {
             assert_eq!(ids[..3], [100, 101, 0]);
             assert_eq!(unsafe { chassis_ids(handle, ids.as_mut_ptr(), 8) }, 4);
             assert_eq!(ids[..4], [100, 101, 103, 104]);
+            assert_eq!(unsafe { chassis_get(handle, 101, out.as_mut_ptr(), 3) }, -1);
             assert_eq!(unsafe { chassis_deleted_count(handle) }, 1);
+            assert_eq!(chassis_last_error_code(), CHASSIS_OK, "a success clears the last error");
 
             let query = [0.0f32, 0.0];
             let excluded = [100u64, 101, 7];
