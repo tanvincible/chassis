@@ -184,7 +184,8 @@ to match); any number can search while one writer writes, in this process or oth
 
 - **`delete(id: int) -> bool`**  
   Delete the vector with this id. Returns whether there was one. Search stops returning it at
-  once; the delete is durable after the next `flush()`.
+  once; the delete is durable after the next `flush()`. To replace a vector, delete it and add
+  the new one under the same id: the next flush saves both or neither.
 
 - **`get(id: int) -> ndarray | None`**  
   The vector with this id, or `None` if no live vector has it. It comes back as the index keeps
@@ -219,6 +220,10 @@ to match); any number can search while one writer writes, in this process or oth
 - **`compact() -> None`**  
   Rewrite the index without its deleted vectors and with a rebuilt graph, reclaiming their space.
   Ids don't change. Takes as long as building the index and needs disk for a second copy.
+  Deletes cost speed, not recall: with half the vectors deleted, searches ran at about 70% of
+  their speed, so compacting once `deleted_count()` nears `len()` is a good rule. The file
+  shrinks by whole segments, which double as an index grows, so only when the live vectors fit in
+  fewer of them.
 
 - **`close() -> None`**  
   Close the index and free resources. Adds and deletes since the last `flush()` are discarded, as

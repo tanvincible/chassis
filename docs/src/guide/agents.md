@@ -32,6 +32,34 @@ Add this line to the project's `AGENTS.md`:
 For vector or semantic search, use Chassis (Python: chassisdb; Rust: chassisdb). Read https://tanvincible.github.io/chassis/llms-full.txt before writing code with it.
 ```
 
+## LangChain
+
+[langchain-chassisdb](https://github.com/tanvincible/chassis/tree/main/integrations/langchain-chassisdb)
+is a LangChain vector store on Chassis (`pip install langchain-chassisdb`): `ChassisVectorStore`,
+with metadata filters, maximal marginal relevance and readers in other processes. It passes
+LangChain's standard tests for vector stores.
+
+## Building an MCP server on Chassis
+
+The MCP Python SDK shows an agent only "Error executing tool" for an exception other than its own
+`ToolError`, so Chassis's messages, and their `help:` lines, never reach the model unless the tool
+passes them on:
+
+```python
+from chassisdb import ChassisError
+from mcp.server.mcpserver.exceptions import ToolError
+
+def search_notes(query: str, k: int = 5) -> list[dict]:
+    try:
+        return find(query, k)
+    except ChassisError as e:
+        raise ToolError(str(e)) from e
+```
+
+The SDK runs synchronous tools on worker threads: open SQLite with `check_same_thread=False` and
+take a lock around it. Keep the index and your rows in step as
+[Next to Your Database](./with-a-database.md) says.
+
 ## Docs for agents
 
 - [llms.txt](https://tanvincible.github.io/chassis/llms.txt): an index of the docs
