@@ -7,25 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 13 October 2026
 
-What four apps built with nothing but the source tripped on. Two things behave differently,
-which is why this is 0.8. The file format doesn't change.
+Bug fixes. Two of them change behaviour, which is why this is 0.8. The file format doesn't change.
 
 ### Breaking
 
 - In Rust, a search with `k` = 0 returns an `InvalidArgument` error instead of an empty list, as
-  C and Python already did.
+  C and Python already did (#59).
 - In Python, a `with` block flushes when it ends without an exception, so its adds and deletes
-  are kept. `close()`, and dropping an index in Rust or C, still discard what wasn't flushed, as
-  a crash would; the docs now say so.
+  are kept (#59). `close()`, and dropping an index in Rust or C, still discard what wasn't
+  flushed, as a crash would; the docs now say so.
+
+### Added
+
+- C names the metrics and precisions: `CHASSIS_METRIC_EUCLIDEAN`, `CHASSIS_METRIC_COSINE`,
+  `CHASSIS_PRECISION_FULL`, `CHASSIS_PRECISION_HALF` (#59).
 
 ### Fixed
 
-- fix: what four apps built blind with Chassis tripped on (#59) ([a7f9989](https://github.com/tanvincible/chassis/commit/a7f9989859eab9e3642733db313f38fe817e5f05))
-  - Opening an index with another `max_connections` is an `OptionsMismatch` error that names
-    both values, instead of an `Other` error that printed internal structs.
-  - C names the metrics and precisions: `CHASSIS_METRIC_EUCLIDEAN`, `CHASSIS_METRIC_COSINE`,
-    `CHASSIS_PRECISION_FULL`, `CHASSIS_PRECISION_HALF`.
-  - No warnings when Chassis is built as a dependency.
+- Opening an index with another `max_connections` is an `OptionsMismatch` error that names both
+  values, instead of an `Other` error that printed internal structs (#59).
+- No compiler warnings when Chassis is built as a dependency (#59).
 
 ## [v0.7.2](https://github.com/tanvincible/chassis/compare/v0.7.1...v0.7.2) - 11 October 2026
 
