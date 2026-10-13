@@ -36,7 +36,7 @@
 #define CHASSIS_ERROR_DIMENSION_MISMATCH 2
 
 /**
- * The file was created with another metric or precision than the one asked for.
+ * The file was created with another metric, precision or `max_connections` than the one asked for.
  */
 #define CHASSIS_ERROR_OPTIONS_MISMATCH 3
 
@@ -84,6 +84,27 @@
  * Anything else, a panic included.
  */
 #define CHASSIS_ERROR_OTHER 12
+
+/**
+ * Euclidean (L2) distance, for `chassis_open_with_metric()` and from `chassis_metric()`.
+ */
+#define CHASSIS_METRIC_EUCLIDEAN 0
+
+/**
+ * Cosine distance (1 - cosine similarity).
+ */
+#define CHASSIS_METRIC_COSINE 1
+
+/**
+ * Each component a 32-bit float, for `chassis_open_with_precision()` and from
+ * `chassis_precision()`.
+ */
+#define CHASSIS_PRECISION_FULL 0
+
+/**
+ * Each component a 16-bit float.
+ */
+#define CHASSIS_PRECISION_HALF 1
 
 /**
  * Opaque handle to a Chassis index (C-compatible)
@@ -169,7 +190,8 @@ struct ChassisIndex *chassis_open_with_options(const char *path, uint32_t dimens
  *
  * # Arguments
  *
- * - `metric`: `0` for Euclidean (L2) distance, `1` for cosine distance (1 - cosine similarity).
+ * - `metric`: `CHASSIS_METRIC_EUCLIDEAN` (0) for Euclidean (L2) distance, `CHASSIS_METRIC_COSINE`
+ *   (1) for cosine distance (1 - cosine similarity).
  *   A cosine index stores vectors scaled to unit length, rejects zero vectors, and reports
  *   distances from 0 to 2. The metric is fixed when the index is created; reopening an existing
  *   index with another one fails.
@@ -186,12 +208,12 @@ struct ChassisIndex *chassis_open_with_metric(const char *path, uint32_t dimensi
  *
  * # Arguments
  *
- * - `precision`: `0` to keep each component of a vector as a 32-bit float, `1` as a 16-bit
- *   float (half precision). Half precision halves the vectors' size in the file and in memory;
- *   each component is rounded to about three decimal digits, and a vector with a component of
- *   65,520 or more in magnitude is refused. The precision is fixed when the index is created;
- *   reopening an existing index with another one fails. A release without this function can't
- *   open a file in half precision.
+ * - `precision`: `CHASSIS_PRECISION_FULL` (0) to keep each component of a vector as a 32-bit
+ *   float, `CHASSIS_PRECISION_HALF` (1) as a 16-bit float. Half precision halves the vectors'
+ *   size in the file and in memory; each component is rounded to about three decimal digits, and
+ *   a vector with a component of 65,520 or more in magnitude is refused. The precision is fixed
+ *   when the index is created; reopening an existing index with another one fails. A release
+ *   without this function can't open a file in half precision.
  * - The other arguments are as for `chassis_open_with_metric()`.
  *
  * # Safety
@@ -228,6 +250,9 @@ struct ChassisIndex *chassis_open_reader(const char *path, uint32_t dimensions, 
 
 /**
  * Free a Chassis index and release all resources
+ *
+ * It doesn't flush: adds and deletes since the last `chassis_flush()` are discarded, as after a
+ * crash.
  *
  * # Arguments
  *
@@ -670,7 +695,7 @@ uint32_t chassis_dimensions(const struct ChassisIndex *ptr);
  *
  * # Returns
  *
- * - `0` for Euclidean, `1` for cosine, as for `chassis_open_with_metric()`
+ * - `CHASSIS_METRIC_EUCLIDEAN` or `CHASSIS_METRIC_COSINE`
  * - `-1` if `ptr` is NULL
  *
  * # Safety
@@ -684,7 +709,7 @@ int chassis_metric(const struct ChassisIndex *ptr);
  *
  * # Returns
  *
- * - `0` for full precision, `1` for half, as for `chassis_open_with_precision()`
+ * - `CHASSIS_PRECISION_FULL` or `CHASSIS_PRECISION_HALF`
  * - `-1` if `ptr` is NULL
  *
  * # Safety

@@ -29,8 +29,8 @@ class DimensionMismatchError(ChassisError, ValueError):
 
 
 class OptionsMismatchError(ChassisError, ValueError):
-    """The file was created with another metric or precision than the one
-    asked for."""
+    """The file was created with another metric, precision or
+    max_connections than the one asked for."""
 
     code = 3
 

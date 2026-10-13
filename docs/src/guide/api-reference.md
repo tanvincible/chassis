@@ -23,7 +23,8 @@ let mut index = VectorIndex::open(
 
 * `path`: Path to the backing file (created if missing).
 * `dims`: Vector dimensionality (must be static for the file's lifetime).
-* `options`: Configuration for graph construction and search.
+* `options`: Configuration for graph construction and search. An existing index is reopened with
+  the metric, precision and `max_connections` it was created with.
 
 **Returns**:
 
@@ -109,6 +110,9 @@ for match in results {
 
 **Returns**: `Vec<SearchResult>`, sorted by distance (nearest first), identified by the ids from `add`/`add_with_id`. Deleted vectors are never returned.
 
+`k` is at least 1. The search keeps the best `max(k, ef_search)` candidates, so a `k` above
+`ef_search` is fine; it returns at most `len()` results.
+
 #### Filtered search
 
 ```rust
@@ -131,7 +135,15 @@ vectors ([ADR-0009](../adr/009-filtered-search.md)). `IndexReader` has the same 
 index.flush()?;
 ```
 
-**Recommendation**: `flush()` is an expensive syscall. Call it after a batch of insertions (e.g., every 1,000 vectors) or before shutting down.
+**Recommendation**: `flush()` is an expensive syscall. Call it after a batch of insertions (e.g., every 1,000 vectors) or before shutting down. To bound what a crash can lose by time instead, flush from a timer.
+
+Dropping a `VectorIndex` doesn't flush: what was added or deleted since the last `flush()` is
+discarded, as after a crash.
+
+At rest the index is one file. From the first add after a flush until the next flush, and after a
+crash until a writer reopens the index, a `<name>.undo` file sits beside it
+([file format](../architecture/file-format.md#the-undo-file)): move, copy or delete the two
+together.
 
 #### Metadata
 
@@ -145,9 +157,10 @@ let empty = index.is_empty();    // True if count == 0
 
 ### `IndexReader`
 
-Searches an index while a `VectorIndex` in another process writes it. It takes no lock, so any
-number of processes can open readers on one file next to its single writer
-([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md), decision 5).
+Searches an index while a `VectorIndex` writes it, in another process or this one. It takes no
+lock, so any number of readers can open one file next to its single writer
+([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md), decision 5). It takes the metric
+and precision from the file; `max_connections` has to be the one the index was created with.
 
 ```rust
 use chassis_core::{IndexOptions, IndexReader};

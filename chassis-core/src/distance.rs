@@ -80,6 +80,7 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
         return unsafe { euclidean_distance_neon(a, b) };
     }
 
+    #[allow(unreachable_code)]
     euclidean_distance_scalar(a, b)
 }
 
@@ -507,20 +508,20 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
 
     // Main loop: Process 16 floats per iteration (4 vectors × 4 floats)
     while i + 16 <= len {
-        let va0 = vld1q_f32(a.as_ptr().add(i));
-        let vb0 = vld1q_f32(b.as_ptr().add(i));
+        let va0 = unsafe { vld1q_f32(a.as_ptr().add(i)) };
+        let vb0 = unsafe { vld1q_f32(b.as_ptr().add(i)) };
         let diff0 = vsubq_f32(va0, vb0);
 
-        let va1 = vld1q_f32(a.as_ptr().add(i + 4));
-        let vb1 = vld1q_f32(b.as_ptr().add(i + 4));
+        let va1 = unsafe { vld1q_f32(a.as_ptr().add(i + 4)) };
+        let vb1 = unsafe { vld1q_f32(b.as_ptr().add(i + 4)) };
         let diff1 = vsubq_f32(va1, vb1);
 
-        let va2 = vld1q_f32(a.as_ptr().add(i + 8));
-        let vb2 = vld1q_f32(b.as_ptr().add(i + 8));
+        let va2 = unsafe { vld1q_f32(a.as_ptr().add(i + 8)) };
+        let vb2 = unsafe { vld1q_f32(b.as_ptr().add(i + 8)) };
         let diff2 = vsubq_f32(va2, vb2);
 
-        let va3 = vld1q_f32(a.as_ptr().add(i + 12));
-        let vb3 = vld1q_f32(b.as_ptr().add(i + 12));
+        let va3 = unsafe { vld1q_f32(a.as_ptr().add(i + 12)) };
+        let vb3 = unsafe { vld1q_f32(b.as_ptr().add(i + 12)) };
         let diff3 = vsubq_f32(va3, vb3);
 
         // Fused multiply-add
@@ -534,8 +535,8 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
 
     // Tail loop: Process remaining 4-float chunks
     while i + 4 <= len {
-        let va = vld1q_f32(a.as_ptr().add(i));
-        let vb = vld1q_f32(b.as_ptr().add(i));
+        let va = unsafe { vld1q_f32(a.as_ptr().add(i)) };
+        let vb = unsafe { vld1q_f32(b.as_ptr().add(i)) };
         let diff = vsubq_f32(va, vb);
         sum0 = vfmaq_f32(sum0, diff, diff);
         i += 4;

@@ -66,9 +66,10 @@ embedding model than the index's.
 
 ## Options mismatch
 
-The file was created with another metric or precision than the one asked for. Both are fixed
-when the index is created, and a writer has to name the same ones again. A reader takes them from
-the file. Open the index with the ones it was created with, or create a new index at another path.
+The file was created with another metric, precision or `max_connections` than the one asked for.
+All three are fixed when the index is created, and a writer has to name the same ones again. A
+reader takes the metric and precision from the file, but names the same `max_connections`. Open
+the index with the ones it was created with, or create a new index at another path.
 
 ## Not found
 

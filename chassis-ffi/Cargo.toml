@@ -24,10 +24,3 @@ cbindgen = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-
-[profile.release]
-# Optimize for size and safety in release builds
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"  # Panics become aborts (but we catch them at FFI boundary)

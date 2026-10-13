@@ -42,7 +42,8 @@ Chassis adopts a **Single-Writer / Multi-Reader (SWMR)** concurrency model.
 Search operations never acquire mutexes or perform existence checks. If a neighbor ID is present in an adjacency list, it is guaranteed to resolve to valid data. This enables consistently low-latency queries (P99).
 
 > Not after a crash. See the [ADR-0005 amendment](005-crash-consistent-linking.md#amendment-2026-10-03). "Multi-reader" means threads in one process: the file lock
-> keeps every other process out, readers included.
+> keeps every other process out, readers included. [ADR-0008](008-format-v3-and-multi-process-readers.md)
+> later added readers that take no lock, in any process.
 
 #### Strong Corruption Guarantees
 

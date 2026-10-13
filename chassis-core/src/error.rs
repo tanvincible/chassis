@@ -16,7 +16,8 @@ pub enum ErrorKind {
     /// A vector or query has another number of components than the index's vectors, or the file
     /// holds vectors of other dimensions than asked for.
     DimensionMismatch,
-    /// The file was created with another metric or precision than the one asked for.
+    /// The file was created with another metric, precision or `max_connections` than the one
+    /// asked for.
     OptionsMismatch,
     /// There is no index at the path, or its directory doesn't exist.
     NotFound,
