@@ -81,7 +81,7 @@ use error::fail;
 use hnsw::layer_from_uniform;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Configuration options for VectorIndex
 #[derive(Debug, Clone)]
@@ -150,6 +150,9 @@ pub struct VectorIndex {
     /// Built on first use once some id differs from its slot (ADR-0007)
     ids: OnceLock<IdTable>,
 
+    /// Held while the id table is built, so threads looking up ids at once build it once
+    building: Mutex<()>,
+
     /// Where the index file is, for `compact` to replace it
     path: PathBuf,
 }
@@ -209,7 +212,8 @@ impl VectorIndex {
         let graph = HnswGraph::open_no_reset(storage, params)?;
         // This is the one writer, so no compaction is running: a copy here is a crashed one's.
         let _ = std::fs::remove_file(storage::sibling(&path, "compacting"));
-        let mut index = Self { graph, ml: params.ml, options, ids: OnceLock::new(), path };
+        let (ids, building) = (OnceLock::new(), Mutex::new(()));
+        let mut index = Self { graph, ml: params.ml, options, ids, building, path };
         if index.options.huge_pages {
             index.use_huge_pages();
         }
@@ -466,6 +470,11 @@ impl VectorIndex {
     // ponytail: O(n) scan once per process when custom ids are in use; persist the table if
     // open-to-first-write latency on large indexes matters.
     fn id_table(&self) -> Result<&IdTable> {
+        if let Some(table) = self.ids.get() {
+            return Ok(table);
+        }
+        // A panic while building leaves nothing half built: the table is set only once whole.
+        let _building = self.building.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(table) = self.ids.get() {
             return Ok(table);
         }

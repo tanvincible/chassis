@@ -9,6 +9,7 @@ description = "Long-term memory for coding agents on your machine, as an MCP ser
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 authors = [{name = "Chassis Contributors"}]
 keywords = ["mcp", "memory", "agents", "vector", "semantic search"]
 classifiers = [

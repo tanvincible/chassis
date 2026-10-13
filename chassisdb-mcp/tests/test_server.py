@@ -134,6 +134,16 @@ def test_writes_during_a_reembed_are_kept(tmp_path, monkeypatch):
     assert memory.overview()["unindexed"] == memory.overview()["stray"] == 0
 
 
+def test_a_reembed_waits_for_a_reader_to_let_go(tmp_path):
+    # Windows can't replace a file that is open; another session's search holds it briefly.
+    memory = Memory(tmp_path, "openai:64")
+    memory.remember("held open")
+    reader = VectorIndex(tmp_path / "memory.chassis", dimensions=64, read_only=True)
+    threading.Timer(0.5, reader.close).start()
+    assert Memory(tmp_path, "openai:32").reembed() == 1
+    assert memory.recall("held open", 1)[0]["text"] == "held open"
+
+
 def test_a_reembed_of_nothing_frees_the_folder(tmp_path):
     memory = Memory(tmp_path, "openai:64")
     memory.forget(memory.remember("soon gone")["id"])
@@ -198,6 +208,12 @@ def test_the_tools_and_their_errors(tmp_path):
     assert "help: start the server with --embedder" in failed.content[0].text
     _, failed = call(mcp, "recall", {"query": "x", "k": 0})
     assert "k is 0, but has to be at least 1" in failed.content[0].text
+    _, failed = call(mcp, "recall", {"k": "five"})
+    assert failed.content[0].text == (
+        "The arguments don't fit recall: query: Field required; k: "
+        "Input should be a valid integer, unable to parse string as an integer (given 'five')\n"
+        "help: pass them as the tool's input schema says"
+    )
     # A server set up wrong still starts, and its tools say what to fix.
     broken = build_server(Problem("The embedder is 'x'\nhelp: pick one"))
     _, failed = call(broken, "recall", {"query": "x"})

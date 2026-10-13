@@ -75,8 +75,12 @@ jobs:
           pytest
 
   mcp:
-    name: MCP server
-    runs-on: ubuntu-latest
+    name: MCP server (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -95,13 +99,32 @@ jobs:
       - name: Build the C library
         run: cargo build --release -p chassis-ffi
 
+      # Editable installs find the library in target/release. No dependencies from PyPI for these
+      # two: chassisdb-mcp asks for the chassisdb this tree is about to release.
       - name: Run the MCP server's tests
-        env:
-          CHASSIS_LIB_PATH: ${{ github.workspace }}/target/release
-          PYTHONPATH: chassisdb:chassisdb-mcp
+        working-directory: chassisdb-mcp
         run: |
           pip install numpy pytest "mcp>=2.3,<3" "typing_extensions>=4.12" "fastembed>=0.7"
-          pytest chassisdb-mcp/tests
+          pip install --no-deps -e ../chassisdb -e .
+          python -m pytest tests
+
+  python-lint:
+    name: Python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: ruff, black and mypy, as pyproject.toml sets them
+        working-directory: chassisdb
+        run: |
+          pip install ruff black mypy numpy
+          ruff check chassisdb tests examples
+          black --check chassisdb tests examples
+          mypy chassisdb
 
   fmt:
     name: Format

@@ -33,6 +33,7 @@ from chassisdb import (
 )
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import ValidationError
 from typing_extensions import TypedDict  # pydantic needs this one before Python 3.12
 
 try:
@@ -608,10 +609,31 @@ def _memory(row: tuple) -> Remembered:
     return {"id": id, "text": text, "tags": json.loads(tags), "created": created}
 
 
+class _Server(MCPServer):
+    """Arguments that don't fit a tool's schema are said plainly, with what to do, and without
+    the link pydantic adds to each."""
+
+    async def call_tool(self, name, arguments, context=None):  # type: ignore[no-untyped-def]
+        try:
+            return await super().call_tool(name, arguments, context)
+        except ToolError as e:
+            if not isinstance(e.__cause__, ValidationError):
+                raise
+            wrong = "; ".join(
+                f"{'.'.join(map(str, error['loc']))}: {error['msg']}"
+                + ("" if error["type"] == "missing" else f" (given {error['input']!r:.40})")
+                for error in e.__cause__.errors()
+            )
+            raise ToolError(
+                f"The arguments don't fit {name}: {wrong}\nhelp: pass them as the tool's input "
+                "schema says"
+            ) from e.__cause__
+
+
 def build_server(memory: "Memory | Problem") -> MCPServer:
     """The server, with its tools on `memory`; or, when the memory couldn't be opened, tools that
     say why, so an agent learns what to fix instead of seeing a server that failed to start."""
-    server = MCPServer(
+    server = _Server(
         "chassis-memory",
         version=VERSION,
         instructions=(

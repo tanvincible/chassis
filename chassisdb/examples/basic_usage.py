@@ -8,6 +8,7 @@ This script demonstrates:
 """
 
 import numpy as np
+
 from chassisdb import VectorIndex
 
 
