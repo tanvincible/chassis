@@ -13,6 +13,7 @@ import hashlib
 import re
 import sqlite3
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 import numpy as np
@@ -44,7 +45,11 @@ NOTES = [
 
 
 def main(folder: Path) -> None:
-    db = sqlite3.connect(folder / "notes.db")
+    with closing(sqlite3.connect(folder / "notes.db")) as db:
+        search_notes(folder, db)
+
+
+def search_notes(folder: Path, db: sqlite3.Connection) -> None:
     db.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)")
 
     # Most text embedding models are compared by cosine distance.
