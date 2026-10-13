@@ -7,7 +7,7 @@ name = "chassisdb"
 version = "0.7.2"
 description = "Python bindings for Chassis, an embedded vector index for local semantic search"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 license = {text = "MIT OR Apache-2.0"}
 authors = [
     {name = "Chassis Contributors"}
@@ -19,16 +19,16 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 dependencies = [
-    "numpy>=2.4",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -53,18 +53,18 @@ Repository = "https://github.com/tanvincible/chassis"
 Issues = "https://github.com/tanvincible/chassis/issues"
 
 [tool.setuptools]
-packages = ["chassis"]
+packages = ["chassisdb", "chassis"]
 
 [tool.setuptools.package-data]
-chassis = ["py.typed"]
+chassisdb = ["py.typed"]
 
 [tool.black]
 line-length = 79
-target-version = ['py39', 'py310', 'py311', 'py312']
+target-version = ["py311", "py312", "py313", "py314"]
 
 [tool.ruff]
 line-length = 79
-target-version = "py39"
+target-version = "py311"
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -79,7 +79,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -92,7 +92,7 @@ warn_no_return = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
-module = "chassis._ffi"
+module = "chassisdb._ffi"
 # ctypes makes mypy unhappy
 disallow_untyped_defs = false
 
@@ -105,22 +105,22 @@ addopts = [
     "--verbose",
     "--strict-markers",
     "--strict-config",
-    "--cov=chassis",
+    "--cov=chassisdb",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
 
 # Wheels for each platform (.github/workflows/build.yml): one per platform serves every Python
-# from 3.13 on, so only 3.13 builds them; each is then installed and tested.
+# from 3.11 on, so only 3.11, the oldest, builds them; each is then installed and tested.
 [tool.cibuildwheel]
-build = "cp313-*"
+build = "cp311-*"
 skip = "*-musllinux_*"
 # The library is built for the runner's own 64-bit architecture.
 archs = ["auto64"]
 test-requires = ["pytest", "numpy"]
 # Stable as installed: rust-toolchain.toml would add clippy, rustfmt and cross targets to each build.
 environment = { RUSTUP_TOOLCHAIN = "stable" }
-test-command = "python -c \"import chassis._ffi as f, pathlib; assert pathlib.Path(f._lib_path).parent == pathlib.Path(f.__file__).parent, f._lib_path\" && pytest {package}/tests --import-mode=importlib -o addopts= -q"
+test-command = "python -c \"import chassisdb._ffi as f, pathlib; assert pathlib.Path(f._lib_path).parent == pathlib.Path(f.__file__).parent, f._lib_path\" && pytest {package}/tests --import-mode=importlib -o addopts= -q"
 
 [tool.cibuildwheel.linux]
 before-all = "curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"

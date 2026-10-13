@@ -7,7 +7,7 @@
 //!
 //! Updated to use two-phase protocol: write_node_and_backlinks + publish_node
 
-use chassis_core::{HnswGraph, HnswParams, Storage};
+use chassisdb::{HnswGraph, HnswParams, Storage};
 use tempfile::NamedTempFile;
 
 fn create_test_graph(num_vectors: usize, dims: u32) -> (HnswGraph, NamedTempFile) {

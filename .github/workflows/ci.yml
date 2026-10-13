@@ -38,8 +38,15 @@ jobs:
         run: cargo test --all-features ${{ matrix.rust != 'stable' && '-- --skip compile_fail_tests' || '' }}
 
   python:
-    name: Python
+    name: Python ${{ matrix.python }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Python and numpy the package allows, and the newest.
+        include:
+          - { python: "3.11", numpy: "numpy==1.26.4" }
+          - { python: "3.14", numpy: "numpy" }
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +60,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python }}
 
       - name: Build the C library
         run: cargo build --release -p chassis-ffi
@@ -64,7 +71,7 @@ jobs:
           CHASSIS_LIB_PATH: ${{ github.workspace }}/target/release
           PYTHONPATH: .
         run: |
-          pip install numpy pytest pytest-cov
+          pip install "${{ matrix.numpy }}" pytest pytest-cov
           pytest
 
   fmt:

@@ -4,8 +4,15 @@ Chassis is an embedded vector index for local semantic search, written in Rust.
 
 Your index is one file, and Chassis runs inside your process: no server to run, nothing to connect to. Store embeddings under your own ids, search them, and keep the rest of your data where it already lives.
 
+```sh
+pip install chassisdb   # Python 3.11+: import chassisdb
+cargo add chassisdb     # Rust: use chassisdb
+```
+
+The C library and its header come with each [release](https://github.com/tanvincible/chassis/releases).
+
 ```python
-from chassis import VectorIndex
+from chassisdb import VectorIndex
 
 index = VectorIndex("notes.chassis", dimensions=768)
 index.add_batch(embeddings, ids=note_ids)

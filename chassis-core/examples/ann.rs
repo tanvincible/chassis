@@ -5,7 +5,7 @@
 //!
 //! `cargo run --release --example ann -- <data_dir> <dataset> [batch]`
 
-use chassis_core::{IndexOptions, VectorIndex};
+use chassisdb::{IndexOptions, VectorIndex};
 use std::path::Path;
 use std::time::Instant;
 

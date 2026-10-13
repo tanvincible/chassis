@@ -16,8 +16,8 @@ Python bindings for Chassis, an embedded vector index for local semantic search:
 pip install chassisdb
 ```
 
-The package is named `chassisdb` and imported as `chassis`. Wheels are built for Python 3.13 and
-later on Linux (x86-64 and ARM), macOS on Apple silicon and Windows (x86-64). Elsewhere, or from a
+Import it as `chassisdb`. Wheels are built for Python 3.11 and later on Linux (x86-64 and ARM),
+macOS on Apple silicon and Windows (x86-64). Elsewhere, or from a
 checkout of the repository, `pip install .` in this directory builds it, which needs Rust.
 
 ### Development Installation
@@ -31,18 +31,18 @@ pip install -e ".[dev]"
 pytest
 
 # Type checking
-mypy chassis
+mypy chassisdb
 
 # Formatting
-black chassis tests
-ruff check chassis tests
+black chassisdb tests
+ruff check chassisdb tests
 ```
 
 ## Quick Start
 
 ```python
 import numpy as np
-from chassis import VectorIndex
+from chassisdb import VectorIndex
 
 # Create or open an index
 index = VectorIndex("embeddings.chassis", dimensions=768)
@@ -74,7 +74,7 @@ print(f"Empty: {index.is_empty()}")
 ### Custom HNSW Parameters
 
 ```python
-from chassis import VectorIndex, IndexOptions
+from chassisdb import VectorIndex, IndexOptions
 
 # Configure HNSW parameters
 options = IndexOptions(
@@ -138,7 +138,7 @@ index.add((0.1, 0.2, 0.3))
 ### Error Handling
 
 ```python
-from chassis import VectorIndex, DimensionMismatchError, IndexLockedError
+from chassisdb import VectorIndex, DimensionMismatchError, IndexLockedError
 
 index = VectorIndex("vectors.chassis", dimensions=128)
 try:
@@ -363,7 +363,7 @@ See the `examples/` directory for complete examples:
 pytest
 
 # Run with coverage
-pytest --cov=chassis --cov-report=html
+pytest --cov=chassisdb --cov-report=html
 
 # Run specific test
 pytest tests/test_index.py::test_add_and_search

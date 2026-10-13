@@ -13,15 +13,15 @@ It combines the safety and raw speed of Rust with the ease of use of Python. Unl
 
 ## Installation
 
-Chassis needs Python 3.13 or later, on Linux (x86-64 or ARM), macOS on Apple silicon, or Windows
+Chassis needs Python 3.11 or later, on Linux (x86-64 or ARM), macOS on Apple silicon, or Windows
 (x86-64):
 
 ```bash
 pip install chassisdb
 ```
 
-The package is named `chassisdb` and imported as `chassis`. To build it from a checkout of the
-repository instead, which needs Rust:
+Import it as `chassisdb`. To build it from a checkout of the repository instead, which needs
+Rust:
 
 ```bash
 pip install ./chassisdb
@@ -30,11 +30,11 @@ pip install ./chassisdb
 ## The "Hello World" of Vector Search
 
 ```python
-import chassis
+import chassisdb
 import numpy as np
 
 # 1. Open an index (creates file if not exists)
-index = chassis.VectorIndex("my_vectors.chassis", dimensions=128)
+index = chassisdb.VectorIndex("my_vectors.chassis", dimensions=128)
 
 # 2. Add some data
 vector = np.random.rand(128)

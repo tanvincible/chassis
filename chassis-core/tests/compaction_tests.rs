@@ -1,7 +1,7 @@
 //! `compact()` rewrites the index without its deleted vectors (ADR-0011): the same vectors under
 //! the same ids, in a smaller file, with readers following along.
 
-use chassis_core::{DistanceMetric, IndexOptions, IndexReader, VectorIndex, euclidean_distance};
+use chassisdb::{DistanceMetric, IndexOptions, IndexReader, VectorIndex, euclidean_distance};
 use std::path::Path;
 use tempfile::tempdir;
 

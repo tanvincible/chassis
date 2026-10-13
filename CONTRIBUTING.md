@@ -47,7 +47,7 @@ We prefer features that benefit most users rather than specialized functionality
 
 Chassis is a monorepo containing three distinct components:
 
-* `chassis-core`: The index itself: storage, graph and search (Rust).
+* `chassis-core/`: the `chassisdb` crate, the index itself: storage, graph and search (Rust).
 * `chassis-ffi`: The C API (Rust).
 * `chassisdb`: The Python package, imported as `chassis` (Python, over the C API with ctypes).
 

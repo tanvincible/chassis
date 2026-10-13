@@ -1,4 +1,4 @@
-use chassis_core::node::{Node, NodeRecord, NodeRecordParams};
+use chassisdb::node::{Node, NodeRecord, NodeRecordParams};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 

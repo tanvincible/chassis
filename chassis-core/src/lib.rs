@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use chassis_core::{VectorIndex, IndexOptions};
+//! use chassisdb::{VectorIndex, IndexOptions};
 //!
 //! # fn main() -> anyhow::Result<()> {
 //! // Open or create an index

@@ -1,7 +1,7 @@
 //! Batch adds link on every core (ADR-0010): the graph must be as good as one built a vector at a
 //! time, and a failed batch must add nothing.
 
-use chassis_core::{
+use chassisdb::{
     DistanceMetric, IndexOptions, IndexReader, VectorIndex, cosine_distance, euclidean_distance,
 };
 use tempfile::tempdir;

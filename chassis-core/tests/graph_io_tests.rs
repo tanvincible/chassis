@@ -1,5 +1,5 @@
-use chassis_core::Storage;
-use chassis_core::{HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
+use chassisdb::Storage;
+use chassisdb::{HnswGraph, HnswParams, NodeRecord, NodeRecordParams};
 use std::path::Path;
 use tempfile::NamedTempFile;
 

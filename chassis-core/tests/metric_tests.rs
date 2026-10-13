@@ -1,6 +1,6 @@
 //! Cosine distance: ranking and distances match brute-force cosine; the metric is the file's.
 
-use chassis_core::{DistanceMetric, IndexOptions, IndexReader, VectorIndex, cosine_distance};
+use chassisdb::{DistanceMetric, IndexOptions, IndexReader, VectorIndex, cosine_distance};
 use tempfile::tempdir;
 
 const DIMS: u32 = 16;
@@ -56,7 +56,7 @@ fn test_cosine_index_ranks_and_reports_cosine_distance() {
 
         let nearest_l2 = (0..n)
             .min_by(|&a, &b| {
-                let d = |id| chassis_core::euclidean_distance(&query, &vector(id));
+                let d = |id| chassisdb::euclidean_distance(&query, &vector(id));
                 d(a).total_cmp(&d(b))
             })
             .unwrap();
@@ -89,7 +89,7 @@ fn test_storage_insert_scales_vectors_in_a_cosine_file() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("cos.chassis");
     VectorIndex::open(&path, 2, cosine()).unwrap().flush().unwrap();
-    let mut storage = chassis_core::Storage::open(&path, 2).unwrap();
+    let mut storage = chassisdb::Storage::open(&path, 2).unwrap();
     let slot = storage.insert(&[10.0, 0.0]).unwrap();
     assert_eq!(storage.get_vector_slice(slot).unwrap(), [1.0, 0.0]);
 }

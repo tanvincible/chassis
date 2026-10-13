@@ -1,3 +1,3 @@
 # Exceptions
 
-::: chassis.exceptions
+::: chassisdb.exceptions

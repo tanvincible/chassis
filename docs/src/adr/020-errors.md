@@ -28,7 +28,7 @@ something, but:
 
 ### 1. Every error has a kind
 
-`VectorIndex` and `IndexReader` return `chassis_core::Error`, whose `kind()` is one of:
+`VectorIndex` and `IndexReader` return `chassisdb::Error`, whose `kind()` is one of:
 invalid argument, dimension mismatch, options mismatch, not found, not an index, id in use,
 locked, read-only, corrupt, full, input or output, other. Inside, the core keeps `anyhow`; an
 error is raised with its kind, and the conversion at the API finds it however much context was

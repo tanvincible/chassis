@@ -70,4 +70,4 @@ This decision is enforced throughout the codebase:
 
 * `Storage::get_vector_slice` returns `&[f32]` backed directly by the memory map, strictly enforcing zero-copy access.
 * `Storage::ensure_capacity` manages file growth and re-mapping, ensuring page-aligned (4KB) expansion.
-* All file access in `chassis-core` is routed exclusively through the `Storage` abstraction; direct use of `std::fs::File` for reads or writes is prohibited.
+* All file access in `chassisdb` is routed exclusively through the `Storage` abstraction; direct use of `std::fs::File` for reads or writes is prohibited.

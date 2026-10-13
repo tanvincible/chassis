@@ -1,6 +1,6 @@
 //! Filtered search (ADR-0009): only accepted ids come back, and they are the nearest ones.
 
-use chassis_core::{
+use chassisdb::{
     DistanceMetric, IndexOptions, IndexReader, VectorIndex, cosine_distance, euclidean_distance,
 };
 use tempfile::tempdir;
@@ -86,7 +86,7 @@ fn test_a_filter_may_search_the_index_itself() {
         .unwrap();
     let want = index.search_filtered(&query, 10, |id| id != banned).unwrap();
     let ids =
-        |results: &[chassis_core::SearchResult]| results.iter().map(|r| r.id).collect::<Vec<_>>();
+        |results: &[chassisdb::SearchResult]| results.iter().map(|r| r.id).collect::<Vec<_>>();
     assert_eq!(ids(&found), ids(&want));
     assert_eq!(found.len(), 10);
     assert!(!ids(&found).contains(&banned));

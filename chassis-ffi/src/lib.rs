@@ -29,7 +29,7 @@
 //! - `chassis_free` must not race with any other call on the same handle.
 //! - Each thread has its own error message storage
 
-use chassis_core::{
+use chassisdb::{
     DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
 };
 use libc::{c_char, c_float, c_int, size_t};
@@ -61,10 +61,10 @@ trait Readable {
         query: &[f32],
         k: usize,
         filter: Filter,
-    ) -> chassis_core::Result<Vec<SearchResult>>;
-    fn get(&mut self, id: u64) -> chassis_core::Result<Option<Vec<f32>>>;
-    fn contains(&mut self, id: u64) -> chassis_core::Result<bool>;
-    fn ids(&mut self) -> chassis_core::Result<Vec<u64>>;
+    ) -> chassisdb::Result<Vec<SearchResult>>;
+    fn get(&mut self, id: u64) -> chassisdb::Result<Option<Vec<f32>>>;
+    fn contains(&mut self, id: u64) -> chassisdb::Result<bool>;
+    fn ids(&mut self) -> chassisdb::Result<Vec<u64>>;
     fn len(&mut self) -> u64;
     fn deleted_count(&mut self) -> u64;
     fn dimensions(&self) -> u32;
@@ -78,19 +78,19 @@ impl Readable for &VectorIndex {
         query: &[f32],
         k: usize,
         filter: Filter,
-    ) -> chassis_core::Result<Vec<SearchResult>> {
+    ) -> chassisdb::Result<Vec<SearchResult>> {
         match filter {
             None => VectorIndex::search(self, query, k),
             Some(filter) => VectorIndex::search_filtered(self, query, k, filter),
         }
     }
-    fn get(&mut self, id: u64) -> chassis_core::Result<Option<Vec<f32>>> {
+    fn get(&mut self, id: u64) -> chassisdb::Result<Option<Vec<f32>>> {
         VectorIndex::get(self, id)
     }
-    fn contains(&mut self, id: u64) -> chassis_core::Result<bool> {
+    fn contains(&mut self, id: u64) -> chassisdb::Result<bool> {
         VectorIndex::contains(self, id)
     }
-    fn ids(&mut self) -> chassis_core::Result<Vec<u64>> {
+    fn ids(&mut self) -> chassisdb::Result<Vec<u64>> {
         VectorIndex::ids(self)
     }
     fn len(&mut self) -> u64 {
@@ -116,19 +116,19 @@ impl Readable for IndexReader {
         query: &[f32],
         k: usize,
         filter: Filter,
-    ) -> chassis_core::Result<Vec<SearchResult>> {
+    ) -> chassisdb::Result<Vec<SearchResult>> {
         match filter {
             None => IndexReader::search(self, query, k),
             Some(filter) => IndexReader::search_filtered(self, query, k, filter),
         }
     }
-    fn get(&mut self, id: u64) -> chassis_core::Result<Option<Vec<f32>>> {
+    fn get(&mut self, id: u64) -> chassisdb::Result<Option<Vec<f32>>> {
         IndexReader::get(self, id)
     }
-    fn contains(&mut self, id: u64) -> chassis_core::Result<bool> {
+    fn contains(&mut self, id: u64) -> chassisdb::Result<bool> {
         IndexReader::contains(self, id)
     }
-    fn ids(&mut self) -> chassis_core::Result<Vec<u64>> {
+    fn ids(&mut self) -> chassisdb::Result<Vec<u64>> {
         IndexReader::ids(self)
     }
     /// The writer's latest flush, not the last search's snapshot.
@@ -320,8 +320,8 @@ impl Failure {
     }
 }
 
-impl From<chassis_core::Error> for Failure {
-    fn from(e: chassis_core::Error) -> Self {
+impl From<chassisdb::Error> for Failure {
+    fn from(e: chassisdb::Error) -> Self {
         let code = match e.kind() {
             ErrorKind::InvalidArgument => CHASSIS_ERROR_INVALID_ARGUMENT,
             ErrorKind::DimensionMismatch => CHASSIS_ERROR_DIMENSION_MISMATCH,

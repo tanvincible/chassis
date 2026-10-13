@@ -3,7 +3,7 @@
 //! exits, and a test reopening its index then would find it locked.
 #![cfg(unix)]
 
-use chassis_core::{IndexOptions, VectorIndex};
+use chassisdb::{IndexOptions, VectorIndex};
 
 #[test]
 fn test_a_forked_child_can_drop_an_index_being_read_in() {

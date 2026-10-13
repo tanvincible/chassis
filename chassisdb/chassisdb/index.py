@@ -13,8 +13,8 @@ from typing import Iterable, List, Optional, Sequence, Union
 import numpy as np
 import numpy.typing as npt
 
-from chassis import _ffi
-from chassis.exceptions import (
+from chassisdb import _ffi
+from chassisdb.exceptions import (
     ChassisError,
     DimensionMismatchError,
     InvalidArgumentError,
