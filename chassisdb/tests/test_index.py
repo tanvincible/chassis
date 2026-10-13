@@ -41,6 +41,19 @@ class TestVectorIndexBasics:
             assert index.dimensions == 64
         # Index should be closed after context
 
+    def test_context_manager_flushes_unless_raising(self, temp_index_path):
+        with VectorIndex(temp_index_path, dimensions=2) as index:
+            index.add([1, 0])
+        with pytest.raises(KeyError):
+            with VectorIndex(temp_index_path, dimensions=2) as index:
+                index.add([0, 1])
+                raise KeyError
+        index = VectorIndex(temp_index_path, dimensions=2)
+        index.add([0, 1])
+        index.close()
+        with VectorIndex(temp_index_path, dimensions=2, read_only=True) as reader:
+            assert len(reader) == 1
+
     def test_add_single_vector(self, simple_index):
         """Test adding a single vector."""
         vec = [0.1, 0.2, 0.3]

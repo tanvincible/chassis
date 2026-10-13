@@ -2,7 +2,7 @@
 //!
 //! Tests cover the complete lifecycle: open -> add -> search -> flush
 
-use chassis_core::{IndexOptions, VectorIndex};
+use chassis_core::{ErrorKind, IndexOptions, VectorIndex};
 use tempfile::NamedTempFile;
 
 #[test]
@@ -322,7 +322,13 @@ fn test_max_connections_mismatch_on_reopen_keeps_data() {
     }
 
     let other = IndexOptions { max_connections: 8, ..IndexOptions::default() };
-    assert!(VectorIndex::open(&path, 64, other).is_err());
+    let error = VectorIndex::open(&path, 64, other).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::OptionsMismatch);
+    assert_eq!(
+        error.to_string(),
+        "This index was created with max_connections 16, so it has to be opened with 16 too, not \
+         8\nhelp: open it with max_connections 16"
+    );
 
     let index = VectorIndex::open(&path, 64, IndexOptions::default()).unwrap();
     assert_eq!(index.len(), 50);
@@ -408,8 +414,12 @@ fn test_search_with_k_zero() {
 
     index.add(&vec![1.0; 128]).unwrap();
 
-    let results = index.search(&vec![1.0; 128], 0).unwrap();
-    assert!(results.is_empty());
+    let error = index.search(&vec![1.0; 128], 0).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::InvalidArgument);
+    assert_eq!(
+        error.to_string(),
+        "k is 0, but has to be at least 1\nhelp: pass how many results to return, such as 10"
+    );
 }
 
 #[test]

@@ -245,7 +245,7 @@ pub const CHASSIS_ERROR_INVALID_ARGUMENT: c_int = 1;
 /// A vector or query has another number of components than the index's vectors, or the file
 /// holds vectors of other dimensions than asked for.
 pub const CHASSIS_ERROR_DIMENSION_MISMATCH: c_int = 2;
-/// The file was created with another metric or precision than the one asked for.
+/// The file was created with another metric, precision or `max_connections` than the one asked for.
 pub const CHASSIS_ERROR_OPTIONS_MISMATCH: c_int = 3;
 /// There is no index at the path, or its directory doesn't exist.
 pub const CHASSIS_ERROR_NOT_FOUND: c_int = 4;
@@ -265,6 +265,16 @@ pub const CHASSIS_ERROR_FULL: c_int = 10;
 pub const CHASSIS_ERROR_IO: c_int = 11;
 /// Anything else, a panic included.
 pub const CHASSIS_ERROR_OTHER: c_int = 12;
+
+/// Euclidean (L2) distance, for `chassis_open_with_metric()` and from `chassis_metric()`.
+pub const CHASSIS_METRIC_EUCLIDEAN: c_int = 0;
+/// Cosine distance (1 - cosine similarity).
+pub const CHASSIS_METRIC_COSINE: c_int = 1;
+/// Each component a 32-bit float, for `chassis_open_with_precision()` and from
+/// `chassis_precision()`.
+pub const CHASSIS_PRECISION_FULL: c_int = 0;
+/// Each component a 16-bit float.
+pub const CHASSIS_PRECISION_HALF: c_int = 1;
 
 /// An error as C sees it: a code and a message.
 struct Failure {
@@ -477,7 +487,8 @@ pub unsafe extern "C" fn chassis_open_with_options(
 ///
 /// # Arguments
 ///
-/// - `metric`: `0` for Euclidean (L2) distance, `1` for cosine distance (1 - cosine similarity).
+/// - `metric`: `CHASSIS_METRIC_EUCLIDEAN` (0) for Euclidean (L2) distance, `CHASSIS_METRIC_COSINE`
+///   (1) for cosine distance (1 - cosine similarity).
 ///   A cosine index stores vectors scaled to unit length, rejects zero vectors, and reports
 ///   distances from 0 to 2. The metric is fixed when the index is created; reopening an existing
 ///   index with another one fails.
@@ -513,12 +524,12 @@ pub unsafe extern "C" fn chassis_open_with_metric(
 ///
 /// # Arguments
 ///
-/// - `precision`: `0` to keep each component of a vector as a 32-bit float, `1` as a 16-bit
-///   float (half precision). Half precision halves the vectors' size in the file and in memory;
-///   each component is rounded to about three decimal digits, and a vector with a component of
-///   65,520 or more in magnitude is refused. The precision is fixed when the index is created;
-///   reopening an existing index with another one fails. A release without this function can't
-///   open a file in half precision.
+/// - `precision`: `CHASSIS_PRECISION_FULL` (0) to keep each component of a vector as a 32-bit
+///   float, `CHASSIS_PRECISION_HALF` (1) as a 16-bit float. Half precision halves the vectors'
+///   size in the file and in memory; each component is rounded to about three decimal digits, and
+///   a vector with a component of 65,520 or more in magnitude is refused. The precision is fixed
+///   when the index is created; reopening an existing index with another one fails. A release
+///   without this function can't open a file in half precision.
 /// - The other arguments are as for `chassis_open_with_metric()`.
 ///
 /// # Safety
@@ -547,8 +558,8 @@ pub unsafe extern "C" fn chassis_open_with_precision(
             1 => DistanceMetric::Cosine,
             other => {
                 set_last_error(format!(
-                    "metric is {other}, which is no metric\nhelp: pass 0 for euclidean distance \
-                     or 1 for cosine"
+                    "metric is {other}, which is no metric\nhelp: pass CHASSIS_METRIC_EUCLIDEAN \
+                     (0) or CHASSIS_METRIC_COSINE (1)"
                 ));
                 return ptr::null_mut();
             }
@@ -558,8 +569,8 @@ pub unsafe extern "C" fn chassis_open_with_precision(
             1 => Precision::Half,
             other => {
                 set_last_error(format!(
-                    "precision is {other}, which is no precision\nhelp: pass 0 for full (32-bit \
-                     floats) or 1 for half (16-bit floats)"
+                    "precision is {other}, which is no precision\nhelp: pass \
+                     CHASSIS_PRECISION_FULL (0) or CHASSIS_PRECISION_HALF (1)"
                 ));
                 return ptr::null_mut();
             }
@@ -622,6 +633,9 @@ pub unsafe extern "C" fn chassis_open_reader(
 }
 
 /// Free a Chassis index and release all resources
+///
+/// It doesn't flush: adds and deletes since the last `chassis_flush()` are discarded, as after a
+/// crash.
 ///
 /// # Arguments
 ///
@@ -1523,7 +1537,7 @@ pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
 ///
 /// # Returns
 ///
-/// - `0` for Euclidean, `1` for cosine, as for `chassis_open_with_metric()`
+/// - `CHASSIS_METRIC_EUCLIDEAN` or `CHASSIS_METRIC_COSINE`
 /// - `-1` if `ptr` is NULL
 ///
 /// # Safety
@@ -1532,8 +1546,8 @@ pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_metric(ptr: *const ChassisIndex) -> c_int {
     let metric = |index: &mut dyn Readable| match index.metric() {
-        DistanceMetric::Cosine => 1,
-        _ => 0,
+        DistanceMetric::Cosine => CHASSIS_METRIC_COSINE,
+        _ => CHASSIS_METRIC_EUCLIDEAN,
     };
     ffi_guard(|| unsafe { read(ptr, metric) }.unwrap_or(-1)).unwrap_or(-1)
 }
@@ -1542,7 +1556,7 @@ pub unsafe extern "C" fn chassis_metric(ptr: *const ChassisIndex) -> c_int {
 ///
 /// # Returns
 ///
-/// - `0` for full precision, `1` for half, as for `chassis_open_with_precision()`
+/// - `CHASSIS_PRECISION_FULL` or `CHASSIS_PRECISION_HALF`
 /// - `-1` if `ptr` is NULL
 ///
 /// # Safety
@@ -1551,8 +1565,8 @@ pub unsafe extern "C" fn chassis_metric(ptr: *const ChassisIndex) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_precision(ptr: *const ChassisIndex) -> c_int {
     let precision = |index: &mut dyn Readable| match index.precision() {
-        Precision::Half => 1,
-        _ => 0,
+        Precision::Half => CHASSIS_PRECISION_HALF,
+        _ => CHASSIS_PRECISION_FULL,
     };
     ffi_guard(|| unsafe { read(ptr, precision) }.unwrap_or(-1)).unwrap_or(-1)
 }
@@ -2336,7 +2350,10 @@ mod tests {
             ptr::null_mut()
         );
         assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_INVALID_ARGUMENT);
-        assert!(message().contains("help: pass 0 for euclidean distance or 1 for cosine"));
+        assert!(
+            message()
+                .contains("help: pass CHASSIS_METRIC_EUCLIDEAN (0) or CHASSIS_METRIC_COSINE (1)")
+        );
 
         // A call that succeeds clears it.
         assert_eq!(unsafe { chassis_add(writer, [0.5f32; 8].as_ptr(), 8) }, 0);

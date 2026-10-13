@@ -560,7 +560,7 @@ impl VectorIndex {
     ///
     /// # Errors
     ///
-    /// Returns an error if query dimensions don't match index dimensions
+    /// Returns an error if `k` is 0 or the query has other dimensions than the index
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
         search_graph(&self.graph, query, k, self.options.ef_search, None)
     }
@@ -571,7 +571,7 @@ impl VectorIndex {
     ///
     /// # Errors
     ///
-    /// Returns an error if query dimensions don't match index dimensions
+    /// Returns an error if `k` is 0 or the query has other dimensions than the index
     pub fn search_filtered(
         &self,
         query: &[f32],
@@ -582,6 +582,9 @@ impl VectorIndex {
     }
 
     /// Flush all changes to disk
+    ///
+    /// Dropping the index doesn't flush: adds and deletes since the last flush are discarded, as
+    /// after a crash.
     ///
     /// This method ensures durability by:
     /// 1. Flushing vector data to disk
@@ -794,6 +797,12 @@ fn search_graph(
     ef: usize,
     filter: Option<&dyn Fn(u64) -> bool>,
 ) -> Result<Vec<SearchResult>> {
+    if k == 0 {
+        fail!(
+            InvalidArgument,
+            "k is 0, but has to be at least 1\nhelp: pass how many results to return, such as 10"
+        );
+    }
     let dims = graph.storage.dimensions() as usize;
     if query.len() != dims {
         fail!(
@@ -927,7 +936,7 @@ impl IndexReader {
     ///
     /// # Errors
     ///
-    /// Returns an error if the query has other dimensions or the file is corrupt.
+    /// Returns an error if `k` is 0, the query has other dimensions, or the file is corrupt.
     pub fn search(&mut self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
         self.sync()?;
         search_graph(&self.graph, query, k, self.ef_search, None)
@@ -938,7 +947,7 @@ impl IndexReader {
     ///
     /// # Errors
     ///
-    /// Returns an error if the query has other dimensions or the file is corrupt.
+    /// Returns an error if `k` is 0, the query has other dimensions, or the file is corrupt.
     pub fn search_filtered(
         &mut self,
         query: &[f32],

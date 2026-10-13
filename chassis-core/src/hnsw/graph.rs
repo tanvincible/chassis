@@ -3,6 +3,7 @@
 
 use crate::Storage;
 use crate::distance::{Element, euclidean_distance};
+use crate::error::fail;
 use crate::half::Precision;
 use crate::header::FLAG_CUSTOM_IDS;
 use crate::hnsw::HnswParams;
@@ -80,12 +81,13 @@ impl HnswGraph {
     }
 
     fn open_inner(storage: Storage, params: HnswParams, no_reset: bool) -> Result<Self> {
-        let record_params = params.to_record_params();
+        let (held, record_params) = (storage.params().m, params.to_record_params());
         if storage.params() != record_params {
-            bail!(
-                "Index was created with {:?} but opened with {record_params:?}; open it with the \
-                 original max_connections",
-                storage.params()
+            fail!(
+                OptionsMismatch,
+                "This index was created with max_connections {held}, so it has to be opened with \
+                 {held} too, not {}\nhelp: open it with max_connections {held}",
+                record_params.m
             );
         }
         let state = &storage.state;

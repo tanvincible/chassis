@@ -288,15 +288,21 @@ class VectorIndex:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+        """Flush, unless an exception is leaving the block, then close."""
+        try:
+            if exc_type is None and not self._read_only and not self._closed:
+                self.flush()
+        finally:
+            self.close()
         return False
 
     def close(self) -> None:
         """Close the index and free resources.
 
-        This is called automatically when the object is garbage collected
-        or when used as a context manager. It's safe to call multiple times.
+        Adds and deletes since the last flush() are discarded, as after a
+        crash. Leaving a with block flushes first, unless an exception is
+        leaving it. Garbage collection closes without flushing. It's safe to
+        call multiple times.
         """
         if not self._closed and self._ptr:
             _ffi._lib.chassis_free(self._ptr)
