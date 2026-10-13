@@ -43,6 +43,24 @@ jobs:
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
 
+  pypi-mcp:
+    name: PyPI (chassisdb-mcp)
+    needs: pypi
+    runs-on: ubuntu-latest
+    # Trusted publishing as for chassisdb; a chassisdb-mcp version already on PyPI is left alone.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build && python -m build --outdir dist chassisdb-mcp
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
   crates:
     name: crates.io
     needs: build

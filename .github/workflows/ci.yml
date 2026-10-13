@@ -74,6 +74,35 @@ jobs:
           pip install "${{ matrix.numpy }}" pytest pytest-cov
           pytest
 
+  mcp:
+    name: MCP server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: python
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the C library
+        run: cargo build --release -p chassis-ffi
+
+      - name: Run the MCP server's tests
+        env:
+          CHASSIS_LIB_PATH: ${{ github.workspace }}/target/release
+          PYTHONPATH: chassisdb:chassisdb-mcp
+        run: |
+          pip install numpy pytest "mcp>=2.3,<3"
+          pytest chassisdb-mcp/tests
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

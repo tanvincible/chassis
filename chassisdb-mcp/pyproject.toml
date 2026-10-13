@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=80.10"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chassisdb-mcp"
+version = "0.1.0"
+description = "Long-term memory for coding agents on your machine, as an MCP server: text in SQLite, vectors in Chassis"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+authors = [{name = "Chassis Contributors"}]
+keywords = ["mcp", "memory", "agents", "vector", "semantic search"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "chassisdb>=0.8",
+    "mcp>=2.3,<3",
+]
+
+[project.optional-dependencies]
+fastembed = ["fastembed>=0.7"]
+sentence-transformers = ["sentence-transformers>=5"]
+
+[project.scripts]
+chassisdb-mcp = "chassisdb_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/tanvincible/chassis"
+Repository = "https://github.com/tanvincible/chassis"
+
+[tool.setuptools]
+packages = ["chassisdb_mcp"]

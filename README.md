@@ -52,6 +52,7 @@ Chassis fits an app that embeds its own data and searches it on the same machine
 * [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](chassisdb/README.md)
 * [How it works](docs/src/architecture/overview.md), and why, in the [decision records](docs/src/adr)
 * [Benchmarks](docs/src/architecture/performance.md), and what is [planned](ROADMAP.md)
+* Long-term memory for agents, on your machine: [chassisdb-mcp](chassisdb-mcp/README.md), an MCP server built on Chassis
 * Coding with an agent? In Claude Code, `/plugin install chassis --marketplace tanvincible/chassis`; for Cursor, Codex and the rest, see [Chassis for coding agents](docs/src/guide/agents.md), and [llms.txt](llms.txt)
 
 ## Status
