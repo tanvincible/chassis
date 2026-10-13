@@ -73,15 +73,17 @@ claude mcp add --scope user chassis-memory -e OPENAI_BASE_URL=http://localhost:1
   uvx chassisdb-mcp --embedder openai:nomic-embed-text
 ```
 
-Only the first run in a folder needs `--embedder`: the folder keeps its model, and later runs use
-it. Vectors from two models can't be compared, so the folder refuses another model until you move
-its memories, as below.
+A folder keeps the model its first memory was made with, and every session uses that one, since
+vectors from two models can't be compared: `--embedder` only picks the model for a new folder.
+Name another for a folder that has one, and the server says so in its log and goes on with the
+folder's, until you move the memories, as below.
 
 ## What agents get
 
 - `remember(text, tags)` stores a memory and returns its id with the most similar memories already
   kept, so the agent can forget one the new memory repeats or makes wrong.
-- `recall(query, k=5, tag=None)` returns the closest memories by meaning, nearest first.
+- `recall(query, k=5, tag=None)` returns the closest memories by meaning, nearest first. Tags match
+  whatever their case; one no memory has is an error that lists the tags there are.
 - `forget(id)` deletes one and returns what it was.
 - `list_memories(tag=None, limit=20)` shows what is remembered: the memories, newest first, every
   tag and its count, the folder and the model.
@@ -106,13 +108,17 @@ $ uvx chassisdb-mcp forget 2
 forgot #2: The user's staging server is staging.example.internal.
 ```
 
-`status`, `list`, `recall`, `remember`, `forget` and `reembed`; `--json` prints JSON.
+`status`, `list`, `recall`, `remember`, `forget` and `reembed`. `--dir`, `--embedder` and `--json`
+(print JSON) go before or after the command. `list` and `forget` need no model, so plain
+`uvx chassisdb-mcp` does; `recall`, `remember` and `reembed` need the model's extra, as above.
 
 ## Where memories live
 
 In `~/.chassisdb-mcp`: `memory.db` holds the text, `memory.chassis` the vectors. Give a project a
 memory of its own with `--dir` (or `CHASSISDB_MCP_DIR`). Any number of agent sessions can share a
-folder: a write holds it for milliseconds, and searches don't wait for writes.
+folder: each write is one transaction on `memory.db`, so sessions take turns writing for the
+milliseconds a write takes, and a memory's text and vector are saved together or not at all.
+Searches don't wait for writes.
 
 To move to another model, every memory is embedded again from its text:
 
@@ -120,19 +126,26 @@ To move to another model, every memory is embedded again from its text:
 uvx --from 'chassisdb-mcp[fastembed]' chassisdb-mcp --embedder fastembed:BAAI/bge-base-en-v1.5 reembed
 ```
 
-Sessions that named no `--embedder` follow the folder to the new model.
+It embeds while sessions go on using the memory, then picks up what they wrote meanwhile as it
+swaps the new index in. Every session follows the folder to the new model; nothing in their setup
+needs changing. `status` also says when a crash left a memory without its vector, and `reembed`
+mends that too.
 
 ## When something is wrong
 
-The server starts even when it is set up wrong, and the agent's first call says what was wrong and
-what to do, as every error here does:
+The server starts however it is set up: a misspelled `--embedder`, a folder it can't write, a
+model that can't load. The agent's first call then says what was wrong and what to do, as every
+error here does:
 
 ```text
-The memory in /Users/you/.chassisdb-mcp was made with fastembed:BAAI/bge-small-en-v1.5, and
-fastembed:BAAI/bge-base-en-v1.5's vectors can't be compared with its
-help: use --embedder fastembed:BAAI/bge-small-en-v1.5, or leave --embedder out to use it; to move
-every memory to fastembed:BAAI/bge-base-en-v1.5, run chassisdb-mcp --dir /Users/you/.chassisdb-mcp
---embedder fastembed:BAAI/bge-base-en-v1.5 reembed
+The embedder is 'fasttext:BAAI/bge-small-en-v1.5', but has to be <kind>:<model>
+help: did you mean fastembed:BAAI/bge-small-en-v1.5? pick one of ...
+```
+
+```text
+The memory's index in /Users/you/.chassisdb-mcp doesn't fit its model: The query has 768
+components, but this index holds vectors of 384
+help: rebuild the index from the memories' text: chassisdb-mcp --dir /Users/you/.chassisdb-mcp reembed
 ```
 
 The server also logs to its client's MCP log what it opened and which model it loads.
