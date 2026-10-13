@@ -62,7 +62,11 @@ trait Readable {
         k: usize,
         filter: Filter,
     ) -> chassis_core::Result<Vec<SearchResult>>;
+    fn get(&mut self, id: u64) -> chassis_core::Result<Option<Vec<f32>>>;
+    fn contains(&mut self, id: u64) -> chassis_core::Result<bool>;
+    fn ids(&mut self) -> chassis_core::Result<Vec<u64>>;
     fn len(&mut self) -> u64;
+    fn deleted_count(&mut self) -> u64;
     fn dimensions(&self) -> u32;
     fn metric(&self) -> DistanceMetric;
     fn precision(&self) -> Precision;
@@ -80,8 +84,20 @@ impl Readable for &VectorIndex {
             Some(filter) => VectorIndex::search_filtered(self, query, k, filter),
         }
     }
+    fn get(&mut self, id: u64) -> chassis_core::Result<Option<Vec<f32>>> {
+        VectorIndex::get(self, id)
+    }
+    fn contains(&mut self, id: u64) -> chassis_core::Result<bool> {
+        VectorIndex::contains(self, id)
+    }
+    fn ids(&mut self) -> chassis_core::Result<Vec<u64>> {
+        VectorIndex::ids(self)
+    }
     fn len(&mut self) -> u64 {
         VectorIndex::len(self)
+    }
+    fn deleted_count(&mut self) -> u64 {
+        VectorIndex::deleted_count(self)
     }
     fn dimensions(&self) -> u32 {
         VectorIndex::dimensions(self)
@@ -106,12 +122,28 @@ impl Readable for IndexReader {
             Some(filter) => IndexReader::search_filtered(self, query, k, filter),
         }
     }
+    fn get(&mut self, id: u64) -> chassis_core::Result<Option<Vec<f32>>> {
+        IndexReader::get(self, id)
+    }
+    fn contains(&mut self, id: u64) -> chassis_core::Result<bool> {
+        IndexReader::contains(self, id)
+    }
+    fn ids(&mut self) -> chassis_core::Result<Vec<u64>> {
+        IndexReader::ids(self)
+    }
     /// The writer's latest flush, not the last search's snapshot.
     fn len(&mut self) -> u64 {
         if let Err(e) = self.refresh() {
             set_last_error(e);
         }
         IndexReader::len(self)
+    }
+    /// The writer's latest flush, as `len`.
+    fn deleted_count(&mut self) -> u64 {
+        if let Err(e) = self.refresh() {
+            set_last_error(e);
+        }
+        IndexReader::deleted_count(self)
     }
     fn dimensions(&self) -> u32 {
         IndexReader::dimensions(self)
@@ -1134,6 +1166,55 @@ pub unsafe extern "C" fn chassis_search_filtered(
     .unwrap_or(0)
 }
 
+/// Search for the k nearest neighbors, leaving out the given ids
+///
+/// # Arguments
+///
+/// - `excluded_ids`: The ids results may not have; ids not in the index are ignored. May be NULL
+///   when `excluded_len` is 0, which leaves out nothing.
+/// - `excluded_len`: Number of ids in `excluded_ids`
+/// - The other arguments are as for `chassis_search()`.
+///
+/// # Returns
+///
+/// As for `chassis_search()`.
+///
+/// # Safety
+///
+/// As for `chassis_search()`, and `excluded_ids` must point to `excluded_len` valid u64 values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_search_excluding(
+    ptr: *const ChassisIndex,
+    query: *const c_float,
+    len: size_t,
+    k: size_t,
+    excluded_ids: *const u64,
+    excluded_len: size_t,
+    out_ids: *mut u64,
+    out_dists: *mut c_float,
+) -> size_t {
+    ffi_guard(|| {
+        if excluded_ids.is_null() && excluded_len > 0 {
+            set_last_error(
+                "excluded_ids is NULL\nhelp: pass the ids to leave out, or call chassis_search to \
+                 search them all",
+            );
+            return 0;
+        }
+        let excluded: std::collections::HashSet<u64> = if excluded_len == 0 {
+            Default::default()
+        } else {
+            // SAFETY: caller guarantees excluded_ids points to excluded_len u64 values
+            unsafe { slice::from_raw_parts(excluded_ids, excluded_len) }.iter().copied().collect()
+        };
+        let filter = |id| !excluded.contains(&id);
+        let filter: Filter = if excluded.is_empty() { None } else { Some(&filter) };
+        unsafe { read(ptr, |index| search_into(index, query, len, k, filter, out_ids, out_dists)) }
+            .unwrap_or(0)
+    })
+    .unwrap_or(0)
+}
+
 /// Search for the k nearest neighbors of each of many queries, in one call
 ///
 /// # Arguments
@@ -1474,6 +1555,159 @@ pub unsafe extern "C" fn chassis_compact(ptr: *mut ChassisIndex) -> c_int {
 //  INTROSPECTION
 //
 
+/// Copy the vector with `id` into `out`
+///
+/// The vector comes back as the index keeps it: scaled to length 1 in a cosine index, and
+/// rounded in half precision.
+///
+/// # Arguments
+///
+/// - `ptr`: Non-NULL pointer to index (shared access)
+/// - `id`: The vector's id
+/// - `out`: Space for `len` floats
+/// - `len`: The index's dimensions
+///
+/// # Returns
+///
+/// - `1` if a live vector has `id`, now in `out`
+/// - `0` if none has
+/// - `-1` on failure (check `chassis_last_error_message()`)
+///
+/// # Thread Safety
+///
+/// Safe from any thread. A reader sees the writer's last flush.
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+/// - `out` must have space for `len` floats
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_get(
+    ptr: *const ChassisIndex,
+    id: u64,
+    out: *mut c_float,
+    len: size_t,
+) -> c_int {
+    let get = |index: &mut dyn Readable| {
+        let dims = index.dimensions() as usize;
+        if len != dims {
+            set_last_error(Failure {
+                code: CHASSIS_ERROR_DIMENSION_MISMATCH,
+                message: format!(
+                    "out has space for {len} floats, but this index holds vectors of {dims}\nhelp: \
+                     pass len = chassis_dimensions(index), with space for that many"
+                )
+                .into(),
+            });
+            return -1;
+        }
+        match index.get(id) {
+            Ok(found) => {
+                clear_last_error();
+                let Some(vector) = found else { return 0 };
+                // SAFETY: caller guarantees out has space for len == dims floats
+                unsafe { ptr::copy_nonoverlapping(vector.as_ptr(), out, dims) };
+                1
+            }
+            Err(e) => {
+                set_last_error(e);
+                -1
+            }
+        }
+    };
+    ffi_guard(|| {
+        if out.is_null() {
+            set_last_error("out is NULL\nhelp: pass space for chassis_dimensions(index) floats");
+            return -1;
+        }
+        unsafe { read(ptr, get) }.unwrap_or(-1)
+    })
+    .unwrap_or(-1)
+}
+
+/// Whether a live vector has `id`
+///
+/// # Returns
+///
+/// - `1` if one has, `0` if none has
+/// - `-1` on failure (check `chassis_last_error_message()`)
+///
+/// # Thread Safety
+///
+/// Safe from any thread. A reader sees the writer's last flush.
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_contains(ptr: *const ChassisIndex, id: u64) -> c_int {
+    let contains = |index: &mut dyn Readable| match index.contains(id) {
+        Ok(found) => {
+            clear_last_error();
+            c_int::from(found)
+        }
+        Err(e) => {
+            set_last_error(e);
+            -1
+        }
+    };
+    ffi_guard(|| unsafe { read(ptr, contains) }.unwrap_or(-1)).unwrap_or(-1)
+}
+
+/// Copy the ids of the live vectors into `out`, in the order they were added
+///
+/// # Arguments
+///
+/// - `ptr`: Non-NULL pointer to index (shared access)
+/// - `out`: Space for `cap` ids. May be NULL when `cap` is 0.
+/// - `cap`: How many ids `out` has space for
+///
+/// # Returns
+///
+/// - The number of live vectors. Only the first `cap` ids are written, so if this is more than
+///   `cap`, call again with more space.
+/// - 0 on failure (check `chassis_last_error_code()`), as for an empty index, which sets no error
+///
+/// # Thread Safety
+///
+/// Safe from any thread. A reader sees the writer's last flush, which can have more vectors than
+/// a `chassis_len()` just before.
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+/// - `out` must have space for `cap` u64 values
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_ids(
+    ptr: *const ChassisIndex,
+    out: *mut u64,
+    cap: size_t,
+) -> size_t {
+    let ids = |index: &mut dyn Readable| match index.ids() {
+        Ok(ids) => {
+            clear_last_error();
+            let written = ids.len().min(cap);
+            if written > 0 {
+                // SAFETY: caller guarantees out has space for cap u64 values
+                unsafe { ptr::copy_nonoverlapping(ids.as_ptr(), out, written) };
+            }
+            ids.len()
+        }
+        Err(e) => {
+            set_last_error(e);
+            0
+        }
+    };
+    ffi_guard(|| {
+        if out.is_null() && cap > 0 {
+            set_last_error("out is NULL\nhelp: pass space for cap ids, or cap 0 to count them");
+            return 0;
+        }
+        unsafe { read(ptr, ids) }.unwrap_or(0)
+    })
+    .unwrap_or(0)
+}
+
 /// Get the number of vectors in the index
 ///
 /// # Arguments
@@ -1494,6 +1728,22 @@ pub unsafe extern "C" fn chassis_compact(ptr: *mut ChassisIndex) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
     ffi_guard(|| unsafe { read(ptr, |index| index.len()) }.unwrap_or(0)).unwrap_or(0)
+}
+
+/// Get the number of deleted vectors the index file still holds
+///
+/// `chassis_compact()` removes them, and sets this to 0.
+///
+/// # Returns
+///
+/// - Number of deleted vectors, or 0 if `ptr` is NULL
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_deleted_count(ptr: *const ChassisIndex) -> u64 {
+    ffi_guard(|| unsafe { read(ptr, |index| index.deleted_count()) }.unwrap_or(0)).unwrap_or(0)
 }
 
 /// Check if the index is empty
@@ -2008,6 +2258,76 @@ mod tests {
             assert_eq!(none, 0);
             assert!(chassis_last_error_message().is_null());
         }
+        unsafe { chassis_free(reader) };
+        unsafe { chassis_free(writer) };
+    }
+
+    #[test]
+    fn test_ffi_lookups_and_search_excluding() {
+        let (_dir, path) = temp_index_path();
+        let writer = unsafe { chassis_open(path.as_ptr(), 2) };
+        for i in 0..5u64 {
+            let v = [i as f32, 0.0];
+            assert_eq!(unsafe { chassis_add_with_id(writer, 100 + i, v.as_ptr(), 2) }, 0);
+        }
+        assert_eq!(unsafe { chassis_delete(writer, 102) }, 1);
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+
+        for handle in [writer as *const ChassisIndex, reader] {
+            let contains = [101, 102, 7].map(|id| unsafe { chassis_contains(handle, id) });
+            assert_eq!(contains, [1, 0, 0]);
+
+            let mut out = [0.0f32; 3];
+            assert_eq!(unsafe { chassis_get(handle, 101, out.as_mut_ptr(), 2) }, 1);
+            assert_eq!(out[..2], [1.0, 0.0]);
+            assert_eq!(unsafe { chassis_get(handle, 102, out.as_mut_ptr(), 2) }, 0);
+            assert_eq!(unsafe { chassis_get(handle, 101, out.as_mut_ptr(), 3) }, -1);
+            assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_DIMENSION_MISMATCH);
+            assert_eq!(unsafe { chassis_get(handle, 101, ptr::null_mut(), 2) }, -1);
+
+            let mut ids = [0u64; 8];
+            assert_eq!(unsafe { chassis_ids(handle, ptr::null_mut(), 0) }, 4);
+            assert_eq!(unsafe { chassis_ids(handle, ids.as_mut_ptr(), 2) }, 4);
+            assert_eq!(ids[..3], [100, 101, 0]);
+            assert_eq!(unsafe { chassis_ids(handle, ids.as_mut_ptr(), 8) }, 4);
+            assert_eq!(ids[..4], [100, 101, 103, 104]);
+            assert_eq!(unsafe { chassis_deleted_count(handle) }, 1);
+
+            let query = [0.0f32, 0.0];
+            let excluded = [100u64, 101, 7];
+            let search = |excluded: *const u64, len| {
+                let (mut ids, mut dists) = ([0u64; 2], [0.0f32; 2]);
+                let (out, out_dists) = (ids.as_mut_ptr(), dists.as_mut_ptr());
+                let n = unsafe {
+                    chassis_search_excluding(
+                        handle,
+                        query.as_ptr(),
+                        2,
+                        2,
+                        excluded,
+                        len,
+                        out,
+                        out_dists,
+                    )
+                };
+                (n, ids)
+            };
+            assert_eq!(search(excluded.as_ptr(), excluded.len()), (2, [103, 104]));
+            assert_eq!(search(ptr::null(), 0), (2, [100, 101]));
+            assert_eq!(search(ptr::null(), 1).0, 0);
+        }
+
+        // The reader keeps to the last flush.
+        assert_eq!(unsafe { chassis_delete(writer, 103) }, 1);
+        assert_eq!(
+            unsafe { (chassis_deleted_count(writer), chassis_deleted_count(reader)) },
+            (2, 1)
+        );
+        assert_eq!(
+            unsafe { (chassis_contains(writer, 103), chassis_contains(reader, 103)) },
+            (0, 1)
+        );
         unsafe { chassis_free(reader) };
         unsafe { chassis_free(writer) };
     }

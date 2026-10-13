@@ -80,7 +80,8 @@ let deleted = index.delete(42)?; // false if no live vector has id 42
 Search stops returning the vector immediately, and `len()` drops by one. The delete is durable
 after the next `flush()`; a crash before then rolls it back. A delete and an add in the same flush
 are all-or-nothing, so `delete(id)` followed by `add_with_id(id, new_vector)` replaces a vector
-safely. Deleted vectors keep their disk space until `compact()`.
+safely. Deleted vectors keep their disk space until `compact()`; `deleted_count()` says how many
+the file holds.
 
 #### Compacting
 
@@ -128,6 +129,14 @@ query, walking the graph would visit most of the index to find them, so the sear
 vector instead and returns the exact nearest. Measured, a filtered search takes at most about twice an exact scan of the matching
 vectors ([ADR-0009](../adr/009-filtered-search.md)). `IndexReader` has the same method.
 
+To leave a few ids out, as "more like this" leaves out the vector it starts from, pass a filter
+that rejects them:
+
+```rust
+let vector = index.get(42)?.expect("42 is in the index");
+let results = index.search_filtered(&vector, 10, |id| id != 42)?;
+```
+
 #### Persistence
 
 ```rust
@@ -145,10 +154,23 @@ crash until a writer reopens the index, a `<name>.undo` file sits beside it
 ([file format](../architecture/file-format.md#the-undo-file)): move, copy or delete the two
 together.
 
+#### Looking up ids
+
+```rust
+let vector = index.get(42)?;     // Some(vector), or None if no live vector has id 42
+let known = index.contains(42)?; // Whether a live vector has id 42
+let ids = index.ids()?;          // Every live id, in the order they were added
+```
+
+`get` returns the vector as the index keeps it: scaled to length 1 in a cosine index, and rounded
+in half precision. With ids you chose, the first lookup in a process scans the index once to map
+ids to vectors, as `add_with_id` does.
+
 #### Metadata
 
 ```rust
 let len = index.len();           // Live vectors (deleted ones excluded)
+let deleted = index.deleted_count(); // Deleted vectors the file holds until compact()
 let dim = index.dimensions();    // Vector size
 let metric = index.metric();     // DistanceMetric::Euclidean or ::Cosine
 let precision = index.precision(); // Precision::Full or ::Half
@@ -172,8 +194,9 @@ let results = reader.search(&query, 10)?;
 Every search first takes a new snapshot: it returns what the writer's newest `flush()` committed,
 and nothing that flush deleted, while routing through vectors added since, so a long unflushed batch
 costs readers little recall. A flush becomes visible just before its final fsync, so one that then
-fails, or is lost to power loss, may already have been seen. `len()` reports the last snapshot;
-`refresh()` takes a new one without searching, and `snapshot()` identifies it, for keying a cache.
+fails, or is lost to power loss, may already have been seen. `get`, `contains` and `ids` take a new
+snapshot too. `len()` and `deleted_count()` report the last snapshot; `refresh()` takes a new one
+without searching, and `snapshot()` identifies it, for keying a cache.
 `search` takes `&mut self`: open one reader per thread. The file must exist in the current format;
 open it once with `VectorIndex::open` to create or migrate it.
 

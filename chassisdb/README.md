@@ -184,11 +184,22 @@ from the file; any number can search while one writer writes, in this process or
   Delete the vector with this id. Returns whether there was one. Search stops returning it at
   once; the delete is durable after the next `flush()`.
 
-- **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
+- **`get(id: int) -> ndarray | None`**  
+  The vector with this id, or `None` if no live vector has it. It comes back as the index keeps
+  it: scaled to length 1 in a cosine index, and rounded in half precision.
+
+- **`id in index`**  
+  Whether a live vector has this id.
+
+- **`ids() -> ndarray`**  
+  The ids of the live vectors, in the order they were added.
+
+- **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None, excluded: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
   Search for k nearest neighbors. Returns sorted list of results. With `allowed`, only those ids
   can be returned, e.g. `allowed=[row[0] for row in db.execute("SELECT id FROM docs WHERE owner = ?", (user,))]`;
   when walking the graph would cost more, as when few vectors match, every vector is checked
-  instead and the results are exact.
+  instead and the results are exact. With `excluded`, those ids are never returned, as for "more
+  like this": `index.search(index.get(42), k=10, excluded=[42])`.
 
 - **`search_batch(queries: ndarray, k: int = 10) -> tuple[ndarray, ndarray]`**  
   Search for the k nearest neighbors of each row of a `(count, dimensions)` array, in one call:
@@ -213,6 +224,9 @@ from the file; any number can search while one writer writes, in this process or
 
 - **`__len__() -> int`**  
   Get number of vectors in the index.
+
+- **`deleted_count() -> int`**  
+  Deleted vectors the file still holds, until `compact()` removes them.
 
 - **`is_empty() -> bool`**  
   Check if index is empty.

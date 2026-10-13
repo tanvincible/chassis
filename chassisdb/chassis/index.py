@@ -444,11 +444,65 @@ class VectorIndex:
             raise _ffi.last_error("The vector couldn't be deleted")
         return result == 1
 
+    def get(self, id: int) -> Optional[npt.NDArray[np.float32]]:
+        """The vector with this id, or None if no live vector has it.
+
+        It comes back as the index keeps it: scaled to length 1 in a cosine
+        index, and rounded in half precision.
+
+        Raises:
+            ChassisError: If index is closed or the file can't be read
+            ValueError: If id is out of range
+
+        Thread Safety:
+            Safe from any thread. A read-only index sees the writer's last
+            flush.
+        """
+        self._check_closed()
+        out = np.empty(self._dimensions, dtype=np.float32)
+        out_ptr = out.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        result = _ffi._lib.chassis_get(self._ptr, _check_id(id), out_ptr, self._dimensions)
+        if result < 0:
+            raise _ffi.last_error("The vector couldn't be read")
+        return out if result == 1 else None
+
+    def __contains__(self, id) -> bool:
+        """Whether a live vector has this id: ``id in index``."""
+        self._check_closed()
+        try:
+            id = _check_id(id)
+        except InvalidArgumentError:
+            return False  # no vector has an id out of range
+        result = _ffi._lib.chassis_contains(self._ptr, id)
+        if result < 0:
+            raise _ffi.last_error("The id couldn't be looked up")
+        return result == 1
+
+    def ids(self) -> npt.NDArray[np.uint64]:
+        """The ids of the live vectors, in the order they were added.
+
+        Thread Safety:
+            Safe from any thread. A read-only index sees the writer's last
+            flush.
+        """
+        self._check_closed()
+        out = np.empty(len(self), dtype=np.uint64)
+        while True:
+            out_ptr = out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            count = _ffi._lib.chassis_ids(self._ptr, out_ptr, len(out))
+            if count == 0 and _ffi._lib.chassis_last_error_code() != 0:
+                raise _ffi.last_error("The ids couldn't be read")
+            if count <= len(out):
+                return out[:count]
+            # A writer in another process may flush more before the next call.
+            out = np.empty(count, dtype=np.uint64)
+
     def search(
         self,
         query: Union[Sequence[float], npt.NDArray[np.float32]],
         k: int = 10,
         allowed: Optional[Union[Iterable[int], npt.NDArray[np.uint64]]] = None,
+        excluded: Optional[Union[Iterable[int], npt.NDArray[np.uint64]]] = None,
     ) -> List[SearchResult]:
         """Search for k nearest neighbors.
 
@@ -458,6 +512,8 @@ class VectorIndex:
             allowed: If given, only these ids can be returned. When walking
                 the graph would cost more, as when few vectors match, every
                 vector is checked instead and the results are exact.
+            excluded: If given, these ids are never returned, as for "more
+                like this" leaving out the vector it starts from.
 
         Returns:
             List of SearchResult objects, sorted by distance (ascending)
@@ -490,15 +546,26 @@ class VectorIndex:
         ids_ptr = out_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
         dists_ptr = out_dists.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
-        if allowed is None:
-            count = _ffi._lib.chassis_search(
-                self._ptr, query_ptr, len(query), k, ids_ptr, dists_ptr
-            )
-        else:
-            allowed = _allowed_ids(allowed)
+        if excluded is not None:
+            excluded = _id_array("excluded", excluded)
+        if allowed is not None:
+            allowed = _id_array("allowed", allowed)
+            if excluded is not None:
+                allowed = np.setdiff1d(allowed, excluded)
+
+        if allowed is not None:
             allowed_ptr = allowed.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
             count = _ffi._lib.chassis_search_filtered(
                 self._ptr, query_ptr, len(query), k, allowed_ptr, len(allowed), ids_ptr, dists_ptr
+            )
+        elif excluded is not None:
+            excluded_ptr = excluded.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            count = _ffi._lib.chassis_search_excluding(
+                self._ptr, query_ptr, len(query), k, excluded_ptr, len(excluded), ids_ptr, dists_ptr
+            )
+        else:
+            count = _ffi._lib.chassis_search(
+                self._ptr, query_ptr, len(query), k, ids_ptr, dists_ptr
             )
 
         # 0 results is an error only if one was set: an empty index has none either.
@@ -632,6 +699,15 @@ class VectorIndex:
         self._check_closed()
         return int(_ffi._lib.chassis_len(self._ptr))
 
+    def deleted_count(self) -> int:
+        """Deleted vectors the file still holds, until compact() removes them.
+
+        Thread Safety:
+            Safe from any thread.
+        """
+        self._check_closed()
+        return int(_ffi._lib.chassis_deleted_count(self._ptr))
+
     def is_empty(self) -> bool:
         """Check if the index is empty.
 
@@ -677,24 +753,24 @@ class VectorIndex:
         )
 
 
-def _allowed_ids(allowed) -> npt.NDArray[np.uint64]:
+def _id_array(name: str, ids) -> npt.NDArray[np.uint64]:
     # Like _check_id: numpy and ctypes would silently wrap, truncate or flatten bad ids.
-    if callable(allowed):
+    if callable(ids):
         raise TypeError(
-            "allowed is a function, but has to be the ids a result may have\nhelp: pass "
-            "allowed=[i for i in candidate_ids if keep(i)], or a set or numpy array of ids"
+            f"{name} is a function, but has to be a list of ids\nhelp: pass "
+            f"{name}=[i for i in candidate_ids if test(i)], or a set or numpy array of ids"
         )
-    ids = np.asarray(allowed if isinstance(allowed, np.ndarray) else list(allowed))
+    ids = np.asarray(ids if isinstance(ids, np.ndarray) else list(ids))
     if ids.size == 0:
         return np.zeros(0, dtype=np.uint64)
     if ids.ndim != 1 or ids.dtype == np.bool_ or not np.issubdtype(ids.dtype, np.integer):
         raise TypeError(
-            f"allowed has to be a flat sequence of int ids, but is {ids.dtype} of shape "
+            f"{name} has to be a flat sequence of int ids, but is {ids.dtype} of shape "
             f"{ids.shape}\nhelp: ids are ints; keep a dict from your own keys to them"
         )
     if (ids < 0).any() or (ids == 2**64 - 1).any():
         raise InvalidArgumentError(
-            "allowed has an id below 0 or of 2**64 - 1\nhelp: ids go from 0 to 2**64 - 2"
+            f"{name} has an id below 0 or of 2**64 - 1\nhelp: ids go from 0 to 2**64 - 2"
         )
     return np.ascontiguousarray(ids, dtype=np.uint64)
 
