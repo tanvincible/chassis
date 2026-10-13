@@ -207,6 +207,54 @@ half precision it is level.
 * **To validate**: a rule for when `warm` should hold back on a slow disk, for instance reading in
   only while searches aren't waiting on it.
 
+## What apps built around
+
+Four agents, given only a copy of the repository, each built an app on Chassis (2026-10-13): a
+notes search CLI and an LLM cache served by four worker processes in Python, storage for a desktop
+app in Rust, and a "more like this" catalog tool in C. What they had to work around is below; what
+they tripped on in the docs and errors was fixed in PR #59.
+
+### Get a vector, check an id, list the ids
+
+* **Known**: the C tool kept a 5.1 MB copy of every vector beside its 8.9 MB index, to look up a
+  product's vector for "more like this" and to know every id. The Rust app checked whether an id
+  exists with `search_filtered(q, 1, |x| x == id)`, a pass over the index each time. The index
+  holds both already.
+* **To validate**: whether `get(id)`, `contains(id)` and the ids, or a `search_by_id(id, k)` that
+  leaves the id out, are asked for often enough to add. Nothing to measure; search is unchanged.
+
+### Exclude ids in C and Python
+
+* **Known**: Rust's filter is a closure; C and Python take only ids to allow. To leave out a few
+  products, the C tool listed every other id, which it had only because of its copy above.
+* **To validate**: an exclude list, or a callback in C, against asking for `k` plus the excluded
+  count and dropping them.
+
+### A count of deleted vectors
+
+* **Known**: two apps had to decide when to compact, and `len()` counts live vectors only. One kept
+  its own count in SQLite; the other compacted on every run that deleted anything. The graph keeps
+  the count already.
+* **To validate**: recall and search time against the deleted share, for a rule on when compacting
+  pays, then whether to expose the count, the rule, or both.
+
+### Several processes that each write
+
+* **Known**: a second writer fails at once with Locked. The LLM cache's four workers each opened the
+  writer for each write, under a lock of their own on a side file: on 100,000 vectors of 384
+  dimensions, open took 0.3 ms, an add 10 to 13 and the flush 15 to 17, on an Apple M5.
+* **To validate**: an open that waits for the lock, with a timeout, against a documented recipe;
+  and the per-write cost at a million vectors and on Linux.
+
+### Reopen with the options in the file
+
+* **Known**: a writer reopened without options uses the defaults, so a cosine index fails to open
+  until its options are given again. A reader takes the metric and precision from the file but not
+  `max_connections`, so in Python a `read_only=True` index with no options fails on an index built
+  with 32. Both errors now say what to pass (PR #59).
+* **To validate**: nothing to measure. Taking every option from the file when none are given is an
+  API decision; C's `chassis_open_reader` would keep a `max_connections` it no longer needs.
+
 ## Results nobody has explained
 
 * **FAISS's HNSW still searches long vectors faster on x86**: at 1,536 dimensions in full precision,
