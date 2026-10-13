@@ -1,0 +1,33 @@
+name: Adoption
+
+# Once a week, how many people use Chassis (scripts/adoption.py), appended to adoption.csv on the
+# stats branch, which GitHub shows as a table.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/adoption.py --csv --header > "$RUNNER_TEMP/row.csv"
+      - name: Append the row to adoption.csv on the stats branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch -q origin stats; then
+            git checkout -q -B stats FETCH_HEAD
+            tail -n 1 "$RUNNER_TEMP/row.csv" >> adoption.csv
+          else
+            git checkout -q --orphan stats
+            git rm -rfq .
+            cp "$RUNNER_TEMP/row.csv" adoption.csv
+          fi
+          git add adoption.csv
+          git commit -qm "stats: $(date -u +%F)"
+          git push -q origin stats
