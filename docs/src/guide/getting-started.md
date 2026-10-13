@@ -6,7 +6,7 @@ Add Chassis to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chassis-core = "0.7"
+chassis-core = "0.8"
 ```
 
 A debug build runs Chassis's arithmetic many times slower. To build Chassis optimized while your

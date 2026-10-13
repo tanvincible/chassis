@@ -40,7 +40,7 @@ It is not a database server or a distributed system, and it stores vectors and i
 
 ## Status
 
-Early, and moving fast. The latest release is v0.7.2. See [CHANGELOG.md](CHANGELOG.md).
+Early, and moving fast. The latest release is v0.8.0. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
