@@ -127,7 +127,8 @@ Documentation is as important as code.
 * **Architecture Docs**: Located in [`docs`](https://github.com/tanvincible/chassis/tree/main/docs) (built with `mdbook`).
 * **Python Docs**: Located in [`chassisdb/docs/`](https://github.com/tanvincible/chassis/tree/main/chassisdb/docs) (built with `mkdocs`).
 
-If you find a typo or unclear explanation, please feel free to submit a pull request.
+Write them as [STYLE.md](STYLE.md) says: the tone, the terms, headings, examples and where each
+thing goes. If you find a typo or unclear explanation, please feel free to submit a pull request.
 
 ## Final Note
 
