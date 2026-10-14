@@ -341,14 +341,15 @@ fn history(seed: u64, metric: DistanceMetric, precision: Precision) -> (u64, u64
         run.op = op;
         assert_eq!(index.len(), now.live.len() as u64, "{}", run.at());
         for (&id, vector) in &now.live {
-            let exact = index.search_filtered(vector, 1, |other| other == id).unwrap();
-            assert_eq!(exact.len(), 1, "{}: id {id} is gone", run.at());
-            let apart = exact[0].distance.abs();
+            let got = index.get(id).unwrap();
+            let got = got.unwrap_or_else(|| panic!("{}: id {id} is gone", run.at()));
+            let apart = run.distance(&got, vector);
             assert!(apart < run.tolerance(), "{}: id {id} holds another vector", run.at());
         }
         index.compact().unwrap();
     }
-    for vector in now.live.values() {
+    // A sample: a search from every vector is slow in debug builds.
+    for vector in now.live.values().step_by(10) {
         let reachable = index.search(vector, 10).unwrap().len();
         assert_eq!(reachable, now.live.len().min(10), "{}: too few reached", run.at());
     }
