@@ -130,7 +130,7 @@ fn crash_writer() {
         index.flush().unwrap();
         batch += 1;
         println!("flushed {batch}");
-        if compact && batch % 2 == 0 {
+        if compact {
             println!("compacting");
             index.compact().unwrap();
         }
@@ -148,8 +148,8 @@ fn test_kill_during_parallel_batches_keeps_flushed_data() {
     kill_at_random_points(true, false);
 }
 
-/// The same, compacting after every second flush, so kills land while the copy is built, flagged
-/// and renamed. Compaction changes no vector or id, so every check on them still holds.
+/// The same, compacting after every flush, so kills land while the copy is built, flagged and
+/// renamed. Compaction changes no vector or id, so every check on them still holds.
 #[test]
 fn test_kill_during_compaction_keeps_flushed_data() {
     kill_at_random_points(false, true);
