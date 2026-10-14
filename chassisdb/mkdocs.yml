@@ -19,6 +19,9 @@ nav:
       - Exceptions: api/exceptions.md
       - Options: api/options.md
 
+markdown_extensions:
+  - admonition
+
 plugins:
   - search
   - mkdocstrings:

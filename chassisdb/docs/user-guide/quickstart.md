@@ -1,66 +1,80 @@
-# Quick Start
+# Quickstart
 
-This guide will walk you through creating an index, adding vectors, and performing nearest neighbor searches.
+This page takes you from an empty file to your first search: open an index, add vectors, keep
+them, and search them. The vectors here are random; in your app they come from your embedding
+model. Each block runs after the one before it.
 
-## 1. Initialization
+## Open
 
-The `VectorIndex` is the main entry point. You must specify the dimensionality of your vectors when creating the index. This dimension is immutable for the life of the file.
-
-```python
-from chassisdb import VectorIndex
-
-# Opens 'data.chassis'. If it doesn't exist, it is created.
-# If it exists, it is opened and dimensions are validated.
-index = VectorIndex("data.chassis", dimensions=768)
-```
-
-## 2. Adding Vectors
-
-You can add vectors one by one. Chassis accepts standard Python lists or NumPy arrays.
+An index is one file. Give it a path and the number of dimensions your vectors have; the file is
+created if it doesn't exist. The dimensions are fixed once the index is created, and you give the
+same number to open it again.
 
 ```python
 import numpy as np
+from chassisdb import VectorIndex
 
-# Using Python lists
-index.add([0.1, 0.2, ...]) 
-
-# Using NumPy (Recommended for performance)
-data = np.random.rand(100, 768).astype(np.float32)
-
-for vec in data:
-    index.add(vec)
+index = VectorIndex("data.chassis", dimensions=768)
 ```
 
-!!! warning "Important: Flush to Disk"
-`add()` operations are buffered in memory for speed. You **must** call `index.flush()` to persist them to disk. If the program crashes before a flush, unwritten vectors will be lost.
+## Add
+
+`add_batch` takes an array with one vector per row, links the vectors on every core, and returns
+their ids. `add` takes one vector, as a list or an array. Each vector gets the next id unless you
+pass your own: `add_batch(vectors, ids=...)`, `add(vector, id=...)`.
+
+```python
+vectors = np.random.rand(1000, 768).astype(np.float32)
+ids = index.add_batch(vectors)  # 0 to 999
+
+vector = np.random.rand(768).astype(np.float32)
+index.add(vector)  # 1000
+```
+
+## Flush
+
+!!! warning "Durability"
+    A search finds a vector as soon as it is added, but the vector is on disk only after
+    `flush()`. If the process ends before then, or you close the index without one, every add and
+    delete since the last flush is gone, as after a crash. The file stays usable either way.
 
 ```python
 index.flush()
 ```
 
-## 3. Searching
+A flush waits for the disk, so it takes milliseconds. Flush after a batch of changes, not after
+each one.
 
-Search returns a list of `SearchResult` objects containing the `id` and `distance`: Euclidean (L2) by default, or `1 - cosine similarity` for an index created with `IndexOptions(metric="cosine")`.
+## Search
+
+`search` returns the `k` nearest vectors, nearest first, each with its `id` and `distance`. The
+distance is Euclidean (L2) by default, or `1 - cosine similarity` for an index created with
+`IndexOptions(metric="cosine")`. Smaller is nearer.
 
 ```python
-query_vec = np.random.rand(768).astype(np.float32)
-
-# Find top 10 nearest neighbors
-results = index.search(query_vec, k=10)
-
-for res in results:
-    print(f"ID: {res.id}, Distance: {res.distance:.4f}")
+query = np.random.rand(768).astype(np.float32)
+for result in index.search(query, k=5):
+    print(result.id, result.distance)
 ```
 
-## 4. Context Management
+## Close
 
-It is best practice to use the `with` statement to ensure resources are closed properly.
+One process writes a file at a time, so close the index when you're done with it. A `with` block
+closes it for you, and flushes first when the block ends normally. If an exception leaves the
+block, it closes without flushing, so half-finished changes aren't kept.
 
 ```python
-index.close()  # One writer per file: close the index from step 1 first
+index.close()
 
 with VectorIndex("data.chassis", dimensions=768) as index:
-    index.add(vec)
-    index.flush()
-    # Index is automatically closed here
+    index.add(np.random.rand(768).astype(np.float32))
+# Flushed and closed
 ```
+
+## Next
+
+- [Performance](performance.md): the options for build speed, search speed and recall.
+- [VectorIndex](../api/index_class.md): every method, with what it raises.
+- [Next to your database](https://tanvincible.github.io/chassis/guide/with-a-database.html):
+  keeping your text and metadata in SQLite under the same ids, and searching among the rows a
+  query selects.

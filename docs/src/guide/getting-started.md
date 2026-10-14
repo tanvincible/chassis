@@ -17,8 +17,8 @@ own crate stays in debug:
 opt-level = 3
 ```
 
-From Python, `pip install chassisdb` (see the [Python bindings](https://github.com/tanvincible/chassis/blob/main/chassisdb/README.md));
-from C, see the [C API](c-api.md).
+From Python, `pip install chassisdb` and start with the
+[Python docs](https://tanvincible.github.io/chassis/python/); from C, see the [C API](c-api.md).
 
 ## Quick Start
 

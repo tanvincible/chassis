@@ -2,6 +2,9 @@
 
 Chassis is an embedded vector index for local semantic search, written in Rust. It keeps an index in one file and runs inside your process, with no server to run or connect to.
 
+Using Python? Start with the [Python docs](https://tanvincible.github.io/chassis/python/). From
+Rust, start with [Getting Started](./guide/getting-started.md).
+
 ## What Chassis Does
 
 Chassis stores vectors under your ids and searches them. It manages a single memory-mapped file that holds both the vectors and a persistent HNSW graph over them.
