@@ -11,6 +11,7 @@
 - [Errors](./guide/errors.md)
 - [Next to Your Database](./guide/with-a-database.md)
 - [Chassis for Coding Agents](./guide/agents.md)
+- [llms.txt](./llms.md)
 
 # Architecture
 
