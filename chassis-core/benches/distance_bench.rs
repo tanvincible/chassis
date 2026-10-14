@@ -9,7 +9,7 @@
 //! - AVX2: 4-6x speedup on 768-1536D
 //! - NEON: 3-5x speedup on 768-1536D
 
-use chassis_core::distance::{euclidean_distance, euclidean_distance_scalar};
+use chassisdb::distance::{euclidean_distance, euclidean_distance_scalar};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 

@@ -9,7 +9,7 @@ The primary entry point for Chassis. `VectorIndex` orchestrates the storage laye
 #### Opening an Index
 
 ```rust
-use chassis_core::{VectorIndex, IndexOptions};
+use chassisdb::{VectorIndex, IndexOptions};
 
 // Open or create a persistent index
 let mut index = VectorIndex::open(
@@ -23,8 +23,9 @@ let mut index = VectorIndex::open(
 
 * `path`: Path to the backing file (created if missing).
 * `dims`: Vector dimensionality (must be static for the file's lifetime).
-* `options`: Configuration for graph construction and search. An existing index is reopened with
-  the metric, precision and `max_connections` it was created with.
+* `options`: Configuration for graph construction and search. To reopen an existing index, pass the
+  metric, precision and `max_connections` it was created with; others are an `OptionsMismatch`
+  error that names them.
 
 **Returns**:
 
@@ -80,7 +81,8 @@ let deleted = index.delete(42)?; // false if no live vector has id 42
 Search stops returning the vector immediately, and `len()` drops by one. The delete is durable
 after the next `flush()`; a crash before then rolls it back. A delete and an add in the same flush
 are all-or-nothing, so `delete(id)` followed by `add_with_id(id, new_vector)` replaces a vector
-safely. Deleted vectors keep their disk space until `compact()`.
+safely. Deleted vectors keep their disk space until `compact()`; `deleted_count()` says how many
+the file holds.
 
 #### Compacting
 
@@ -95,6 +97,13 @@ building the index, on every core, and needs free disk for a second copy of the 
 Readers in other processes keep searching and move to the new file by themselves. On Windows it
 fails, leaving the index as it was, while another process has the index open.
 
+When to compact: deletes cost speed and space, not recall. With half the vectors deleted,
+searches ran at about 70% of their speed, and with 90% at a fifth
+([ADR-0011](../adr/011-compaction.md)), so compacting once `deleted_count()` nears `len()` keeps
+most of the speed; compact sooner when disk space matters. The file shrinks only by whole
+segments, which double in size as an index grows, so it gets smaller only when the live vectors
+fit in fewer of them.
+
 #### Searching
 
 ```rust
@@ -103,8 +112,8 @@ let k = 10; // Neighbors to retrieve
 
 let results = index.search(&query, k)?;
 
-for match in results {
-    println!("ID: {}, Distance: {}", match.id, match.distance);
+for hit in results {
+    println!("ID: {}, Distance: {}", hit.id, hit.distance);
 }
 ```
 
@@ -128,6 +137,14 @@ query, walking the graph would visit most of the index to find them, so the sear
 vector instead and returns the exact nearest. Measured, a filtered search takes at most about twice an exact scan of the matching
 vectors ([ADR-0009](../adr/009-filtered-search.md)). `IndexReader` has the same method.
 
+To leave a few ids out, as "more like this" leaves out the vector it starts from, pass a filter
+that rejects them:
+
+```rust
+let vector = index.get(42)?.expect("42 is in the index");
+let results = index.search_filtered(&vector, 10, |id| id != 42)?;
+```
+
 #### Persistence
 
 ```rust
@@ -145,10 +162,23 @@ crash until a writer reopens the index, a `<name>.undo` file sits beside it
 ([file format](../architecture/file-format.md#the-undo-file)): move, copy or delete the two
 together.
 
+#### Looking up ids
+
+```rust
+let vector = index.get(42)?;     // Some(vector), or None if no live vector has id 42
+let known = index.contains(42)?; // Whether a live vector has id 42
+let ids = index.ids()?;          // Every live id, in the order they were added
+```
+
+`get` returns the vector as the index keeps it: scaled to length 1 in a cosine index, and rounded
+in half precision. With ids you chose, the first lookup in a process scans the index once to map
+ids to vectors, as `add_with_id` does.
+
 #### Metadata
 
 ```rust
 let len = index.len();           // Live vectors (deleted ones excluded)
+let deleted = index.deleted_count(); // Deleted vectors the file holds until compact()
 let dim = index.dimensions();    // Vector size
 let metric = index.metric();     // DistanceMetric::Euclidean or ::Cosine
 let precision = index.precision(); // Precision::Full or ::Half
@@ -163,7 +193,7 @@ lock, so any number of readers can open one file next to its single writer
 and precision from the file; `max_connections` has to be the one the index was created with.
 
 ```rust
-use chassis_core::{IndexOptions, IndexReader};
+use chassisdb::{IndexOptions, IndexReader};
 
 let mut reader = IndexReader::open("embeddings.chassis", 768, IndexOptions::default())?;
 let results = reader.search(&query, 10)?;
@@ -172,19 +202,20 @@ let results = reader.search(&query, 10)?;
 Every search first takes a new snapshot: it returns what the writer's newest `flush()` committed,
 and nothing that flush deleted, while routing through vectors added since, so a long unflushed batch
 costs readers little recall. A flush becomes visible just before its final fsync, so one that then
-fails, or is lost to power loss, may already have been seen. `len()` reports the last snapshot;
-`refresh()` takes a new one without searching, and `snapshot()` identifies it, for keying a cache.
+fails, or is lost to power loss, may already have been seen. `get`, `contains` and `ids` take a new
+snapshot too. `len()` and `deleted_count()` report the last snapshot; `refresh()` takes a new one
+without searching, and `snapshot()` identifies it, for keying a cache.
 `search` takes `&mut self`: open one reader per thread. The file must exist in the current format;
 open it once with `VectorIndex::open` to create or migrate it.
 
 ## Errors
 
-`VectorIndex` and `IndexReader` return `chassis_core::Result<T>`, whose error says what was wrong,
+`VectorIndex` and `IndexReader` return `chassisdb::Result<T>`, whose error says what was wrong,
 with the value, and on a line starting `help:` what to do instead. `Error::kind()` is an
 `ErrorKind` to act on ([Errors](./errors.md) lists them, with causes and fixes):
 
 ```rust
-use chassis_core::{ErrorKind, IndexOptions, IndexReader, VectorIndex};
+use chassisdb::{ErrorKind, IndexOptions, IndexReader, VectorIndex};
 
 match VectorIndex::open("embeddings.chassis", 768, IndexOptions::default()) {
     Ok(index) => { /* write */ }
@@ -196,7 +227,7 @@ match VectorIndex::open("embeddings.chassis", 768, IndexOptions::default()) {
 }
 ```
 
-`chassis_core::Error` converts into `anyhow::Error` and `Box<dyn std::error::Error>`, so `?` works
+`chassisdb::Error` converts into `anyhow::Error` and `Box<dyn std::error::Error>`, so `?` works
 in functions that return those.
 
 ## Configuration
@@ -283,7 +314,7 @@ file again after a compaction reads the new one in too.
 
 * **High Recall**: Increase `ef_construction` to 400 and `max_connections` to 32.
 * **Fast Search**: Decrease `ef_search` to 20-30.
-* **Low Memory**: Decrease `max_connections` to 8-12.
+* **Low Memory**: `Precision::Half`, or vectors with fewer dimensions.
 
 ## Data Types
 
@@ -291,7 +322,7 @@ file again after a compaction reads the new one in too.
 
 ```rust
 pub struct SearchResult {
-    /// The internal sequential ID of the vector
+    /// The id the vector was added under
     pub id: u64,
     
     /// Distance from the query by the index's metric

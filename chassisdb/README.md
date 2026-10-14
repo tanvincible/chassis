@@ -16,8 +16,8 @@ Python bindings for Chassis, an embedded vector index for local semantic search:
 pip install chassisdb
 ```
 
-The package is named `chassisdb` and imported as `chassis`. Wheels are built for Python 3.13 and
-later on Linux (x86-64 and ARM), macOS on Apple silicon and Windows (x86-64). Elsewhere, or from a
+Import it as `chassisdb`. Wheels are built for Python 3.11 and later on Linux (x86-64 and ARM),
+macOS on Apple silicon and Windows (x86-64). Elsewhere, or from a
 checkout of the repository, `pip install .` in this directory builds it, which needs Rust.
 
 ### Development Installation
@@ -31,18 +31,18 @@ pip install -e ".[dev]"
 pytest
 
 # Type checking
-mypy chassis
+mypy chassisdb
 
 # Formatting
-black chassis tests
-ruff check chassis tests
+black chassisdb tests
+ruff check chassisdb tests
 ```
 
 ## Quick Start
 
 ```python
 import numpy as np
-from chassis import VectorIndex
+from chassisdb import VectorIndex
 
 # Create or open an index
 index = VectorIndex("embeddings.chassis", dimensions=768)
@@ -74,7 +74,7 @@ print(f"Empty: {index.is_empty()}")
 ### Custom HNSW Parameters
 
 ```python
-from chassis import VectorIndex, IndexOptions
+from chassisdb import VectorIndex, IndexOptions
 
 # Configure HNSW parameters
 options = IndexOptions(
@@ -138,7 +138,7 @@ index.add((0.1, 0.2, 0.3))
 ### Error Handling
 
 ```python
-from chassis import VectorIndex, DimensionMismatchError, IndexLockedError
+from chassisdb import VectorIndex, DimensionMismatchError, IndexLockedError
 
 index = VectorIndex("vectors.chassis", dimensions=128)
 try:
@@ -167,14 +167,16 @@ Main class for interacting with Chassis indexes.
 VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = None, read_only: bool = False)
 ```
 
-An existing index is reopened with the metric, precision and `max_connections` it was created
-with. With `read_only=True` it only searches, takes no lock, and takes the metric and precision
-from the file; any number can search while one writer writes, in this process or others.
+To reopen an existing index, pass the metric, precision and `max_connections` it was created
+with; others raise `OptionsMismatchError`, which names them. With `read_only=True` it only
+searches, takes no lock, and takes the metric and precision from the file (`max_connections` has
+to match); any number can search while one writer writes, in this process or others.
 
 #### Methods
 
-- **`add(vector: Sequence[float] | ndarray) -> int`**  
-  Add a vector to the index. Returns the vector ID.
+- **`add(vector: Sequence[float] | ndarray, id: int | None = None) -> int`**  
+  Add a vector under `id` (0 to 2**64 - 2; `IdInUseError` if a live vector has it), or else under
+  one past the largest id so far. Returns the id.
 
 - **`add_batch(vectors: ndarray, ids: Iterable[int] | None = None) -> ndarray`**  
   Add a `(count, dimensions)` array at once, linking it on every core: much faster than `add` in a
@@ -182,13 +184,25 @@ from the file; any number can search while one writer writes, in this process or
 
 - **`delete(id: int) -> bool`**  
   Delete the vector with this id. Returns whether there was one. Search stops returning it at
-  once; the delete is durable after the next `flush()`.
+  once; the delete is durable after the next `flush()`. To replace a vector, delete it and add
+  the new one under the same id: the next flush saves both or neither.
 
-- **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
+- **`get(id: int) -> ndarray | None`**  
+  The vector with this id, or `None` if no live vector has it. It comes back as the index keeps
+  it: scaled to length 1 in a cosine index, and rounded in half precision.
+
+- **`id in index`**  
+  Whether a live vector has this id.
+
+- **`ids() -> ndarray`**  
+  The ids of the live vectors, in the order they were added.
+
+- **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None, excluded: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
   Search for k nearest neighbors. Returns sorted list of results. With `allowed`, only those ids
   can be returned, e.g. `allowed=[row[0] for row in db.execute("SELECT id FROM docs WHERE owner = ?", (user,))]`;
   when walking the graph would cost more, as when few vectors match, every vector is checked
-  instead and the results are exact.
+  instead and the results are exact. With `excluded`, those ids are never returned, as for "more
+  like this": `index.search(index.get(42), k=10, excluded=[42])`.
 
 - **`search_batch(queries: ndarray, k: int = 10) -> tuple[ndarray, ndarray]`**  
   Search for the k nearest neighbors of each row of a `(count, dimensions)` array, in one call:
@@ -206,6 +220,10 @@ from the file; any number can search while one writer writes, in this process or
 - **`compact() -> None`**  
   Rewrite the index without its deleted vectors and with a rebuilt graph, reclaiming their space.
   Ids don't change. Takes as long as building the index and needs disk for a second copy.
+  Deletes cost speed, not recall: with half the vectors deleted, searches ran at about 70% of
+  their speed, so compacting once `deleted_count()` nears `len()` is a good rule. The file
+  shrinks by whole segments, which double as an index grows, so only when the live vectors fit in
+  fewer of them.
 
 - **`close() -> None`**  
   Close the index and free resources. Adds and deletes since the last `flush()` are discarded, as
@@ -214,6 +232,9 @@ from the file; any number can search while one writer writes, in this process or
 - **`__len__() -> int`**  
   Get number of vectors in the index.
 
+- **`deleted_count() -> int`**  
+  Deleted vectors the file still holds, until `compact()` removes them.
+
 - **`is_empty() -> bool`**  
   Check if index is empty.
 
@@ -221,7 +242,7 @@ from the file; any number can search while one writer writes, in this process or
 
 - **`dimensions: int`** - Number of dimensions per vector
 - **`metric: str`** - `"euclidean"` or `"cosine"`, as the index was created; opening with
-  `read_only=True` and explicit `options` naming another raises `ChassisError`
+  `read_only=True` and explicit `options` naming another raises `OptionsMismatchError`
 - **`precision: str`** - `"full"` or `"half"`, as the index was created
 - **`path: Path`** - Path to the index file
 - **`options: IndexOptions`** - HNSW configuration
@@ -281,7 +302,7 @@ at a time and searches wait for them. Don't call `close()` while other threads s
 
 Other processes can search the file while one process writes it: open it with
 `VectorIndex(path, dimensions, read_only=True)`. Such an index takes no lock, sees the writer's
-newest `flush()` on every search, runs one search at a time, and raises `ChassisError` on writes.
+newest `flush()` on every search, runs one search at a time, and raises `ReadOnlyError` on writes.
 A flush becomes visible just before its final fsync, so one that then fails, or is lost to power
 loss, may already have been seen.
 
@@ -339,6 +360,7 @@ python your_script.py
 ## Examples
 
 See the `examples/` directory for complete examples:
+- `notes_search.py` - Notes in SQLite, their vectors in Chassis: search, "more like this", deletes
 - `basic_usage.py` - Simple add and search
 - `batch_insert.py` - Efficient bulk loading
 
@@ -349,10 +371,10 @@ See the `examples/` directory for complete examples:
 pytest
 
 # Run with coverage
-pytest --cov=chassis --cov-report=html
+pytest --cov=chassisdb --cov-report=html
 
-# Run specific test
-pytest tests/test_index.py::test_add_and_search
+# Run specific tests
+pytest tests/test_index.py -k delete
 ```
 
 ## License

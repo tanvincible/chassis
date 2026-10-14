@@ -1,12 +1,12 @@
 [package]
-name = "chassis-core"
+name = "chassisdb"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The core of Chassis, an embedded vector index for local semantic search."
+description = "Chassis: an embedded vector index for local semantic search, in one file."
 
 [dependencies]
 anyhow = { workspace = true }
@@ -55,4 +55,4 @@ harness = false
 criterion = { workspace = true }
 tempfile = { workspace = true }
 trybuild = { workspace = true }
-chassis-core = { path = ".", features = ["internals"] }
+chassisdb = { path = ".", features = ["internals"] }

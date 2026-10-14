@@ -5,20 +5,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.8.0...HEAD)
 
-## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 13 October 2026
+## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 
-Bug fixes. Two of them change behaviour, which is why this is 0.8. The file format doesn't change.
+One name everywhere: `chassisdb` is the crate, the Python package and its import. Look up vectors
+and ids, and leave ids out of a search, in Rust, C and Python. Two new packages: `chassisdb-mcp`,
+long-term memory for agents as an MCP server, and `langchain-chassisdb`, a LangChain vector
+store. The file format doesn't change.
 
 ### Breaking
 
+- The Rust crate is `chassisdb`, not `chassis-core`: in Cargo.toml, `chassisdb = "0.8"`, and in
+  code, `use chassisdb::...` (#62).
+- Python imports `chassisdb`, as it is installed. `import chassis` no longer works: PyPI's
+  `chassis` is another project (#62).
 - In Rust, a search with `k` = 0 returns an `InvalidArgument` error instead of an empty list, as
   C and Python already did (#59).
 - In Python, a `with` block flushes when it ends without an exception, so its adds and deletes
   are kept (#59). `close()`, and dropping an index in Rust or C, still discard what wasn't
   flushed, as a crash would; the docs now say so.
+- In Python, a read-only index's `options` report the file's metric and precision, and options
+  that name another precision raise `OptionsMismatchError`, as another metric already did (#64).
 
 ### Added
 
+- Look up a vector or an id, on the writer and on readers: `get(id)`, `contains(id)`, `ids()` and
+  `deleted_count()` in Rust; `chassis_get`, `chassis_contains`, `chassis_ids` and
+  `chassis_deleted_count` in C; `get(id)`, `id in index`, `ids()` and `deleted_count()` in
+  Python (#61).
+- Leave ids out of a search: `search(..., excluded=...)` in Python and `chassis_search_excluding`
+  in C, so "more like this" can skip the vector it starts from (#61).
+- The Python package installs on Python 3.11 and numpy 1.26 or later, instead of 3.13 and
+  numpy 2.4 (#62).
+- `chassisdb-mcp`: long-term memory for agents, as an MCP server and a command line, with the
+  embedding model you pick (#65).
+- `langchain-chassisdb`: a LangChain vector store on Chassis (#68).
+- For coding agents: a Claude Code plugin with a skill, Cursor rules, `llms.txt`,
+  `llms-full.txt` and a one-page API reference (#64).
 - C names the metrics and precisions: `CHASSIS_METRIC_EUCLIDEAN`, `CHASSIS_METRIC_COSINE`,
   `CHASSIS_PRECISION_FULL`, `CHASSIS_PRECISION_HALF` (#59).
 
@@ -26,6 +48,13 @@ Bug fixes. Two of them change behaviour, which is why this is 0.8. The file form
 
 - Opening an index with another `max_connections` is an `OptionsMismatch` error that names both
   values, instead of an `Other` error that printed internal structs (#59).
+- The error for a file with no valid header names the file (#64).
+- On Windows, errors name the index's path as it was given, not its `\\?\` form (#64).
+- On macOS, the C library's install name is `@rpath/libchassis_ffi.dylib`, so a program linked
+  with `-rpath` finds it (#64).
+- In Python, id lists that mix ids of 2\*\*63 and more with smaller ones are accepted; one id
+  given as `excluded` or `allowed`, or `None` as a query, says what to pass instead (#64).
+- The Python wheels carry the license files (#64).
 - No compiler warnings when Chassis is built as a dependency (#59).
 
 ## [v0.7.2](https://github.com/tanvincible/chassis/compare/v0.7.1...v0.7.2) - 11 October 2026

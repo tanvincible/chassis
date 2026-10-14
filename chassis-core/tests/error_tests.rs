@@ -1,11 +1,11 @@
 //! Each mistake gets an error of its kind, with the value that was wrong and a line starting
 //! "help:" that says what to do instead (ADR-0020).
 
-use chassis_core::{DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, VectorIndex};
+use chassisdb::{DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, VectorIndex};
 use tempfile::tempdir;
 
 #[track_caller]
-fn says(result: chassis_core::Result<impl std::fmt::Debug>, kind: ErrorKind, words: &str) {
+fn says(result: chassisdb::Result<impl std::fmt::Debug>, kind: ErrorKind, words: &str) {
     let error = result.unwrap_err();
     let message = error.to_string();
     assert_eq!(error.kind(), kind, "{message}");
@@ -67,6 +67,13 @@ fn test_a_mistake_says_what_was_wrong_and_what_to_do() {
         "not a Chassis index",
     );
     assert_eq!(std::fs::read_to_string(&text).unwrap(), "not an index");
+    // Long enough to hold headers, but with no valid one: both openers name the file.
+    let zeros = dir.path().join("zeros.chassis");
+    std::fs::write(&zeros, vec![0u8; 256 * 1024]).unwrap();
+    let named = format!("{} has no valid Chassis header", zeros.display());
+    says(VectorIndex::open(&zeros, 4, IndexOptions::default()), ErrorKind::NotAnIndex, &named);
+    says(IndexReader::open(&zeros, 4, IndexOptions::default()), ErrorKind::NotAnIndex, &named);
+    assert!(std::fs::read(&zeros).unwrap().iter().all(|&b| b == 0), "left as it was");
     says(
         VectorIndex::open(dir.path().join("new.chassis"), 0, IndexOptions::default()),
         ErrorKind::InvalidArgument,
@@ -101,7 +108,7 @@ fn test_an_error_goes_into_anyhow_with_its_message() {
     let error = open(&dir.path().join("x.chassis")).unwrap_err();
     assert!(error.to_string().starts_with("dimensions is 0"));
     assert_eq!(
-        error.downcast_ref::<chassis_core::Error>().unwrap().kind(),
+        error.downcast_ref::<chassisdb::Error>().unwrap().kind(),
         ErrorKind::InvalidArgument
     );
     // And into a boxed std error.

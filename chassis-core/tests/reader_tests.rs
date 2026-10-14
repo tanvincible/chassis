@@ -1,7 +1,7 @@
 //! Readers searching a file a writer is changing (ADR-0008, decision 5). Readers take no lock, so
 //! most tests run the writer and the reader in one process; one runs the writer in a child.
 
-use chassis_core::{IndexOptions, IndexReader, VectorIndex};
+use chassisdb::{IndexOptions, IndexReader, VectorIndex};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -57,6 +57,35 @@ fn test_reader_sees_only_committed_adds_and_deletes() {
     assert_eq!(top(&mut reader, 150), 150);
     assert!(reader.search(&vector(5), 10).unwrap().iter().all(|hit| hit.id != 5));
     assert_eq!(reader.len(), 199);
+}
+
+#[test]
+fn test_reader_looks_up_ids_given_again_after_a_delete() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.chassis");
+    let mut writer = VectorIndex::open(&path, DIMS, options()).unwrap();
+    for id in [10, 20, 30] {
+        writer.add_with_id(id, &vector(id)).unwrap();
+    }
+    writer.flush().unwrap();
+    let mut reader = IndexReader::open(&path, DIMS, options()).unwrap();
+    assert_eq!(reader.get(20).unwrap(), Some(vector(20)));
+
+    // Id 20 moves to a later slot: both readers, one that had mapped the old slot and a new one,
+    // must find it there, and neither may see what isn't flushed.
+    writer.delete(20).unwrap();
+    writer.add_with_id(20, &vector(99)).unwrap();
+    writer.add_with_id(40, &vector(40)).unwrap();
+    assert_eq!(reader.get(20).unwrap(), Some(vector(20)));
+    assert!(!reader.contains(40).unwrap());
+    writer.flush().unwrap();
+    let mut fresh = IndexReader::open(&path, DIMS, options()).unwrap();
+    for reader in [&mut reader, &mut fresh] {
+        assert_eq!(reader.get(20).unwrap(), Some(vector(99)));
+        assert_eq!(reader.ids().unwrap(), [10, 30, 20, 40]);
+        assert_eq!(reader.deleted_count(), 1);
+        assert_eq!(reader.get(u64::MAX - 1).unwrap(), None);
+    }
 }
 
 #[test]
@@ -289,7 +318,7 @@ fn test_a_newer_write_version_is_read_only() {
     for copy in [0, 64 * 1024] {
         let header = &mut bytes[copy..copy + 64 * 1024];
         let len = u32::from_le_bytes(header[32..36].try_into().unwrap()) as usize;
-        header[12..16].copy_from_slice(&(chassis_core::VERSION + 1).to_le_bytes());
+        header[12..16].copy_from_slice(&(chassisdb::VERSION + 1).to_le_bytes());
         // Longer than any header this release writes.
         let extended = len + 10_000;
         header[len..extended].fill(0xab);

@@ -3,7 +3,7 @@
 //!
 //! If this code compiles, there is a bug in the API design.
 
-use chassis_core::Storage;
+use chassisdb::Storage;
 
 fn get_first_slice(storage: &Storage) -> &[f32] {
     storage.get_vector_slice(0).unwrap()

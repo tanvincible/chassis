@@ -1,4 +1,4 @@
-use chassis_core::Storage;
+use chassisdb::Storage;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::fs;
 use std::hint::black_box;

@@ -7,7 +7,7 @@ This guide will walk you through creating an index, adding vectors, and performi
 The `VectorIndex` is the main entry point. You must specify the dimensionality of your vectors when creating the index. This dimension is immutable for the life of the file.
 
 ```python
-from chassis import VectorIndex
+from chassisdb import VectorIndex
 
 # Opens 'data.chassis'. If it doesn't exist, it is created.
 # If it exists, it is opened and dimensions are validated.
@@ -57,6 +57,8 @@ for res in results:
 It is best practice to use the `with` statement to ensure resources are closed properly.
 
 ```python
+index.close()  # One writer per file: close the index from step 1 first
+
 with VectorIndex("data.chassis", dimensions=768) as index:
     index.add(vec)
     index.flush()

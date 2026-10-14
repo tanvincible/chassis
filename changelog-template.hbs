@@ -23,23 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
   {{/if}}
 
   {{!-- Categorized individual commits --}}
-  {{#commit-list commits heading="### Breaking" message="^[a-z]+!: "}}
+  {{#commit-list commits heading="### Breaking" message="^[a-z]+(\(.+\))?!: "}}
     - {{subject}} ([{{shorthash}}]({{href}}))
   {{/commit-list}}
 
-  {{#commit-list commits heading="### Added" message="^feat: "}}
+  {{#commit-list commits heading="### Added" message="^feat(\(.+\))?: "}}
     - {{subject}} ([{{shorthash}}]({{href}}))
   {{/commit-list}}
 
-  {{#commit-list commits heading="### Fixed" message="^fix: "}}
+  {{#commit-list commits heading="### Fixed" message="^fix(\(.+\))?: "}}
     - {{subject}} ([{{shorthash}}]({{href}}))
   {{/commit-list}}
 
-  {{#commit-list commits heading="### Infrastructure" message="^(build|ci): "}}
+  {{#commit-list commits heading="### Infrastructure" message="^(build|ci)(\(.+\))?: "}}
     - {{subject}} ([{{shorthash}}]({{href}}))
   {{/commit-list}}
 
-  {{#commit-list commits heading="### Performance" message="^perf: "}}
+  {{#commit-list commits heading="### Performance" message="^perf(\(.+\))?: "}}
     - {{subject}} ([{{shorthash}}]({{href}}))
   {{/commit-list}}
 

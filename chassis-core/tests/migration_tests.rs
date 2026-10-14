@@ -1,8 +1,6 @@
 //! Opening a format v1 or v2 file migrates it to v3 (ADR-0008, decision 8).
 
-use chassis_core::{
-    DistanceMetric, IndexOptions, MAGIC, NodeRecord, NodeRecordParams, VectorIndex,
-};
+use chassisdb::{DistanceMetric, IndexOptions, MAGIC, NodeRecord, NodeRecordParams, VectorIndex};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use tempfile::tempdir;

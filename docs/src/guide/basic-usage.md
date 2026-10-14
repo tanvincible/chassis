@@ -10,7 +10,7 @@ Using Chassis involves three steps:
 ## 1. Initialization
 
 ```rust
-use chassis_core::{VectorIndex, IndexOptions};
+use chassisdb::{VectorIndex, IndexOptions};
 
 let options = IndexOptions {
     max_connections: 16,
@@ -24,7 +24,9 @@ let mut index = VectorIndex::open("./data.chassis", 1536, options)?;
 
 ## 2. Insertion
 
-Chassis assigns a sequential ID (`u64`) to every vector you add. You should store this ID in your external database (e.g., SQLite/Postgres) to map it back to your application data.
+Every vector has an id (`u64`). `add` gives the next one; to file a vector under the id your
+application already has for it, such as a database row's, use `add_with_id`, and keep the rest of
+the data under that id where it already lives.
 
 ```rust
 let embedding = compute_embedding("Example text"); // [f32; 1536]
@@ -41,8 +43,9 @@ would. To store vectors under your application's own ids instead, use `add_with_
 
 ## 3. Search
 
-`search` takes `&self`, so many threads can search one `VectorIndex` at once; `add`, `delete` and
-`flush` take `&mut self`, so they wait for those searches. To search while it writes, open an
+`search` takes `&self`, so many threads can search one `VectorIndex` at once, as in an
+`Arc<RwLock<VectorIndex>>` where searches take the read lock and `add`, `delete` and `flush`, which
+take `&mut self`, the write lock. To search while it writes, open an
 `IndexReader` on the same file, in another thread or another process: it sees what the writer's
 last `flush()` committed.
 

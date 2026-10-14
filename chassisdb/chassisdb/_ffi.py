@@ -8,7 +8,10 @@ import ctypes
 import os
 import platform
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from chassisdb.exceptions import ChassisError
 
 
 # Determine library name based on platform
@@ -54,7 +57,7 @@ def _find_library() -> Path:
     if lib_path.exists():
         return lib_path
 
-    # 3. Development location (../../target/release from chassis/)
+    # 3. Development location (../../target/release from chassisdb/)
     dev_path = this_dir.parent.parent / "target" / "release" / lib_name
     if dev_path.exists():
         return dev_path
@@ -203,6 +206,19 @@ _lib.chassis_search_filtered.argtypes = [
 ]
 _lib.chassis_search_filtered.restype = ctypes.c_size_t
 
+# chassis_search_excluding
+_lib.chassis_search_excluding.argtypes = [
+    ChassisIndexPtr,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_uint64),  # excluded_ids
+    ctypes.c_size_t,  # excluded_len
+    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.POINTER(ctypes.c_float),
+]
+_lib.chassis_search_excluding.restype = ctypes.c_size_t
+
 # chassis_search_batch
 _lib.chassis_search_batch.argtypes = [
     ChassisIndexPtr,
@@ -230,6 +246,27 @@ _lib.chassis_use_huge_pages.restype = ctypes.c_int
 # chassis_warm
 _lib.chassis_warm.argtypes = [ChassisIndexPtr]
 _lib.chassis_warm.restype = ctypes.c_int
+
+# chassis_get
+_lib.chassis_get.argtypes = [
+    ChassisIndexPtr,
+    ctypes.c_uint64,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+]
+_lib.chassis_get.restype = ctypes.c_int
+
+# chassis_contains
+_lib.chassis_contains.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
+_lib.chassis_contains.restype = ctypes.c_int
+
+# chassis_ids
+_lib.chassis_ids.argtypes = [ChassisIndexPtr, ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t]
+_lib.chassis_ids.restype = ctypes.c_size_t
+
+# chassis_deleted_count
+_lib.chassis_deleted_count.argtypes = [ChassisIndexPtr]
+_lib.chassis_deleted_count.restype = ctypes.c_uint64
 
 # chassis_len
 _lib.chassis_len.argtypes = [ChassisIndexPtr]
@@ -267,21 +304,21 @@ _lib.chassis_version.restype = ctypes.c_char_p
 # Helper functions
 
 
-def get_last_error() -> Optional[str]:
+def get_last_error() -> str | None:
     """Get the last error message from the Chassis library.
 
     Returns:
         Error message string, or None if no error
     """
-    err_ptr = _lib.chassis_last_error_message()
+    err_ptr: bytes | None = _lib.chassis_last_error_message()
     if err_ptr:
         return err_ptr.decode("utf-8")
     return None
 
 
-def last_error(default: str):
+def last_error(default: str) -> "ChassisError":
     """The exception for the last error on this thread, of the class its code names."""
-    from chassis.exceptions import from_code
+    from chassisdb.exceptions import from_code
 
     return from_code(_lib.chassis_last_error_code(), get_last_error() or default)
 
@@ -292,7 +329,7 @@ def get_version() -> str:
     Returns:
         Version string (e.g., "0.1.0")
     """
-    version_ptr = _lib.chassis_version()
+    version_ptr: bytes = _lib.chassis_version()
     return version_ptr.decode("utf-8")
 
 

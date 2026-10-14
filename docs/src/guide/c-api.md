@@ -30,6 +30,7 @@ The C header is automatically generated at `include/chassis.h`.
 
 ```c
 #include "chassis.h"
+#include <inttypes.h>
 #include <stdio.h>
 
 int main(void) {
@@ -63,7 +64,7 @@ int main(void) {
     
     size_t count = chassis_search(index, query, 768, 10, ids, distances);
     for (size_t i = 0; i < count; i++) {
-        printf("ID: %llu, Distance: %f\n", ids[i], distances[i]);
+        printf("ID: %" PRIu64 ", Distance: %f\n", ids[i], distances[i]);
     }
     
     // Clean up
@@ -75,21 +76,13 @@ int main(void) {
 ### Compilation
 
 ```bash
-# Linux
-gcc -o myapp myapp.c -L./target/release -lchassis_ffi -lm
-
-# Run (Linux)
-LD_LIBRARY_PATH=./target/release ./myapp
-# Or link with -Wl,-rpath,$PWD/target/release to run without LD_LIBRARY_PATH
-
-# macOS
-gcc -o myapp myapp.c -L./target/release -lchassis_ffi
-
-# Run (macOS)
-DYLD_LIBRARY_PATH=./target/release ./myapp
+# Linux and macOS, from the repository or an unpacked release
+cc -o myapp myapp.c -Ichassis-ffi/include -Ltarget/release -lchassis_ffi \
+  -Wl,-rpath,$PWD/target/release
+./myapp
 
 # Windows (MSVC)
-cl myapp.c /I include /link /LIBPATH:target\release chassis_ffi.lib
+cl myapp.c /I chassis-ffi\include /link /LIBPATH:target\release chassis_ffi.dll.lib
 ```
 
 ## API Reference
@@ -276,7 +269,8 @@ size_t chassis_search(
     float* out_dists
 );
 ```
-Search for k nearest neighbors. Returns number of results found.
+Search for k nearest neighbors. Returns how many results were written, or `0` on error, which
+`chassis_last_error_code()` tells apart from an index with nothing to return.
 
 **Thread Safety**: Safe from any thread; runs concurrently with other searches
 
@@ -296,6 +290,23 @@ size_t chassis_search_filtered(
 Like `chassis_search`, returning only vectors whose id is in `allowed_ids`. Ids not in the index
 are ignored; an empty list matches nothing. When walking the graph would cost more, as when few
 vectors match, every vector is checked instead and the results are exact.
+
+#### `chassis_search_excluding`
+```c
+size_t chassis_search_excluding(
+    const ChassisIndex* index,
+    const float* query,
+    size_t len,
+    size_t k,
+    const uint64_t* excluded_ids,
+    size_t excluded_len,
+    uint64_t* out_ids,
+    float* out_dists
+);
+```
+Like `chassis_search`, never returning a vector whose id is in `excluded_ids`, as "more like this"
+leaves out the vector it starts from (see `chassis_get`). Ids not in the index are ignored; an
+empty list leaves out nothing.
 
 #### `chassis_search_batch`
 ```c
@@ -346,6 +357,44 @@ readers in other processes keep searching
 uint64_t chassis_len(const ChassisIndex* index);
 ```
 Get number of vectors in the index.
+
+#### `chassis_get`
+```c
+int chassis_get(const ChassisIndex* index, uint64_t id, float* out, size_t len);
+```
+Copy the vector with `id` into `out`, which has space for `len` floats: the index's dimensions.
+Returns `1` if a live vector has `id`, `0` if none has, `-1` on error. The vector comes back as the
+index keeps it: scaled to length 1 in a cosine index, and rounded in half precision.
+
+#### `chassis_contains`
+```c
+int chassis_contains(const ChassisIndex* index, uint64_t id);
+```
+Returns `1` if a live vector has `id`, `0` if none has, `-1` on error.
+
+#### `chassis_ids`
+```c
+size_t chassis_ids(const ChassisIndex* index, uint64_t* out, size_t cap);
+```
+Copy the ids of the live vectors into `out`, in the order they were added, and return how many
+there are. Only the first `cap` are written, so if the return is more than `cap`, call again with
+more space; a reader can see a newer flush than a `chassis_len` just before. Returns `0` on error,
+as for an empty index, which sets no error.
+
+```c
+size_t cap = chassis_len(index), count;
+uint64_t* ids = NULL;
+do {
+    ids = realloc(ids, (cap ? cap : 1) * sizeof *ids);
+    count = chassis_ids(index, ids, cap);
+} while (count > cap && (cap = count));
+```
+
+#### `chassis_deleted_count`
+```c
+uint64_t chassis_deleted_count(const ChassisIndex* index);
+```
+Deleted vectors the file still holds, until `chassis_compact` removes them.
 
 #### `chassis_is_empty`
 ```c

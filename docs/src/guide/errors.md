@@ -60,7 +60,7 @@ vectors of other dimensions than it was opened with. The usual cause is a vector
 embedding model than the index's.
 
 - **Python, a 2-D array** where one vector belongs: `vector[0]` or `vector.ravel()` for one row,
-  `add_batch` to add several, and one `search` call per query.
+  `add_batch` to add several, and `search_batch` to search several.
 - **A batch** is its vectors back to back, `dimensions` floats each: a `(count, dimensions)`
   array in Python, `dim` equal to the index's in C.
 
@@ -83,7 +83,7 @@ to create a new index, give a path where no file exists yet.
 
 ## Id in use
 
-`add_with_id` (or `ids` in Python) gave an id that a live vector already has. Delete that vector
+`add_with_id` (`add(..., id=)` or `add_batch(..., ids=)` in Python) gave an id that a live vector already has. Delete that vector
 first to replace it, or use another id. Within one batch, ids have to differ.
 
 ## Locked

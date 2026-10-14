@@ -17,6 +17,11 @@ fn main() {
         .expect("Unable to generate C bindings")
         .write_to_file(&output_file);
 
+    // On macOS a program finds the library through its rpath, wherever the library was built.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-install_name,@rpath/libchassis_ffi.dylib");
+    }
+
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=cbindgen.toml");
 }

@@ -1,4 +1,4 @@
-use chassis_core::Storage;
+use chassisdb::Storage;
 use std::f32::consts::PI;
 use tempfile::NamedTempFile;
 

@@ -656,7 +656,7 @@ impl Storage {
             return Err(not_an_index(path));
         }
         let headers = Region::map(&file, 0, REGIONS_START as usize, false)?;
-        let (header, _) = newest_header(&headers)?;
+        let (header, _) = newest_header(&headers, Some(path))?;
         if header.dims != dimensions {
             return Err(dimension_mismatch(path, header.dims, dimensions));
         }
@@ -819,6 +819,9 @@ impl Storage {
     fn load(file: File, headers: Region, dims: u32, path: &Path) -> Result<Self> {
         let a = FileHeader::from_bytes(headers.bytes(0, HEADER_STRIDE))?;
         let b = FileHeader::from_bytes(headers.bytes(HEADER_STRIDE, HEADER_STRIDE))?;
+        if a.is_none() && b.is_none() {
+            return Err(no_header(path));
+        }
         let (copy, header) = FileHeader::newest(a, b)?;
         if header.write_version > crate::header::VERSION {
             bail!(
@@ -1003,7 +1006,7 @@ impl Storage {
         // copy's changed since both were last valid, no commit has finished: the header stands.
         let words = HEADER_WORDS.map(|at| self.headers.u64_at(at).load(Ordering::Relaxed));
         if self.header_words != Some(words) {
-            let (header, both_valid) = newest_header(&self.headers)?;
+            let (header, both_valid) = newest_header(&self.headers, None)?;
             self.header_words = both_valid;
             if header.sequence >= self.sequence {
                 self.sequence = header.sequence;
@@ -1806,8 +1809,8 @@ const HEADER_WORDS: [usize; 4] = [16, 24, HEADER_STRIDE + 16, HEADER_STRIDE + 24
 
 /// The newest valid header copy, plus `HEADER_WORDS` if both copies were valid. A copy the writer
 /// is rewriting fails its checksum, so it is read again while it keeps changing, a bounded number
-/// of times; one that reads the same twice is torn.
-fn newest_header(headers: &Region) -> Result<(FileHeader, Option<[u64; 4]>)> {
+/// of times; one that reads the same twice is torn. `path` names the file in an error.
+fn newest_header(headers: &Region, path: Option<&Path>) -> Result<(FileHeader, Option<[u64; 4]>)> {
     let copy = |at: usize| -> Vec<u8> {
         let len = (headers.u64_at(at + 32).load(Ordering::Relaxed) as u32 as usize)
             .clamp(136, HEADER_STRIDE)
@@ -1829,6 +1832,9 @@ fn newest_header(headers: &Region) -> Result<(FileHeader, Option<[u64; 4]>)> {
                 };
                 HEADER_WORDS.map(word)
             });
+            if let (None, None, Some(path)) = (&a, &b, path) {
+                return Err(no_header(path));
+            }
             return FileHeader::newest(a, b).map(|(_, header)| (header, both_valid));
         }
         previous = Some(bytes);
@@ -1891,6 +1897,18 @@ fn open_failed(path: &Path, e: std::io::Error, for_writing: bool) -> anyhow::Err
         ),
     };
     raised(kind, message)
+}
+
+fn no_header(path: &Path) -> anyhow::Error {
+    raised(
+        ErrorKind::NotAnIndex,
+        format!(
+            "{} has no valid Chassis header: it isn't a Chassis index, or both copies of its \
+             header are damaged\nhelp: check the path; if it was an index, restore it from a \
+             backup or rebuild it from its vectors",
+            path.display()
+        ),
+    )
 }
 
 fn not_an_index(path: &Path) -> anyhow::Error {

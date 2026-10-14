@@ -2,7 +2,7 @@
 //!
 //! Process death only: a kill keeps the page cache, so this can't see fsync order or power loss.
 
-use chassis_core::{IndexOptions, Storage, VectorIndex};
+use chassisdb::{IndexOptions, Storage, VectorIndex};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -33,10 +33,10 @@ fn live_after(batches: u64) -> u64 {
 
 /// Opens the index once its lock is free. A process another test forks holds a copy of every
 /// open handle until it execs, and with it the lock of an index this test has just closed.
-fn unlocked<T>(open: impl Fn() -> chassis_core::Result<T>) -> T {
+fn unlocked<T>(open: impl Fn() -> chassisdb::Result<T>) -> T {
     for _ in 0..400 {
         match open() {
-            Err(e) if e.kind() == chassis_core::ErrorKind::Locked => {
+            Err(e) if e.kind() == chassisdb::ErrorKind::Locked => {
                 std::thread::sleep(Duration::from_millis(5));
             }
             opened => return opened.unwrap(),
@@ -130,7 +130,7 @@ fn crash_writer() {
         index.flush().unwrap();
         batch += 1;
         println!("flushed {batch}");
-        if compact && batch % 2 == 0 {
+        if compact {
             println!("compacting");
             index.compact().unwrap();
         }
@@ -148,8 +148,8 @@ fn test_kill_during_parallel_batches_keeps_flushed_data() {
     kill_at_random_points(true, false);
 }
 
-/// The same, compacting after every second flush, so kills land while the copy is built, flagged
-/// and renamed. Compaction changes no vector or id, so every check on them still holds.
+/// The same, compacting after every flush, so kills land while the copy is built, flagged and
+/// renamed. Compaction changes no vector or id, so every check on them still holds.
 #[test]
 fn test_kill_during_compaction_keeps_flushed_data() {
     kill_at_random_points(false, true);

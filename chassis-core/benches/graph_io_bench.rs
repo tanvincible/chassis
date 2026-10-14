@@ -2,8 +2,8 @@
 //!
 //! Focus: persistence overhead, mmap-based access, and allocation-free hot paths.
 
-use chassis_core::Storage;
-use chassis_core::{HnswGraph, HnswParams, NodeId, NodeRecord};
+use chassisdb::Storage;
+use chassisdb::{HnswGraph, HnswParams, NodeId, NodeRecord};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use tempfile::NamedTempFile;

@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use chassis_core::{VectorIndex, IndexOptions};
+//! use chassisdb::{VectorIndex, IndexOptions};
 //!
 //! # fn main() -> anyhow::Result<()> {
 //! // Open or create an index
@@ -71,6 +71,9 @@ pub use header::{MAGIC, VERSION};
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
+#[cfg(all(doctest, chassis_skill))]
+#[doc = include_str!("../../plugins/chassis/skills/chassis/SKILL.md")]
+struct SkillDoctests;
 pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
 pub use storage::Storage;
 
@@ -78,6 +81,7 @@ use error::fail;
 use hnsw::layer_from_uniform;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// Configuration options for VectorIndex
 #[derive(Debug, Clone)]
@@ -143,11 +147,11 @@ pub struct VectorIndex {
     /// Layer multiplier cache: 1.0 / ln(M)
     ml: f32,
 
-    /// id → slot, built on first use once some id differs from its slot (ADR-0007)
-    ids: Option<IdMap>,
+    /// Built on first use once some id differs from its slot (ADR-0007)
+    ids: OnceLock<IdTable>,
 
-    /// One past the largest id ever stored, valid once `ids` is built
-    next_id: u64,
+    /// Held while the id table is built, so threads looking up ids at once build it once
+    building: Mutex<()>,
 
     /// Where the index file is, for `compact` to replace it
     path: PathBuf,
@@ -175,8 +179,12 @@ impl VectorIndex {
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
         let params = hnsw_params(&options);
         // Compaction and migration rename a new file over this one: through a symlink that would
-        // replace the link and leave the file it points to behind.
-        let path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.as_ref().to_path_buf());
+        // replace the link and leave the file it points to behind. Only links are resolved, so
+        // errors name the path as given (on Windows a canonical one starts `\\?\`).
+        let mut path = path.as_ref().to_path_buf();
+        if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
+            path = std::fs::canonicalize(&path).unwrap_or(path);
+        }
         let storage = Storage::open_with_precision(
             &path,
             dims,
@@ -208,7 +216,8 @@ impl VectorIndex {
         let graph = HnswGraph::open_no_reset(storage, params)?;
         // This is the one writer, so no compaction is running: a copy here is a crashed one's.
         let _ = std::fs::remove_file(storage::sibling(&path, "compacting"));
-        let mut index = Self { graph, ml: params.ml, options, ids: None, next_id: 0, path };
+        let (ids, building) = (OnceLock::new(), Mutex::new(()));
+        let mut index = Self { graph, ml: params.ml, options, ids, building, path };
         if index.options.huge_pages {
             index.use_huge_pages();
         }
@@ -240,12 +249,8 @@ impl VectorIndex {
 
     /// The ids `add` gives the next `count` vectors. `u64::MAX` is reserved, so they can run out.
     fn next_ids(&mut self, count: u64) -> Result<std::ops::Range<u64>> {
-        let first = if self.graph.custom_ids {
-            self.ids()?;
-            self.next_id
-        } else {
-            self.graph.node_count()
-        };
+        let first =
+            if self.graph.custom_ids { self.id_table()?.next } else { self.graph.node_count() };
         match first.checked_add(count) {
             Some(end) => Ok(first..end),
             None => {
@@ -275,11 +280,15 @@ impl VectorIndex {
                  another id"
             );
         }
-        if !self.graph.custom_ids && id != self.graph.node_count() {
-            self.ids()?;
-            self.graph.custom_ids = true;
+        // Ids differ from slots from here on, but only once the vector is in: a refused one
+        // mustn't leave the file paying for an id table.
+        let switch = !self.graph.custom_ids && id != self.graph.node_count();
+        if switch {
+            self.id_table()?;
         }
-        self.insert(id, vector)
+        self.insert(id, vector)?;
+        self.graph.custom_ids |= switch;
+        Ok(())
     }
 
     /// Add many vectors at once, given back to back, `dims` floats each, and return their ids,
@@ -333,11 +342,14 @@ impl VectorIndex {
             }
         }
         let first = self.graph.node_count();
-        if !self.graph.custom_ids && ids.iter().zip(first..).any(|(&id, slot)| id != slot) {
-            self.ids()?;
-            self.graph.custom_ids = true;
+        let switch =
+            !self.graph.custom_ids && ids.iter().zip(first..).any(|(&id, slot)| id != slot);
+        if switch {
+            self.id_table()?;
         }
-        self.insert_batch(ids, vectors)
+        self.insert_batch(ids, vectors)?;
+        self.graph.custom_ids |= switch;
+        Ok(())
     }
 
     fn dims(&self) -> usize {
@@ -395,10 +407,10 @@ impl VectorIndex {
             return Err(e.into());
         }
         self.graph.storage.publish_routing(self.graph.node_count);
-        if let Some(map) = &mut self.ids {
-            map.extend(ids.iter().copied().zip(first..));
+        if let Some(table) = self.ids.get_mut() {
+            table.slots.extend(ids.iter().copied().zip(first..));
+            table.next = table.next.max(ids.iter().max().map_or(0, |&id| id + 1));
         }
-        self.next_id = self.next_id.max(ids.iter().max().map_or(0, |&id| id + 1));
         Ok(())
     }
 
@@ -443,44 +455,48 @@ impl VectorIndex {
             return Ok(false);
         };
         self.graph.mark_deleted(slot)?;
-        if let Some(ids) = &mut self.ids {
-            ids.remove(&id);
+        if let Some(table) = self.ids.get_mut() {
+            table.slots.remove(&id);
         }
         Ok(true)
     }
 
     /// Slot of the live vector with `id`.
-    fn slot_of(&mut self, id: u64) -> Result<Option<u64>> {
+    fn slot_of(&self, id: u64) -> Result<Option<u64>> {
         if !self.graph.custom_ids {
             let live = id < self.graph.node_count() && !self.graph.is_deleted(id)?;
             return Ok(live.then_some(id));
         }
-        Ok(self.ids()?.get(&id).copied())
+        Ok(self.id_table()?.slots.get(&id).copied())
     }
 
-    /// The id → slot table of live vectors, built by one scan of the graph on first use.
+    /// The id table, built by one scan of the graph on first use.
     // ponytail: O(n) scan once per process when custom ids are in use; persist the table if
     // open-to-first-write latency on large indexes matters.
-    fn ids(&mut self) -> Result<&mut IdMap> {
-        if self.ids.is_none() {
-            let live = self.graph.node_count() - self.graph.deleted_count;
-            let mut pairs = Vec::with_capacity(live as usize);
-            // A compaction removed the deleted slots that showed which ids were used (ADR-0011).
-            let mut next_id = self.graph.storage.next_id();
-            for slot in 0..self.graph.node_count() {
-                let id = self.graph.id_of(slot)?;
-                next_id = next_id.max(id + 1);
-                if !self.graph.is_deleted(slot)? {
-                    pairs.push((id, slot));
-                }
-            }
-            // Filling from a Vec keeps the loop small enough to overlap the table's cache misses.
-            let mut ids = IdMap::with_capacity_and_hasher(pairs.len(), IdHasher::default());
-            ids.extend(pairs);
-            self.next_id = next_id;
-            self.ids = Some(ids);
+    fn id_table(&self) -> Result<&IdTable> {
+        if let Some(table) = self.ids.get() {
+            return Ok(table);
         }
-        Ok(self.ids.as_mut().expect("ids built above"))
+        // A panic while building leaves nothing half built: the table is set only once whole.
+        let _building = self.building.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(table) = self.ids.get() {
+            return Ok(table);
+        }
+        let live = self.graph.node_count() - self.graph.deleted_count;
+        let mut pairs = Vec::with_capacity(live as usize);
+        // A compaction removed the deleted slots that showed which ids were used (ADR-0011).
+        let mut next = self.graph.storage.next_id();
+        for slot in 0..self.graph.node_count() {
+            let id = self.graph.id_of(slot)?;
+            next = next.max(id + 1);
+            if !self.graph.is_deleted(slot)? {
+                pairs.push((id, slot));
+            }
+        }
+        // Filling from a Vec keeps the loop small enough to overlap the table's cache misses.
+        let mut slots = IdMap::with_capacity_and_hasher(pairs.len(), IdHasher::default());
+        slots.extend(pairs);
+        Ok(self.ids.get_or_init(|| IdTable { slots, next }))
     }
 
     fn insert(&mut self, id: u64, vector: &[f32]) -> Result<()> {
@@ -539,10 +555,10 @@ impl VectorIndex {
         // Node becomes visible to readers
         self.graph.publish_node(new_id, layer_count)?;
 
-        if let Some(ids) = &mut self.ids {
-            ids.insert(id, new_id);
+        if let Some(table) = self.ids.get_mut() {
+            table.slots.insert(id, new_id);
+            table.next = table.next.max(id + 1);
         }
-        self.next_id = self.next_id.max(id + 1);
         Ok(())
     }
 
@@ -633,10 +649,10 @@ impl VectorIndex {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
             _ => {}
         }
-        self.ids()?;
+        let next_id = self.id_table()?.next;
         let dims = self.dims();
         let mut fresh = Self::open(temp, dims as u32, self.options.clone())?;
-        fresh.ids()?;
+        fresh.id_table()?;
         let count = self.graph.node_count();
         // About 32 MiB of vectors at a time.
         let chunk = ((32 << 20) / (dims * 4)).max(1);
@@ -656,9 +672,9 @@ impl VectorIndex {
         }
         // The deleted slots showed which ids were used; without them the header has to, and
         // `add` must stop taking the slot number for the next id.
-        fresh.graph.custom_ids |= self.next_id != fresh.graph.node_count();
-        fresh.next_id = self.next_id;
-        fresh.graph.storage.carry_over(self.next_id, self.graph.storage.epoch() + 1);
+        fresh.graph.custom_ids |= next_id != fresh.graph.node_count();
+        fresh.ids.get_mut().expect("built above").next = next_id;
+        fresh.graph.storage.carry_over(next_id, self.graph.storage.epoch() + 1);
         fresh.flush()?;
         Ok(fresh)
     }
@@ -717,9 +733,45 @@ impl VectorIndex {
         self.graph.storage.warm();
     }
 
+    /// The vector with `id`, or `None` if no live vector has it. It comes back as the index keeps
+    /// it: scaled to length 1 in a cosine index, and rounded in half precision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index file cannot be read.
+    pub fn get(&self, id: u64) -> Result<Option<Vec<f32>>> {
+        let Some(slot) = self.slot_of(id)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.graph.storage.get_vector(slot)?))
+    }
+
+    /// Whether a live vector has `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index file cannot be read.
+    pub fn contains(&self, id: u64) -> Result<bool> {
+        Ok(self.slot_of(id)?.is_some())
+    }
+
+    /// The ids of the live vectors, in the order they were added.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index file cannot be read.
+    pub fn ids(&self) -> Result<Vec<u64>> {
+        live_ids(&self.graph)
+    }
+
     /// Get the number of live (not deleted) vectors in the index
     pub fn len(&self) -> u64 {
         self.graph.node_count() - self.graph.deleted_count
+    }
+
+    /// Deleted vectors the file still holds, until `compact` removes them.
+    pub fn deleted_count(&self) -> u64 {
+        self.graph.deleted_count
     }
 
     /// Check if the index is empty
@@ -752,6 +804,37 @@ impl VectorIndex {
 }
 
 type IdMap = HashMap<u64, u64, IdHasher>;
+
+struct IdTable {
+    /// id → slot of each live vector
+    slots: IdMap,
+    /// One past the largest id ever stored
+    next: u64,
+}
+
+/// A count, not every id: `{:?}` on an index shouldn't print millions of them.
+impl std::fmt::Debug for IdTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdTable").field("ids", &self.slots.len()).field("next", &self.next).finish()
+    }
+}
+
+/// A reader's id → slot map for the slots below `mapped`, extended as lookups need: a later slot
+/// replaces an earlier one with its id, since an id is given again only after its vector is deleted.
+#[derive(Default)]
+struct MappedIds {
+    slots: IdMap,
+    mapped: u64,
+}
+
+impl std::fmt::Debug for MappedIds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MappedIds")
+            .field("ids", &self.slots.len())
+            .field("mapped", &self.mapped)
+            .finish()
+    }
+}
 
 /// Hashes an id with one 64×64→128-bit multiply folded to 64 bits, keyed per table: ids are
 /// integers, so SipHash's byte-stream work buys nothing here.
@@ -839,6 +922,17 @@ fn search_graph(
     Ok(results)
 }
 
+/// Ids of the vectors a search of `graph` can return, in slot order.
+fn live_ids(graph: &HnswGraph) -> Result<Vec<u64>> {
+    let mut ids = Vec::new();
+    for slot in 0..graph.node_count() {
+        if !graph.is_deleted(slot)? {
+            ids.push(graph.id_of(slot)?);
+        }
+    }
+    Ok(ids)
+}
+
 /// Refuses a vector with a component that isn't a finite number: it would have no distance to
 /// anything. `what` names it in the message.
 fn check_finite(vector: &[f32], what: &str) -> Result<()> {
@@ -898,6 +992,7 @@ pub struct IndexReader {
     path: PathBuf,
     dims: u32,
     options: IndexOptions,
+    ids: Option<MappedIds>,
 }
 
 impl IndexReader {
@@ -912,7 +1007,8 @@ impl IndexReader {
         let path = path.as_ref().to_path_buf();
         let storage = Storage::open_read_only(&path, dims)?;
         let graph = HnswGraph::reader(storage, hnsw_params(&options))?;
-        let mut reader = Self { graph, ef_search: options.ef_search, path, dims, options };
+        let mut reader =
+            Self { graph, ef_search: options.ef_search, path, dims, options, ids: None };
         if reader.options.huge_pages {
             reader.use_huge_pages();
         }
@@ -982,7 +1078,7 @@ impl IndexReader {
         self.sync()
     }
 
-    /// Identifies the last snapshot: committed slots and the last delete flush. Two snapshots with
+    /// Identifies the last snapshot (see `len`): committed slots and the last delete flush. Two snapshots with
     /// the same value have the same contents, so it can key a cache of search results, unless a
     /// power loss discarded a flush readers had already seen.
     pub fn snapshot(&self) -> (u64, u64) {
@@ -1004,9 +1100,69 @@ impl IndexReader {
         self.graph.storage.warm();
     }
 
-    /// Live vectors as of the last snapshot, taken by `search` or `refresh`.
+    /// The committed vector with `id`, as `VectorIndex::get` returns it, or `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is corrupt.
+    pub fn get(&mut self, id: u64) -> Result<Option<Vec<f32>>> {
+        let Some(slot) = self.slot_of(id)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.graph.storage.get_vector(slot)?))
+    }
+
+    /// Whether a committed vector has `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is corrupt.
+    pub fn contains(&mut self, id: u64) -> Result<bool> {
+        Ok(self.slot_of(id)?.is_some())
+    }
+
+    /// The ids of the committed vectors, in the order they were added.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is corrupt.
+    pub fn ids(&mut self) -> Result<Vec<u64>> {
+        self.sync()?;
+        live_ids(&self.graph)
+    }
+
+    /// Slot of the vector with `id` in a new snapshot, if the snapshot has it.
+    fn slot_of(&mut self, id: u64) -> Result<Option<u64>> {
+        self.sync()?;
+        let graph = &self.graph;
+        let committed = graph.view.map_or(0, |view| view.committed);
+        let slot = if graph.custom_ids {
+            // ponytail: the first lookup maps every committed slot, O(n) once per snapshot file.
+            let ids = self.ids.get_or_insert_with(MappedIds::default);
+            ids.slots.reserve(committed.saturating_sub(ids.mapped) as usize);
+            for slot in ids.mapped..committed {
+                ids.slots.insert(graph.id_of(slot)?, slot);
+                ids.mapped = slot + 1;
+            }
+            ids.slots.get(&id).copied()
+        } else {
+            Some(id)
+        };
+        match slot {
+            Some(slot) if slot < committed && !graph.is_deleted(slot)? => Ok(Some(slot)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Live vectors as of the last snapshot. `search`, `get`, `contains`, `ids` and `refresh` each
+    /// take a new one, so a search's result can be gone by the `get` after it.
     pub fn len(&self) -> u64 {
         self.graph.view.map_or(0, |view| view.committed) - self.graph.deleted_count
+    }
+
+    /// Deleted vectors in the last snapshot that the file still holds; see `len`.
+    pub fn deleted_count(&self) -> u64 {
+        self.graph.deleted_count
     }
 
     /// Whether the last snapshot had no live vectors.

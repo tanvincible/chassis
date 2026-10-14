@@ -5,7 +5,7 @@
 //! A reopen that loses adds must leave the committed graph as the last flush left it (ADR-0012),
 //! so every check holds after one too.
 
-use chassis_core::{
+use chassisdb::{
     DistanceMetric, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
     cosine_distance, euclidean_distance,
 };
@@ -33,11 +33,13 @@ impl Rng {
     }
 }
 
-/// What the index should hold: live vectors by id, and one past the largest id ever used.
+/// What the index should hold: live vectors by id, one past the largest id ever used, and how
+/// many deleted vectors the file keeps.
 #[derive(Clone, Default)]
 struct State {
     live: BTreeMap<u64, Vec<f32>>,
     next_id: u64,
+    deleted: u64,
 }
 
 impl State {
@@ -116,6 +118,31 @@ impl Run {
                 r.id
             );
         }
+    }
+
+    /// `ids`, `contains`, `get` and `deleted_count` agree with `state`, asking about `id`.
+    fn check_lookups(
+        &self,
+        state: &State,
+        id: u64,
+        ids: Vec<u64>,
+        contains: bool,
+        got: Option<Vec<f32>>,
+        deleted: u64,
+    ) {
+        let mut ids = ids;
+        ids.sort_unstable();
+        assert!(ids.iter().eq(state.live.keys()), "{}: ids", self.at());
+        assert_eq!(contains, state.live.contains_key(&id), "{}: contains {id}", self.at());
+        match (got, state.live.get(&id)) {
+            (None, None) => {}
+            (Some(got), Some(want)) => {
+                let apart = self.distance(&got, want);
+                assert!(apart < self.tolerance(), "{}: get {id} is {apart} away", self.at());
+            }
+            (got, _) => panic!("{}: get {id} gave {got:?}", self.at()),
+        }
+        assert_eq!(deleted, state.deleted, "{}: deleted_count", self.at());
     }
 
     /// The `k` nearest of the ids `allow` accepts, by brute force.
@@ -212,6 +239,7 @@ fn history(seed: u64, metric: DistanceMetric, precision: Precision) -> (u64, u64
                 };
                 let deleted = index.delete(id).unwrap();
                 assert_eq!(deleted, now.live.remove(&id).is_some(), "{}: id {id}", run.at());
+                now.deleted += u64::from(deleted);
             }
             68..=75 => {
                 run.op = "flush";
@@ -225,6 +253,7 @@ fn history(seed: u64, metric: DistanceMetric, precision: Precision) -> (u64, u64
                     reader = None;
                 }
                 index.compact().unwrap();
+                now.deleted = 0;
                 committed = now.clone();
             }
             80..=83 => {
@@ -283,9 +312,20 @@ fn history(seed: u64, metric: DistanceMetric, precision: Precision) -> (u64, u64
                 let found = reader.search(&query, k).unwrap();
                 run.check_results(&found, &query, &committed, k);
                 assert_eq!(reader.len(), committed.live.len() as u64, "{}: reader len", run.at());
+                let id = rng.below(committed.next_id + 5);
+                let (ids, contains) = (reader.ids().unwrap(), reader.contains(id).unwrap());
+                let got = reader.get(id).unwrap();
+                run.check_lookups(&committed, id, ids, contains, got, reader.deleted_count());
             }
         }
         assert_eq!(index.len(), now.live.len() as u64, "{}: len", run.at());
+        // Every other step, so the id table is also built late, after adds it has to pick up.
+        if rng.below(2) == 0 {
+            let id = rng.below(now.next_id + 5);
+            let (ids, contains) = (index.ids().unwrap(), index.contains(id).unwrap());
+            let got = index.get(id).unwrap();
+            run.check_lookups(&now, id, ids, contains, got, index.deleted_count());
+        }
         // A search that returns fewer than it could has lost its way through the graph.
         let reachable = index.search(&rng.vector(), 10).unwrap().len();
         let all = now.live.len().min(10);

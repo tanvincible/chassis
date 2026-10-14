@@ -1,19 +1,19 @@
-# chassis-core
+# chassisdb
 
-The core of [Chassis](https://github.com/tanvincible/chassis), an embedded vector index for local semantic search.
+[Chassis](https://github.com/tanvincible/chassis) is an embedded vector index for local semantic search.
 
 Your index is one file, and Chassis runs inside your process: no server to run, nothing to connect to. Store embeddings under your own ids, search them, and keep the rest of your data where it already lives.
 
 ```toml
 [dependencies]
-chassis-core = "0.8"
+chassisdb = "0.8"
 ```
 
 ```rust,no_run
-use chassis_core::{IndexOptions, VectorIndex};
+use chassisdb::{IndexOptions, VectorIndex};
 
 // `embeddings` holds one 768-dimension vector after another, one per id.
-fn index_notes(note_ids: &[u64], embeddings: &[f32], query: &[f32]) -> chassis_core::Result<()> {
+fn index_notes(note_ids: &[u64], embeddings: &[f32], query: &[f32]) -> chassisdb::Result<()> {
     let mut index = VectorIndex::open("notes.chassis", 768, IndexOptions::default())?;
     index.add_batch_with_ids(note_ids, embeddings)?;
     index.flush()?;
@@ -44,7 +44,7 @@ It is not a database server or a distributed system, and it stores vectors and i
 
 ## Learn More
 
-* [Getting started](https://tanvincible.github.io/chassis/guide/getting-started.html), and the [API reference](https://docs.rs/chassis-core)
+* [Getting started](https://tanvincible.github.io/chassis/guide/getting-started.html), and the [API reference](https://docs.rs/chassisdb)
 * [How it works](https://tanvincible.github.io/chassis/architecture/overview.html), and why, in the decision records
 * [Benchmarks](https://tanvincible.github.io/chassis/architecture/performance.html)
 
