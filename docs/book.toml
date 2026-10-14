@@ -3,3 +3,10 @@ authors = ["Tanvi Pooranmal Meena"]
 language = "en"
 src = "src"
 title = "Chassis"
+description = "Chassis is an embedded vector index for local semantic search: approximate nearest-neighbor search over embeddings in one file, inside your process, with no server. Python, Rust and C."
+
+[output.html]
+# The site is served under /chassis/: without this, the 404 page loads its styles from the root.
+site-url = "/chassis/"
+git-repository-url = "https://github.com/tanvincible/chassis"
+edit-url-template = "https://github.com/tanvincible/chassis/edit/main/docs/{path}"
