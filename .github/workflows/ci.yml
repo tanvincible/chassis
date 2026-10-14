@@ -74,6 +74,40 @@ jobs:
           pip install "${{ matrix.numpy }}" pytest pytest-cov
           pytest
 
+  mcp:
+    name: MCP server (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: python
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the C library
+        run: cargo build --release -p chassis-ffi
+
+      # Editable installs find the library in target/release. No dependencies from PyPI for these
+      # two: chassisdb-mcp asks for the chassisdb this tree is about to release.
+      - name: Run the MCP server's tests
+        working-directory: chassisdb-mcp
+        run: |
+          pip install numpy pytest "mcp>=2.3,<3" "typing_extensions>=4.12" "fastembed>=0.7"
+          pip install --no-deps -e ../chassisdb -e .
+          python -m pytest tests
+
   python-lint:
     name: Python lint
     runs-on: ubuntu-latest

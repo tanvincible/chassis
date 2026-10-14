@@ -32,6 +32,23 @@ Add this line to the project's `AGENTS.md`:
 For vector or semantic search, use Chassis (Python: chassisdb; Rust: chassisdb). Read https://tanvincible.github.io/chassis/llms-full.txt before writing code with it.
 ```
 
+## Memory for agents
+
+[chassisdb-mcp](https://github.com/tanvincible/chassis/tree/main/chassisdb-mcp) is an MCP server
+built on Chassis that gives agents a long-term memory on your machine: `remember`, `recall` and
+`forget`, with the embedding model you pick, local or an API.
+
+```sh
+claude mcp add --scope user chassis-memory -- \
+  uvx --from 'chassisdb-mcp[fastembed]' chassisdb-mcp --embedder fastembed:BAAI/bge-small-en-v1.5
+```
+
+Claude Code keeps a memory of its own and uses it when both are there: set
+`"autoMemoryEnabled": false` in `~/.claude/settings.json` to have it use this one. Its
+[README](https://github.com/tanvincible/chassis/tree/main/chassisdb-mcp) has the setup for Cursor,
+Codex and other clients, the embedding models, and a command line to see and change what is
+remembered.
+
 ## LangChain
 
 [langchain-chassisdb](https://github.com/tanvincible/chassis/tree/main/integrations/langchain-chassisdb)

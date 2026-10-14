@@ -33,3 +33,4 @@ node_modules
 # --- Benchmarks ---
 bench/ann/data/
 __pycache__/
+*.egg-info/
