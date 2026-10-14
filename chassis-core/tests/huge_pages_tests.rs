@@ -34,9 +34,11 @@ fn test_asking_for_huge_pages_changes_no_result_in_half_precision() {
 }
 
 fn asking_changes_no_result(precision: Precision) {
+    // Searches look at every vector: the batch is linked on several threads, so the graph varies
+    // from run to run, and a narrower search now and then misses a vector's own.
     let options = |huge_pages| IndexOptions {
         ef_construction: 32,
-        ef_search: 32,
+        ef_search: 1200,
         huge_pages,
         precision,
         ..IndexOptions::default()
