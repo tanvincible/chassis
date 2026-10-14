@@ -12,13 +12,13 @@ The intent is to make vector search a component rather than a destination.
 
 Chassis assumes that data should live on disk first and that memory should be treated as a cache rather than a requirement. Reads are performed through memory mapping to avoid unnecessary copying and to allow the operating system to manage working sets naturally.
 
-Search performance is shaped by physical constraints such as disk I O behavior, cache locality, and CPU execution characteristics. Optimizations focus on predictable behavior under constrained memory rather than peak performance on specialized hardware.
+Search performance is shaped by physical constraints such as disk I/O, cache locality, and CPU execution characteristics. Optimizations focus on predictable behavior under constrained memory rather than peak performance on specialized hardware.
 
 Writes are designed to be crash safe. After a crash, an index reopens with every add and delete up to its last flush and none after it, and it keeps accepting writes.
 
 ## Scope
 
-Chassis assumes a single process owns the data at a time. It is designed for single-writer concurrency, relying on the host application or file-system level locking to coordinate access.
+One process writes an index at a time. Chassis locks the file, so a second writer is refused instead of corrupting it, and any number of readers, in other processes too, search without a lock.
 
 Chassis provides a minimal set of capabilities needed for persistent vector search. It intentionally avoids higher level concerns such as networking, query languages, authentication, or distributed coordination.
 
@@ -32,7 +32,7 @@ Chassis is intended to be depended on. This places a higher value on correctness
 
 The storage format and public interfaces are treated as long lived commitments. Evolution is expected, but it is approached cautiously and with attention to existing data.
 
-## Open Source
+## Open source
 
 Chassis is open source and permissively licensed so it can be embedded into a wide range of systems. The goal is to make the engine easy to adopt, inspect, and maintain over time.
 

@@ -1,416 +1,83 @@
-# Testing Guide
+# Testing
 
-Chassis has a comprehensive test suite covering unit tests, integration tests, and compile-time borrow checker validation.
+This page shows how to run Chassis's tests, what each suite checks, and what CI runs, so you know
+which tests cover a change and where a new one belongs.
 
-## Running Tests
-
-### All Tests
-
-```bash
-# Run all tests in the workspace
-cargo test --workspace
-
-# Run with output
-cargo test --workspace -- --nocapture
-
-# Run with specific number of threads
-cargo test --workspace -- --test-threads=4
-```
-
-### Specific Test Suites
+## Running
 
 ```bash
-# Storage layer tests
-cargo test --package chassisdb --test storage_tests
+# Every Rust test in the workspace
+cargo test --workspace --all-features
 
-# Graph I/O tests
-cargo test --package chassisdb --test graph_io_tests
+# One suite
+cargo test -p chassisdb --test crash_tests
 
-# Linking tests
-cargo test --package chassisdb --test link_tests
-
-# Search tests
-cargo test --package chassisdb --test search_tests
-
-# Compile-time safety tests
-cargo test --package chassisdb --test compile_fail
+# The random-history test with many more histories (12 by default)
+CHASSIS_MODEL_SEEDS=2000 cargo test -p chassisdb --release --test model_tests
 ```
 
-### Unit Tests (Embedded)
+Run the slower suites (`crash_tests`, `model_tests`, `batch_tests`) in release when you run them
+often: a debug build computes distances many times slower.
+
+The Python package, the MCP server and the LangChain integration test against the C library in
+`target/release`. The Python package's tests need its dev extras, which include `pytest-cov`:
 
 ```bash
-# Run unit tests in a specific module
-cargo test --package chassisdb storage::tests
-cargo test --package chassisdb distance::tests
-cargo test --package chassisdb hnsw::node::tests
+cargo build --release -p chassis-ffi
+pip install -e "./chassisdb[dev]"
+
+(cd chassisdb && CHASSIS_LIB_PATH=../target/release PYTHONPATH=. pytest)
+(cd chassisdb-mcp && pip install -e ../chassisdb -e . && python -m pytest tests)
+(cd integrations/langchain-chassisdb && pip install -e ../../chassisdb -e . && python -m pytest tests)
 ```
 
-## Test Coverage
-
-### Storage Layer Tests (`storage_tests.rs`)
-
-Tests the memory-mapped storage engine:
-
-**Basic Operations**:
-- `test_create_new_storage()`: File creation and initialization
-- `test_insert_and_retrieve()`: Vector insertion and retrieval
-- `test_multiple_inserts()`: Sequential insertion
-- `test_insert_wrong_dimensions()`: Dimension validation
-
-**Zero-Copy Access**:
-- `test_get_vector_slice()`: Slice-based access
-- `test_vector_slice_lifetime()`: Borrow checker enforcement
-
-**Durability**:
-- `test_commit()`: Persistence guarantees
-- `test_persistence()`: File reopen after commit
-- `test_uncommitted_changes()`: Data loss on crash simulation
-
-**File Growth**:
-- `test_storage_growth()`: Automatic file expansion
-- `growth` bench (`storage_bench`): growing an empty file to 1,000 vectors
-
-**Concurrency**:
-- `test_exclusive_lock()`: File locking
-- `tests/reader_tests.rs`: readers in this and another process while a writer adds, deletes and
-  restarts
-
-### Graph I/O Tests (`graph_io_tests.rs`)
-
-Tests HNSW graph persistence and addressing:
-
-**Graph Header**:
-- `test_graph_header_roundtrip()`: Serialization/deserialization
-- `test_graph_header_validation()`: Magic bytes and version checks
-- `test_graph_header_persistence()`: Survives reopening
-
-**Node Records**:
-- `test_node_record_write_read()`: Basic record I/O
-- `test_sequential_node_writes()`: Batch writes
-- `test_node_record_updates()`: Updating existing nodes
-
-**Addressing**:
-- `test_o1_addressing()`: Offset computation correctness
-- `test_node_offset_consistency()`: Deterministic offsets
-- `test_addressing_formula_correctness()`: Mathematical validation
-
-**Neighbor Iteration**:
-- `test_neighbors_iter_from_mmap()`: Zero-allocation iteration
-- `test_neighbors_iter_empty_layer()`: Edge case handling
-- `test_neighbors_iter_filters_invalid()`: `INVALID_NODE_ID` filtering
-
-### Linking Tests (`link_tests.rs`)
-
-Tests bidirectional graph linking and diversity heuristics:
-
-**Basic Linking**:
-- `test_link_single_node()`: Single node insertion
-- `test_link_multiple_nodes()`: Sequential linking
-- `test_forward_links_exist()`: Outgoing edges persisted
-
-**Backward Links**:
-- `test_backward_links_added()`: Reciprocal edges created
-- `test_idempotency()`: Duplicate link prevention
-- `test_backward_link_pruning()`: Overflow handling
-
-**Diversity Heuristic**:
-- `test_diversity_selection()`: Heuristic 2 application
-- `test_starvation_fallback()`: Minimum degree guarantee
-
-**Invariant Enforcement**:
-- `test_self_links_filtered()`: No self-loops
-- `test_future_neighbors_filtered()`: No forward references (Model A)
-- `test_sequential_id_enforcement()`: Node ID monotonicity
-
-**Crash Consistency**:
-- `test_crash_during_linking()`: Partial updates are safe
-- `test_ghost_nodes()`: Unreachable nodes ignored
-
-### Search Tests (`search_tests.rs`)
-
-Tests HNSW search algorithm:
-
-**Basic Search**:
-- `test_search_empty_graph()`: Empty graph returns empty results
-- `test_search_single_node()`: Trivial case
-- `test_search_k_neighbors()`: Correct k returned
-- `test_search_ef_correction()`: `ef < k` handled
-
-**Result Quality**:
-- `test_search_accuracy()`: Distance sorting
-- `test_search_recall()`: Finds true nearest neighbors
-- `test_search_no_duplicates()`: Unique results only
-
-**Visited Filter**:
-- `test_visited_filter()`: Dense array correctness
-- `test_visited_filter_out_of_bounds()`: Bounds checking
-
-**Edge Cases**:
-- `test_nan_safe_ordering()`: NaN distances don't panic
-- `test_search_large_ef()`: High ef values
-- `test_search_disconnected_graph()`: Unreachable nodes
-
-**Performance**:
-- `test_search_scales_logarithmically()`: Hop count grows slowly
-
-### Compile-Time Safety Tests (`compile_fail.rs`)
-
-Uses `trybuild` to verify borrow checker enforcement:
-
-**UI Tests** (`tests/ui/`):
-
-1. **`slice_then_insert.rs`** (Expected: Fails to compile)
-   ```rust
-   let slice = storage.get_vector_slice(0)?;
-   storage.insert(&vec![1.0; 128])?;  // Mutable borrow while slice alive
-   println!("{}", slice[0]);
-   ```
-   **Error**: Cannot borrow `storage` as mutable
-
-2. **`slice_then_commit.rs`** (Expected: Fails to compile)
-   ```rust
-   let slice = storage.get_vector_slice(0)?;
-   storage.commit()?;  // Mutable borrow (commit modifies mmap)
-   println!("{}", slice[0]);
-   ```
-   **Error**: Cannot borrow `storage` as mutable
-
-3. **`slice_escapes_scope.rs`** (Expected: Fails to compile)
-   ```rust
-   let slice = {
-       let storage = Storage::open(...)?;
-       storage.get_vector_slice(0)?
-   };  // storage dropped, slice now dangling
-   println!("{}", slice[0]);
-   ```
-   **Error**: Slice lifetime exceeds storage
-
-4. **`return_slice_then_mutate.rs`** (Expected: Fails to compile)
-   ```rust
-   fn get_slice(storage: &Storage) -> &[f32] {
-       storage.get_vector_slice(0).unwrap()
-   }
-   
-   let slice = get_slice(&storage);
-   storage.insert(&vec![1.0; 128])?;  // Mutable borrow
-   ```
-   **Error**: Cannot borrow `storage` as mutable
-
-**Run UI Tests**:
-```bash
-cargo test --package chassisdb --test compile_fail
-```
-
-Expected output: All tests pass (compilation failures are expected).
-
-## Unit Tests by Module
-
-### `distance.rs` Tests
-
-```rust
-#[test]
-fn test_euclidean_distance_basic()
-fn test_cosine_distance()
-fn test_simd_correctness_small()     // Tests tail loop
-fn test_simd_correctness_large()     // Tests main loop
-fn test_simd_random_vectors()        // Fuzz testing
-fn test_simd_edge_cases()            // Zero, identical, sparse
-fn test_avx2_specific()              // x86_64 only
-fn test_neon_specific()              // aarch64 only
-```
-
-**Coverage**:
-- SIMD vs scalar equivalence
-- Edge cases (zeros, identical vectors, NaN)
-- Dimension scaling (3D to 3072D)
-- Architecture-specific paths
-
-### `header.rs` Tests
-
-```rust
-#[test]
-fn test_roundtrip()
-fn test_any_flipped_bit_invalidates_the_copy()
-fn test_newer_versions_are_errors_and_old_ones_are_not_v3()
-fn test_newest_copy()
-```
-
-**Coverage**:
-- Header validation logic
-- Magic byte checking
-- Dimension bounds (0, MAX_DIMENSIONS+1)
-
-### `hnsw/node.rs` Tests
-
-```rust
-#[test]
-fn test_node_header_size()
-fn test_record_size_calculation()
-fn test_layer_offset_calculation()
-fn test_set_and_get_neighbors()
-fn test_add_neighbor()
-fn test_serialization_roundtrip()
-fn test_node_to_record_conversion()
-fn test_compute_node_offset()
-fn test_addressing_formula_consistency()
-```
-
-**Coverage**:
-- Fixed-size record layout
-- Neighbor management
-- Serialization correctness
-- O(1) addressing formula
-
-### `hnsw/graph.rs` Tests
-
-```rust
-#[test]
-fn test_graph_header_roundtrip()
-fn test_o1_addressing_no_hashmap()
-fn test_graph_persistence()
-fn test_insert_out_of_order_panics()    // Debug only
-fn test_insert_duplicate_panics()       // Debug only
-fn test_update_existing_node()
-```
-
-**Coverage**:
-- Graph header persistence
-- O(1) node addressing
-- Sequential ID enforcement
-- Update vs insert semantics
-
-## Testing Best Practices
-
-### 1. Use Temporary Files
-
-```rust
-use tempfile::NamedTempFile;
-
-#[test]
-fn my_test() -> anyhow::Result<()> {
-    let temp_file = NamedTempFile::new()?;
-    let storage = Storage::open(temp_file.path(), 128)?;
-    // Test logic...
-    Ok(())
-}  // File automatically deleted
-```
-
-**Why**: Prevents test pollution and ensures isolation.
-
-### 2. Test Invariants Explicitly
-
-```rust
-#[test]
-fn test_node_id_invariant() {
-    let graph = create_test_graph();
-    
-    // Invariant: node_count tracks reachable nodes
-    assert_eq!(graph.node_count(), 10);
-    
-    // Invariant: all nodes have sequential IDs
-    for i in 0..graph.node_count() {
-        assert!(graph.read_node_record(i).is_ok());
-    }
-}
-```
-
-### 3. Test Edge Cases
-
-```rust
-#[test]
-fn test_empty_graph() {
-    let graph = create_empty_graph();
-    assert!(graph.search(&query, 10, 50)?.is_empty());
-}
-
-#[test]
-fn test_single_node() {
-    let graph = create_graph_with_one_node();
-    let results = graph.search(&query, 10, 50)?;
-    assert_eq!(results.len(), 1);
-}
-```
-
-### 4. Use Deterministic Random Data
-
-```rust
-#[test]
-fn test_with_deterministic_random() {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hash, Hasher};
-    
-    fn hash_to_f32(seed: u64) -> f32 {
-        let state = RandomState::new();
-        let mut hasher = state.build_hasher();
-        seed.hash(&mut hasher);
-        (hasher.finish() % 10000) as f32 / 10000.0
-    }
-    
-    let vector: Vec<f32> = (0..128).map(hash_to_f32).collect();
-    // Reproducible across test runs
-}
-```
-
-### 5. Test Concurrency (Where Applicable)
-
-```rust
-#[test]
-fn test_exclusive_lock() {
-    let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path();
-    
-    let _storage1 = Storage::open(path, 128).unwrap();
-    
-    // Second open should fail
-    let result = Storage::open(path, 128);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("already open"));
-}
-```
-
-## Running Tests with Coverage
-
-Install `tarpaulin`:
-
-```bash
-cargo install cargo-tarpaulin
-```
-
-Generate coverage report:
-
-```bash
-cargo tarpaulin --workspace --out Html --output-dir coverage
-```
-
-Open `coverage/index.html` in browser.
-
-**Target**: Aim for >80% line coverage, >90% for critical paths (storage, search).
-
-## Continuous Integration
-
-Example GitHub Actions workflow:
-
-```yaml
-name: Tests
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@stable
-      
-      - name: Run tests
-        run: cargo test --workspace --verbose
-      
-      - name: Run compile-fail tests
-        run: cargo test --package chassisdb --test compile_fail
-      
-      - name: Check formatting
-        run: cargo fmt -- --check
-      
-      - name: Run clippy
-        run: cargo clippy --workspace -- -D warnings
-```
+## Suites
+
+The Rust suites are in `chassis-core/tests`; each file says at its top what it checks.
+
+| Suite | What it checks |
+| --- | --- |
+| `index_integration` | `VectorIndex` end to end: open, add, delete, search, flush, reopen |
+| `storage_tests` | The file: the lock, growth, commits and reopening |
+| `graph_io_tests`, `link_tests` | Neighbor lists on disk, and linking with the diversity heuristic |
+| `search_tests` | Search: results, ordering, edge cases |
+| `batch_tests` | `add_batch` on every core builds a graph as good as one built a vector at a time |
+| `filter_tests` | Filtered search returns only allowed ids, and the nearest of them |
+| `metric_tests` | Cosine ranking and distances match brute force; the metric is the file's |
+| `half_precision_tests` | Half precision finds what brute force over the rounded vectors finds |
+| `compaction_tests` | `compact()` keeps every vector under its id and drops the deleted ones |
+| `migration_tests` | Opening a format 1 or 2 file migrates it to format 3 |
+| `reader_tests` | Readers in other processes, while a writer changes the file |
+| `crash_tests` | A writer killed at random points: every reopen shows exactly the last flush |
+| `model_tests` | Random sequences of every write, checked against a model of what the index should hold |
+| `error_tests` | Each mistake gets its error kind, its values and a `help:` line |
+| `warm_tests`, `huge_pages_tests`, `fork_tests` | `warm`, huge pages, and a forked child dropping an index its parent was reading in |
+| `compile_fail` | Code that would let a vector outlive its borrow doesn't compile (`tests/ui`) |
+
+Unit tests sit next to the code they test. Among them, `power_loss.rs` stands in for a power loss
+at every fsync of every operation. It builds the files a power loss could leave, with each 512-byte
+sector as last synced, as last written, or torn between the two, and checks that each one reopens
+to the last flush or the one in progress.
+
+The Python tests are in `chassisdb/tests`: the bindings, every error, and the code agents copy,
+which they run: the agent skill's Python blocks and the examples.
+
+## CI
+
+| Workflow | What it runs |
+| --- | --- |
+| CI | `cargo test --all-features` on Linux, macOS and Windows, with stable Rust and 1.88; the Python tests on Python 3.11 with numpy 1.26 and on 3.14; the MCP and LangChain tests; `cargo fmt`, `cargo clippy -D warnings`, `cargo doc`; ruff, black and mypy |
+| MSRV | `cargo check` and `cargo test` on Rust 1.88 |
+| Coverage | `cargo llvm-cov` on Linux |
+| Build | The C library and the Python wheels for Linux x86-64 and ARM64, macOS and Windows |
+| Benchmark | Each pull request against main, on Linux x86-64 and ARM64 ([Benchmarking](./benchmarking.md)) |
+
+`compile_fail` runs only on stable: it compares rustc's error text, which changes between releases.
+
+## Writing tests
+
+- Put each index in a temporary directory (`tempfile::tempdir()`), never a fixed path.
+- Make random data deterministic: seed it, as `model_tests.rs` does with its own xorshift.
+- To test a crash, run the writer in a child process and kill it, as `crash_tests.rs` does.
+- When a test checks recall, which varies with thread timing, check it over many queries with a
+  margin, not one query exactly.

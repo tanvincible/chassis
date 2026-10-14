@@ -1,4 +1,6 @@
-# Building from Source
+# Building
+
+This page shows how to build Chassis from a checkout, on Linux, macOS or Windows.
 
 ## Requirements
 
@@ -6,7 +8,7 @@
 - A C compiler (for some dependencies)
 - Git
 
-## Clone the Repository
+## Clone
 
 ```bash
 git clone https://github.com/tanvincible/chassis.git
@@ -29,18 +31,16 @@ For development builds without optimizations:
 cargo build
 ```
 
-## Check for Issues
+## Checks
 
-Run the linter and formatter:
+Run the linter and the formatter as CI does, and fix any warning before you open a pull request:
 
 ```bash
-cargo clippy
-cargo fmt --check
+cargo clippy --all-features --all-targets -- -D warnings
+cargo fmt --all -- --check
 ```
 
-Fix any warnings before submitting a pull request.
-
-## Platform-Specific Notes
+## Platforms
 
 ### Linux
 
@@ -58,13 +58,13 @@ xcode-select --install
 
 Install Visual Studio Build Tools or the full Visual Studio IDE. The Rust installer will detect and use the MSVC toolchain automatically.
 
-## Cross-Compilation
+## Cross-compiling
 
-Chassis is designed to work on both x86 and ARM. To cross-compile for ARM on an x86 host:
+Chassis runs on x86-64 and ARM64. To build for ARM on an x86 machine:
 
 ```bash
 rustup target add aarch64-unknown-linux-gnu
 cargo build --target aarch64-unknown-linux-gnu --release
 ```
 
-Test on actual ARM hardware, as emulation may not catch alignment issues.
+Test on ARM hardware too: an emulator may not catch alignment mistakes.
