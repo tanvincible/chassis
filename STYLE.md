@@ -63,7 +63,7 @@ not before it. Link to the page or decision record that has the details instead 
 
 Examples run as written: imports included, no helper left undefined. Agents copy them as they are.
 When code stands for something the reader brings, say so, as
-[Next to Your Database](docs/src/guide/with-a-database.md) does: "`embed(texts)` stands for your
+[With a database](docs/src/guide/with-a-database.md) does: "`embed(texts)` stands for your
 embedding model."
 
 ## Placement
