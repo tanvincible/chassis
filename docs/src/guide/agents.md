@@ -82,3 +82,5 @@ take a lock around it. Keep the index and your rows in step as
 - [llms.txt](https://tanvincible.github.io/chassis/llms.txt): an index of the docs
 - [llms-full.txt](https://tanvincible.github.io/chassis/llms-full.txt): the guides, the Python,
   Rust and C references, the errors and an example, as one page of Markdown
+- Each page of this book: its address with `.md` in place of `.html`, as
+  [guide/errors.md](https://tanvincible.github.io/chassis/guide/errors.md)
