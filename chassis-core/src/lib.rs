@@ -179,8 +179,12 @@ impl VectorIndex {
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
         let params = hnsw_params(&options);
         // Compaction and migration rename a new file over this one: through a symlink that would
-        // replace the link and leave the file it points to behind.
-        let path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.as_ref().to_path_buf());
+        // replace the link and leave the file it points to behind. Only links are resolved, so
+        // errors name the path as given (on Windows a canonical one starts `\\?\`).
+        let mut path = path.as_ref().to_path_buf();
+        if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
+            path = std::fs::canonicalize(&path).unwrap_or(path);
+        }
         let storage = Storage::open_with_precision(
             &path,
             dims,
