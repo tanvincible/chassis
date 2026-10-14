@@ -21,6 +21,7 @@ Chassis stores vectors and integer ids only: keep text and metadata where the ap
 
 ## Examples
 
+- [Recipes](https://raw.githubusercontent.com/tanvincible/chassis/main/docs/src/guide/recipes.md): search over notes, retrieval for a prompt, agent memory, "more like this", duplicates; each runs as written
 - [Notes search](https://raw.githubusercontent.com/tanvincible/chassis/main/chassisdb/examples/notes_search.py): text in SQLite, vectors in Chassis, "more like this", deletes
 - [Agent skill](https://raw.githubusercontent.com/tanvincible/chassis/main/plugins/chassis/skills/chassis/SKILL.md): the pattern and the rules, for coding agents
 

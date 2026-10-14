@@ -10,6 +10,7 @@
 - [C API](./guide/c-api.md)
 - [Errors](./guide/errors.md)
 - [With a database](./guide/with-a-database.md)
+- [Recipes](./guide/recipes.md)
 - [Coding agents](./guide/agents.md)
 - [llms.txt](./llms.md)
 

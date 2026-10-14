@@ -10,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "chassis" / "skills" / "chassis" / "SKILL.md"
 WITH_A_DATABASE = ROOT / "docs" / "src" / "guide" / "with-a-database.md"
+RECIPES = ROOT / "docs" / "src" / "guide" / "recipes.md"
 EXAMPLES = sorted((ROOT / "chassisdb" / "examples").glob("[!_]*.py"))
 
 
@@ -62,3 +63,16 @@ def test_the_database_guide_survives_what_it_says_a_crash_leaves(tmp_path, monke
     assert sorted(index.ids()) == sorted(r[0] for r in db.execute("SELECT id FROM notes"))
     page["delete_note"](ids[0])
     assert ids[0] not in index and "apples" not in {t for _, t in page["search"]("x", k=10)}
+
+
+def test_recipes_run_one_after_another(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    page: dict = {}
+    for block in re.findall(r"```python\n(.*?)```", RECIPES.read_text(), re.S):
+        # The fastembed block replaces the stand-in model rather than following it.
+        if "fastembed" in block:
+            continue
+        exec(compile(block, str(RECIPES), "exec"), page)
+        if "folder" in block:
+            nearest = page["search"]("when is the report due", k=1)
+            assert nearest[0][0].startswith("The quarterly report")
