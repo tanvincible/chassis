@@ -9,7 +9,13 @@ on:
       - "docs/**"
       - "chassisdb/docs/**"
       - "chassisdb/mkdocs.yml"
-      - "chassisdb/chassis/**"
+      - "chassisdb/chassisdb/**"
+      # In llms-full.txt
+      - "llms.txt"
+      - "README.md"
+      - "chassisdb/README.md"
+      - "chassisdb/examples/**"
+      - "scripts/llms_full.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -44,6 +50,12 @@ jobs:
           mkdir site
           cp -r docs/book/. site/
           cp -r chassisdb/site site/python
+
+      # For agents: an index, and the guides and API references as one page of Markdown.
+      - name: Write llms.txt and llms-full.txt
+        run: |
+          cp llms.txt site/
+          python3 scripts/llms_full.py > site/llms-full.txt
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4

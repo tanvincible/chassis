@@ -14,7 +14,6 @@ Example:
     >>> index.flush()
 """
 
-from chassisdb.index import VectorIndex, SearchResult, IndexOptions
 from chassisdb.exceptions import (
     ChassisError,
     CorruptIndexError,
@@ -29,6 +28,7 @@ from chassisdb.exceptions import (
     OptionsMismatchError,
     ReadOnlyError,
 )
+from chassisdb.index import IndexOptions, SearchResult, VectorIndex
 
 __version__ = "0.7.2"
 __all__ = [

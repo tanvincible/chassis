@@ -1081,12 +1081,12 @@ pub unsafe extern "C" fn chassis_delete(ptr: *mut ChassisIndex, id: u64) -> c_in
 ///
 /// ```c
 /// float query[768] = {0.1, 0.2, ...};
-/// u64 ids[10];
+/// uint64_t ids[10];
 /// float dists[10];
 ///
 /// size_t count = chassis_search(index, query, 768, 10, ids, dists);
 /// for (size_t i = 0; i < count; i++) {
-///     printf("ID: %llu, Distance: %f\n", ids[i], dists[i]);
+///     printf("ID: %" PRIu64 ", Distance: %f\n", ids[i], dists[i]);
 /// }
 /// ```
 ///

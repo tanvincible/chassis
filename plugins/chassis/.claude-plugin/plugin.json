@@ -1,0 +1,19 @@
+{
+  "name": "chassis",
+  "version": "0.8.0",
+  "description": "Add local semantic search to an app with Chassis: vectors in one file, searched in-process, no server.",
+  "author": {
+    "name": "Chassis contributors",
+    "url": "https://github.com/tanvincible/chassis"
+  },
+  "homepage": "https://github.com/tanvincible/chassis",
+  "repository": "https://github.com/tanvincible/chassis",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "vector search",
+    "semantic search",
+    "embeddings",
+    "rag",
+    "hnsw"
+  ]
+}

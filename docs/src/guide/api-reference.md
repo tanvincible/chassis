@@ -23,8 +23,9 @@ let mut index = VectorIndex::open(
 
 * `path`: Path to the backing file (created if missing).
 * `dims`: Vector dimensionality (must be static for the file's lifetime).
-* `options`: Configuration for graph construction and search. An existing index is reopened with
-  the metric, precision and `max_connections` it was created with.
+* `options`: Configuration for graph construction and search. To reopen an existing index, pass the
+  metric, precision and `max_connections` it was created with; others are an `OptionsMismatch`
+  error that names them.
 
 **Returns**:
 
@@ -96,6 +97,13 @@ building the index, on every core, and needs free disk for a second copy of the 
 Readers in other processes keep searching and move to the new file by themselves. On Windows it
 fails, leaving the index as it was, while another process has the index open.
 
+When to compact: deletes cost speed and space, not recall. With half the vectors deleted,
+searches ran at about 70% of their speed, and with 90% at a fifth
+([ADR-0011](../adr/011-compaction.md)), so compacting once `deleted_count()` nears `len()` keeps
+most of the speed; compact sooner when disk space matters. The file shrinks only by whole
+segments, which double in size as an index grows, so it gets smaller only when the live vectors
+fit in fewer of them.
+
 #### Searching
 
 ```rust
@@ -104,8 +112,8 @@ let k = 10; // Neighbors to retrieve
 
 let results = index.search(&query, k)?;
 
-for match in results {
-    println!("ID: {}, Distance: {}", match.id, match.distance);
+for hit in results {
+    println!("ID: {}, Distance: {}", hit.id, hit.distance);
 }
 ```
 
@@ -306,7 +314,7 @@ file again after a compaction reads the new one in too.
 
 * **High Recall**: Increase `ef_construction` to 400 and `max_connections` to 32.
 * **Fast Search**: Decrease `ef_search` to 20-30.
-* **Low Memory**: Decrease `max_connections` to 8-12.
+* **Low Memory**: `Precision::Half`, or vectors with fewer dimensions.
 
 ## Data Types
 
@@ -314,7 +322,7 @@ file again after a compaction reads the new one in too.
 
 ```rust
 pub struct SearchResult {
-    /// The internal sequential ID of the vector
+    /// The id the vector was added under
     pub id: u64,
     
     /// Distance from the query by the index's metric

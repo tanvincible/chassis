@@ -30,6 +30,7 @@ The C header is automatically generated at `include/chassis.h`.
 
 ```c
 #include "chassis.h"
+#include <inttypes.h>
 #include <stdio.h>
 
 int main(void) {
@@ -63,7 +64,7 @@ int main(void) {
     
     size_t count = chassis_search(index, query, 768, 10, ids, distances);
     for (size_t i = 0; i < count; i++) {
-        printf("ID: %llu, Distance: %f\n", ids[i], distances[i]);
+        printf("ID: %" PRIu64 ", Distance: %f\n", ids[i], distances[i]);
     }
     
     // Clean up
@@ -75,21 +76,13 @@ int main(void) {
 ### Compilation
 
 ```bash
-# Linux
-gcc -o myapp myapp.c -L./target/release -lchassis_ffi -lm
-
-# Run (Linux)
-LD_LIBRARY_PATH=./target/release ./myapp
-# Or link with -Wl,-rpath,$PWD/target/release to run without LD_LIBRARY_PATH
-
-# macOS
-gcc -o myapp myapp.c -L./target/release -lchassis_ffi
-
-# Run (macOS)
-DYLD_LIBRARY_PATH=./target/release ./myapp
+# Linux and macOS, from the repository or an unpacked release
+cc -o myapp myapp.c -Ichassis-ffi/include -Ltarget/release -lchassis_ffi \
+  -Wl,-rpath,$PWD/target/release
+./myapp
 
 # Windows (MSVC)
-cl myapp.c /I include /link /LIBPATH:target\release chassis_ffi.lib
+cl myapp.c /I chassis-ffi\include /link /LIBPATH:target\release chassis_ffi.dll.lib
 ```
 
 ## API Reference
@@ -276,7 +269,8 @@ size_t chassis_search(
     float* out_dists
 );
 ```
-Search for k nearest neighbors. Returns number of results found.
+Search for k nearest neighbors. Returns how many results were written, or `0` on error, which
+`chassis_last_error_code()` tells apart from an index with nothing to return.
 
 **Thread Safety**: Safe from any thread; runs concurrently with other searches
 

@@ -167,14 +167,16 @@ Main class for interacting with Chassis indexes.
 VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = None, read_only: bool = False)
 ```
 
-An existing index is reopened with the metric, precision and `max_connections` it was created
-with. With `read_only=True` it only searches, takes no lock, and takes the metric and precision
-from the file; any number can search while one writer writes, in this process or others.
+To reopen an existing index, pass the metric, precision and `max_connections` it was created
+with; others raise `OptionsMismatchError`, which names them. With `read_only=True` it only
+searches, takes no lock, and takes the metric and precision from the file (`max_connections` has
+to match); any number can search while one writer writes, in this process or others.
 
 #### Methods
 
-- **`add(vector: Sequence[float] | ndarray) -> int`**  
-  Add a vector to the index. Returns the vector ID.
+- **`add(vector: Sequence[float] | ndarray, id: int | None = None) -> int`**  
+  Add a vector under `id` (0 to 2**64 - 2; `IdInUseError` if a live vector has it), or else under
+  one past the largest id so far. Returns the id.
 
 - **`add_batch(vectors: ndarray, ids: Iterable[int] | None = None) -> ndarray`**  
   Add a `(count, dimensions)` array at once, linking it on every core: much faster than `add` in a
@@ -182,7 +184,8 @@ from the file; any number can search while one writer writes, in this process or
 
 - **`delete(id: int) -> bool`**  
   Delete the vector with this id. Returns whether there was one. Search stops returning it at
-  once; the delete is durable after the next `flush()`.
+  once; the delete is durable after the next `flush()`. To replace a vector, delete it and add
+  the new one under the same id: the next flush saves both or neither.
 
 - **`get(id: int) -> ndarray | None`**  
   The vector with this id, or `None` if no live vector has it. It comes back as the index keeps
@@ -217,6 +220,10 @@ from the file; any number can search while one writer writes, in this process or
 - **`compact() -> None`**  
   Rewrite the index without its deleted vectors and with a rebuilt graph, reclaiming their space.
   Ids don't change. Takes as long as building the index and needs disk for a second copy.
+  Deletes cost speed, not recall: with half the vectors deleted, searches ran at about 70% of
+  their speed, so compacting once `deleted_count()` nears `len()` is a good rule. The file
+  shrinks by whole segments, which double as an index grows, so only when the live vectors fit in
+  fewer of them.
 
 - **`close() -> None`**  
   Close the index and free resources. Adds and deletes since the last `flush()` are discarded, as
@@ -235,7 +242,7 @@ from the file; any number can search while one writer writes, in this process or
 
 - **`dimensions: int`** - Number of dimensions per vector
 - **`metric: str`** - `"euclidean"` or `"cosine"`, as the index was created; opening with
-  `read_only=True` and explicit `options` naming another raises `ChassisError`
+  `read_only=True` and explicit `options` naming another raises `OptionsMismatchError`
 - **`precision: str`** - `"full"` or `"half"`, as the index was created
 - **`path: Path`** - Path to the index file
 - **`options: IndexOptions`** - HNSW configuration
@@ -295,7 +302,7 @@ at a time and searches wait for them. Don't call `close()` while other threads s
 
 Other processes can search the file while one process writes it: open it with
 `VectorIndex(path, dimensions, read_only=True)`. Such an index takes no lock, sees the writer's
-newest `flush()` on every search, runs one search at a time, and raises `ChassisError` on writes.
+newest `flush()` on every search, runs one search at a time, and raises `ReadOnlyError` on writes.
 A flush becomes visible just before its final fsync, so one that then fails, or is lost to power
 loss, may already have been seen.
 
@@ -353,6 +360,7 @@ python your_script.py
 ## Examples
 
 See the `examples/` directory for complete examples:
+- `notes_search.py` - Notes in SQLite, their vectors in Chassis: search, "more like this", deletes
 - `basic_usage.py` - Simple add and search
 - `batch_insert.py` - Efficient bulk loading
 
@@ -365,8 +373,8 @@ pytest
 # Run with coverage
 pytest --cov=chassisdb --cov-report=html
 
-# Run specific test
-pytest tests/test_index.py::test_add_and_search
+# Run specific tests
+pytest tests/test_index.py -k delete
 ```
 
 ## License

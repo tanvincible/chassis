@@ -1,13 +1,15 @@
 """Tests for VectorIndex class."""
 
-import numpy as np
-import pytest
 from pathlib import Path
 
-from chassisdb import VectorIndex, IndexOptions, SearchResult
+import numpy as np
+import pytest
+
+from chassisdb import IndexOptions, SearchResult, VectorIndex
 from chassisdb.exceptions import (
     ChassisError,
     DimensionMismatchError,
+    OptionsMismatchError,
     ReadOnlyError,
 )
 
@@ -357,7 +359,7 @@ class TestBatchOperations:
         index = VectorIndex(temp_index_path, dimensions=64)
 
         # Add vectors
-        for i in range(50):
+        for _ in range(50):
             vec = np.random.rand(64).astype(np.float32)
             index.add(vec)
 
@@ -421,7 +423,7 @@ class TestIdsAndDelete:
         assert simple_index.ids().tolist() == [10, 11, 13, 14]
         assert simple_index.deleted_count() == 1
         with pytest.raises(TypeError):
-            "11" in simple_index
+            assert "11" in simple_index
         with pytest.raises(ValueError):
             simple_index.get(-1)
 
@@ -453,6 +455,15 @@ class TestReadOnly:
         assert reader.get(11).tolist() == [0.0, 1.0, 0.0]
         reader.close()
         writer.close()
+
+    def test_reader_reports_the_files_options(self, tmp_path):
+        path = tmp_path / "cos.chassis"
+        cosine = IndexOptions(metric="cosine", precision="half")
+        VectorIndex(path, dimensions=3, options=cosine).close()
+        with VectorIndex(path, dimensions=3, read_only=True) as reader:
+            assert (reader.options.metric, reader.options.precision) == ("cosine", "half")
+        with pytest.raises(OptionsMismatchError, match="help: open it with precision='half'"):
+            VectorIndex(path, dimensions=3, options=IndexOptions(metric="cosine"), read_only=True)
 
     def test_reader_needs_an_existing_index(self, tmp_path):
         with pytest.raises(ChassisError):
@@ -496,7 +507,10 @@ class TestSearchBatch:
         writer.flush()
         reader = VectorIndex(path, dimensions=3, read_only=True)
         queries = np.eye(3, dtype=np.float32)
-        for got, want in zip(reader.search_batch(queries, k=2), writer.search_batch(queries, k=2)):
+        got_and_want = zip(
+            reader.search_batch(queries, k=2), writer.search_batch(queries, k=2), strict=True
+        )
+        for got, want in got_and_want:
             assert (got == want).all()
         reader.close()
         writer.close()
@@ -506,7 +520,9 @@ class TestCosine:
     """Cosine distance."""
 
     def test_cosine_distances_ignore_length(self, tmp_path):
-        index = VectorIndex(tmp_path / "cos.chassis", dimensions=2, options=IndexOptions(metric="cosine"))
+        index = VectorIndex(
+            tmp_path / "cos.chassis", dimensions=2, options=IndexOptions(metric="cosine")
+        )
         index.add([3.0, 0.0], id=1)
         index.add([0.0, 0.5], id=2)
         results = index.search([1.0, 1.0], k=2)
@@ -522,7 +538,9 @@ class TestCosine:
         for i in range(50):
             index.add([float(i), 1.0, 2.0, 3.0])
         index.flush()
-        reader = VectorIndex(path, dimensions=4, options=IndexOptions(huge_pages=True), read_only=True)
+        reader = VectorIndex(
+            path, dimensions=4, options=IndexOptions(huge_pages=True), read_only=True
+        )
         plain = VectorIndex(path, dimensions=4, read_only=True)
         query = [17.2, 1.0, 2.0, 3.0]
         assert [r.id for r in index.search(query, k=3)] == [17, 18, 16]
@@ -608,7 +626,9 @@ class TestPrecision:
 
     def test_unknown_precision_is_rejected(self, tmp_path):
         with pytest.raises(ValueError):
-            VectorIndex(tmp_path / "x.chassis", dimensions=2, options=IndexOptions(precision="int8"))
+            VectorIndex(
+                tmp_path / "x.chassis", dimensions=2, options=IndexOptions(precision="int8")
+            )
 
 
 class TestFiltered:
@@ -640,6 +660,14 @@ class TestFiltered:
         assert [r.id for r in both] == [110, 119]
         with pytest.raises(TypeError, match="excluded is a function"):
             index.search([0.0, 0.0], k=4, excluded=lambda i: i == 100)
+        with pytest.raises(TypeError, match=r"help: pass excluded=\[100\]"):
+            index.search([0.0, 0.0], k=4, excluded=100)
+        # 64-bit ids, as from a hash: numpy alone would read this list as floats.
+        index.add([0.5, 0.0], id=2**63 + 7)
+        near = index.search([0.5, 0.0], k=2, excluded=[100, 2**63 + 7])
+        assert 2**63 + 7 not in [r.id for r in near]
+        with pytest.raises(TypeError, match="get\\(id\\) gives None"):
+            index.search(index.get(12345), k=1)
         index.close()
 
 

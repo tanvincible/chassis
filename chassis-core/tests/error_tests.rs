@@ -67,6 +67,13 @@ fn test_a_mistake_says_what_was_wrong_and_what_to_do() {
         "not a Chassis index",
     );
     assert_eq!(std::fs::read_to_string(&text).unwrap(), "not an index");
+    // Long enough to hold headers, but with no valid one: both openers name the file.
+    let zeros = dir.path().join("zeros.chassis");
+    std::fs::write(&zeros, vec![0u8; 256 * 1024]).unwrap();
+    let named = format!("{} has no valid Chassis header", zeros.display());
+    says(VectorIndex::open(&zeros, 4, IndexOptions::default()), ErrorKind::NotAnIndex, &named);
+    says(IndexReader::open(&zeros, 4, IndexOptions::default()), ErrorKind::NotAnIndex, &named);
+    assert!(std::fs::read(&zeros).unwrap().iter().all(|&b| b == 0), "left as it was");
     says(
         VectorIndex::open(dir.path().join("new.chassis"), 0, IndexOptions::default()),
         ErrorKind::InvalidArgument,

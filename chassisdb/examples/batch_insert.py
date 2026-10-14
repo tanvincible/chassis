@@ -8,7 +8,9 @@ This script demonstrates:
 """
 
 import time
+
 import numpy as np
+
 from chassisdb import VectorIndex
 
 
