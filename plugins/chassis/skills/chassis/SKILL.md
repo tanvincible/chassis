@@ -7,13 +7,13 @@ description: >
   embeddings, inside their own process with the index in one file and no server.
 ---
 
-# Local semantic search with Chassis
+# Chassis
 
 Chassis keeps embeddings in one file and searches them (HNSW) inside the app's process. It stores
 vectors and integer ids only: keep the text and metadata where the app already keeps data (SQLite,
 JSON, files), and use the same id in both.
 
-## Pick it, or something else
+## Choosing
 
 - **Chassis**: an app that embeds its own data and searches it locally: a desktop or CLI app, a
   local RAG, agent memory, a cache one process writes while others on the machine search it.
@@ -31,7 +31,7 @@ cargo add chassisdb     # Rust; use chassisdb
 
 C: download the library and `chassis.h` from https://github.com/tanvincible/chassis/releases.
 
-## The pattern (Python)
+## Python
 
 `embed(texts)` stands for the app's embedding model: it returns one row of floats per text, all of
 the model's dimensions.
@@ -88,7 +88,7 @@ results = reader.search(embed(["report"])[0], k=5)
 reader.close()
 ```
 
-## Rules that matter
+## Rules
 
 - **Dimensions and options are fixed at creation.** Reopen with the same `dimensions`, `metric`,
   `precision` and `max_connections`; a mismatch raises an error saying which to pass. A new

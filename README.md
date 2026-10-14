@@ -24,7 +24,7 @@ for hit in index.search(query, k=5):
 
 An index opens in about a millisecond: only its headers are read until a search needs more. At the same recall, it searches a million 128-dimension vectors faster than hnswlib on every server CPU measured, x86 and ARM.
 
-## Current Capabilities
+## Capabilities
 
 * One file, used in-process, with no server
 * Approximate nearest-neighbor search (HNSW) by Euclidean or cosine distance
@@ -39,7 +39,7 @@ An index opens in about a millisecond: only its headers are read until a search 
 
 It is not a database server or a distributed system, and it stores vectors and ids, not metadata.
 
-## When to use it
+## Use cases
 
 Chassis fits an app that embeds its own data and searches it on the same machine: a desktop or command-line app, a local RAG or agent memory, a cache one process writes while others search it. Other tools fit other shapes:
 
@@ -47,7 +47,7 @@ Chassis fits an app that embeds its own data and searches it on the same machine
 * [LanceDB](https://github.com/lancedb/lancedb), when you want one store for vectors and their columns, with filters in the query and versions of the data.
 * A server such as pgvector or Qdrant, when many machines write to one index, or other services query it over the network.
 
-## Learn More
+## Learn more
 
 * [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](chassisdb/README.md)
 * [How it works](docs/src/architecture/overview.md), and why, in the [decision records](docs/adr)

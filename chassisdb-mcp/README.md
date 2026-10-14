@@ -17,7 +17,7 @@ An MCP server built on [Chassis](https://github.com/tanvincible/chassis): each m
 kept in SQLite and its embedding in a Chassis index, in one folder you can read. Nothing leaves
 your machine unless the embedding model you pick is a remote API.
 
-## Set it up
+## Setup
 
 One command, with a local model (about 70 MB, downloaded the first time; needs
 [uv](https://docs.astral.sh/uv/)):
@@ -27,11 +27,11 @@ claude mcp add --scope user chassis-memory -- \
   uvx --from 'chassisdb-mcp[fastembed]' chassisdb-mcp --embedder fastembed:BAAI/bge-small-en-v1.5
 ```
 
-The first launch installs the package and the model's runtime, which can take a minute, longer
-than a client waits for a server to connect: run the command once in a terminal first (`uvx
---from 'chassisdb-mcp[fastembed]' chassisdb-mcp --version`). For a memory the whole team's
-sessions in one project use, `--scope project` writes the setup to `.mcp.json` in the repository
-instead, and `--dir` names the folder.
+The first launch installs the package and the model's runtime, which can take a minute: longer than
+a client waits for a server to connect. Run the command once in a terminal first (`uvx --from
+'chassisdb-mcp[fastembed]' chassisdb-mcp --version`). For a memory the whole team's sessions in one
+project use, `--scope project` writes the setup to `.mcp.json` in the repository instead, and
+`--dir` names the folder.
 
 Claude Code keeps a memory of its own, and an agent uses that one when both are there. To have it
 use this one, turn Claude Code's off in `~/.claude/settings.json`:
@@ -63,7 +63,7 @@ command = "uvx"
 args = ["--from", "chassisdb-mcp[fastembed]", "chassisdb-mcp", "--embedder", "fastembed:BAAI/bge-small-en-v1.5"]
 ```
 
-## Pick the embedding model
+## Models
 
 | `--embedder` | Runs | Needs |
 | --- | --- | --- |
@@ -80,11 +80,11 @@ claude mcp add --scope user chassis-memory -e OPENAI_BASE_URL=http://localhost:1
 ```
 
 A folder keeps the model its first memory was made with, and every session uses that one, since
-vectors from two models can't be compared: `--embedder` only picks the model for a new folder.
-Name another for a folder that has one, and the server says so in its log and goes on with the
-folder's, until you move the memories, as below.
+vectors from two models can't be compared. `--embedder` only picks the model for a new folder. Name
+another for a folder that has one, and the server says so in its log and goes on with the folder's,
+until you move the memories, as below.
 
-## What agents get
+## Tools
 
 - `remember(text, tags)` stores a memory and returns its id with the most similar memories already
   kept, so the agent can forget one the new memory repeats or makes wrong.
@@ -94,11 +94,11 @@ folder's, until you move the memories, as below.
 - `list_memories(tag=None, limit=20)` shows what is remembered: the memories, newest first, every
   tag and its count, the folder and the model.
 
-A distance is 0 for the same meaning and grows as meanings part, but how far apart is "related"
-depends on the model, and changes with a `reembed`: rank by it rather than cut at a fixed number
-where you can. As a rough guide, on one project's memories, bge-small-en-v1.5 put the right
-answer within about 0.30 of a question and two wordings of one fact within about 0.15;
-bge-base-en-v1.5 within 0.40 and 0.19.
+A distance is 0 for the same meaning, and grows as meanings part. How far apart "related" is depends
+on the model, and changes with a `reembed`, so rank by distance rather than cut at a fixed number
+where you can. As a rough guide, on one project's memories, bge-small-en-v1.5 put the right answer
+within about 0.30 of a question and two wordings of one fact within about 0.15; bge-base-en-v1.5
+within 0.40 and 0.19.
 
 From your own code, the MCP Python SDK (2.x) talks to the server like this:
 
@@ -124,7 +124,7 @@ async def main():
 anyio.run(main)
 ```
 
-## See and change what it remembers
+## Commands
 
 The same command, with a command after it, works on the memory folder directly:
 
@@ -148,11 +148,11 @@ forgot #2: The user's staging server is staging.example.internal.
 (print JSON) go before or after the command. `list` and `forget` need no model, so plain
 `uvx chassisdb-mcp` does; `recall`, `remember` and `reembed` need the model's extra, as above.
 
-## Where memories live
+## Storage
 
 In `~/.chassisdb-mcp`: `memory.db` holds the text, `memory.chassis` the vectors. Give a project a
 memory of its own with `--dir` (or `CHASSISDB_MCP_DIR`). Any number of agent sessions can share a
-folder: each write is one transaction on `memory.db`, so sessions take turns writing for the
+folder. Each write is one transaction on `memory.db`: sessions take turns writing for the
 milliseconds a write takes, and a memory's text and vector are saved together or not at all.
 Searches don't wait for writes.
 
@@ -167,7 +167,7 @@ swaps the new index in. Every session follows the folder to the new model; nothi
 needs changing. `status` also says when a crash left a memory without its vector, and `reembed`
 mends that too.
 
-## When something is wrong
+## Errors
 
 The server starts however it is set up: a misspelled `--embedder`, a folder it can't write, a
 model that can't load. The agent's first call then says what was wrong and what to do, as every
