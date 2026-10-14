@@ -50,7 +50,7 @@ Chassis fits an app that embeds its own data and searches it on the same machine
 ## Learn More
 
 * [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](chassisdb/README.md)
-* [How it works](docs/src/architecture/overview.md), and why, in the [decision records](docs/src/adr)
+* [How it works](docs/src/architecture/overview.md), and why, in the [decision records](docs/adr)
 * [Benchmarks](docs/src/architecture/performance.md), and what is [planned](ROADMAP.md)
 * LangChain: [langchain-chassisdb](integrations/langchain-chassisdb/README.md), a vector store that passes LangChain's standard tests
 * Long-term memory for agents, on your machine: [chassisdb-mcp](chassisdb-mcp/README.md), an MCP server built on Chassis

@@ -58,7 +58,7 @@ index.add_with_id(42, &vector)?;
 
 Search results report `42`. Fails if a live vector already has that id; delete it first to replace
 it. `u64::MAX` is reserved. Indexes that use their own ids build an id table in memory on the first
-lookup in a process, which scans the index once ([ADR-0007](../adr/007-ids-and-deletes.md)).
+lookup in a process, which scans the index once ([ADR-0007](https://github.com/tanvincible/chassis/blob/main/docs/adr/007-ids-and-deletes.md)).
 
 #### Adding Many Vectors
 
@@ -68,7 +68,7 @@ let ids = index.add_batch(&vectors)?;  // or index.add_batch_with_ids(&my_ids, &
 ```
 
 Links the batch on every core, so a large batch builds many times faster than `add` in a loop
-([ADR-0010](../adr/010-parallel-batch-builds.md)). Ids are assigned as `add` assigns them. A batch is
+([ADR-0010](https://github.com/tanvincible/chassis/blob/main/docs/adr/010-parallel-batch-builds.md)). Ids are assigned as `add` assigns them. A batch is
 added whole or not at all. The graph depends on thread timing, so two builds of the same data
 differ slightly, as sequential builds already do through their random layers.
 
@@ -91,7 +91,7 @@ index.compact()?;
 ```
 
 Rewrites the index without its deleted vectors and with a newly built graph, then replaces the
-file with the copy ([ADR-0011](../adr/011-compaction.md)). Ids don't change, and `add` still never
+file with the copy ([ADR-0011](https://github.com/tanvincible/chassis/blob/main/docs/adr/011-compaction.md)). Ids don't change, and `add` still never
 reuses one. Like `flush()`, it makes every add and delete so far durable. It takes as long as
 building the index, on every core, and needs free disk for a second copy of the live vectors.
 Readers in other processes keep searching and move to the new file by themselves. On Windows it
@@ -99,7 +99,7 @@ fails, leaving the index as it was, while another process has the index open.
 
 When to compact: deletes cost speed and space, not recall. With half the vectors deleted,
 searches ran at about 70% of their speed, and with 90% at a fifth
-([ADR-0011](../adr/011-compaction.md)), so compacting once `deleted_count()` nears `len()` keeps
+([ADR-0011](https://github.com/tanvincible/chassis/blob/main/docs/adr/011-compaction.md)), so compacting once `deleted_count()` nears `len()` keeps
 most of the speed; compact sooner when disk space matters. The file shrinks only by whole
 segments, which double in size as an index grows, so it gets smaller only when the live vectors
 fit in fewer of them.
@@ -135,7 +135,7 @@ Only vectors whose id the filter accepts are returned. The filter is called with
 vectors, the search walks the graph as usual; when it passes few, or its matches lie far from the
 query, walking the graph would visit most of the index to find them, so the search checks every
 vector instead and returns the exact nearest. Measured, a filtered search takes at most about twice an exact scan of the matching
-vectors ([ADR-0009](../adr/009-filtered-search.md)). `IndexReader` has the same method.
+vectors ([ADR-0009](https://github.com/tanvincible/chassis/blob/main/docs/adr/009-filtered-search.md)). `IndexReader` has the same method.
 
 To leave a few ids out, as "more like this" leaves out the vector it starts from, pass a filter
 that rejects them:
@@ -189,7 +189,7 @@ let empty = index.is_empty();    // True if count == 0
 
 Searches an index while a `VectorIndex` writes it, in another process or this one. It takes no
 lock, so any number of readers can open one file next to its single writer
-([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md), decision 5). It takes the metric
+([ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md), decision 5). It takes the metric
 and precision from the file; `max_connections` has to be the one the index was created with.
 
 ```rust
@@ -271,7 +271,7 @@ reports `1 - cosine similarity`, from 0 to 2. Search speed is the same for both.
 `precision` is fixed when the index is created, as the metric is: reopening with another one is
 an error, an `IndexReader` uses the file's, and `precision()` on either reports it.
 `Precision::Half` keeps each component of a vector as a 16-bit float
-([ADR-0018](../adr/018-half-precision.md)), so the vectors take half the space in the file and in
+([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)), so the vectors take half the space in the file and in
 memory. A search over an index too large for the CPU's caches is faster for it, by a tenth to
 two thirds on most of the machines measured, and builds on x86 take 11 to 48% less time. An index
 that fits in cache searches no faster, and on Neoverse-N2 a fifth more slowly when its vectors are
@@ -291,7 +291,7 @@ longer.
 
 `huge_pages` is for an index too large for the CPU's caches: with the vectors on 2 MB pages,
 searches are up to a quarter faster and batch builds a little faster
-([ADR-0016](../adr/016-huge-pages-on-request.md)). It works on Linux, where the kernel and
+([ADR-0016](https://github.com/tanvincible/chassis/blob/main/docs/adr/016-huge-pages-on-request.md)). It works on Linux, where the kernel and
 filesystem keep files on huge pages (ext4 on Linux 6.17 does), and does nothing elsewhere. A writer
 and its readers each ask for themselves. It is off by default because a page not yet in memory is
 then read 2 MB at a time, which an index much larger than memory pays for on every miss.
@@ -300,7 +300,7 @@ then read 2 MB at a time, which an index much larger than memory pays for on eve
 `warm` is for an index whose file is not in memory yet, as after a reboot. Until it is, each page
 a search touches is read from the disk, one read at a time. With `warm`, another thread reads in
 what the index holds, at the disk's sequential speed, while searches go on
-([ADR-0019](../adr/019-warm.md)). On an Apple M5, from the start of a process, the hundredth search over 99,000
+([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md)). On an Apple M5, from the start of a process, the hundredth search over 99,000
 vectors of 1,536 dimensions returned after 0.37 s with it and 1.9 s without; on Linux servers
 with slower disks, after 1.3 to 1.7 s where it took 1.5 to 2.9 s. It reads only what has been written, and changes
 nothing in the file. It is off by default because an index much larger than memory would push

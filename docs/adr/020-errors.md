@@ -63,7 +63,7 @@ option (with the name it was likely meant to be, including other libraries' name
 
 ### 5. A reference page for every kind
 
-[Errors](../guide/errors.md) lists each kind with its causes and fixes, and its name in each
+[Errors](../src/guide/errors.md) lists each kind with its causes and fixes, and its name in each
 language: Chassis's `rustc --explain`.
 
 ## Consequences

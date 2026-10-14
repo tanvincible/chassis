@@ -1,7 +1,7 @@
 # File Format
 
-A Chassis file is one file in format version 3 ([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md)),
-or version 4 if it keeps its vectors in half precision ([ADR-0018](../adr/018-half-precision.md)).
+A Chassis file is one file in format version 3 ([ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md)),
+or version 4 if it keeps its vectors in half precision ([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)).
 It holds two header copies, then append-only **regions**: segments of slots, heap chunks of
 upper-layer neighbor lists, and table pages that list where the others start. Each region is
 mapped once, and committed bytes never move.
@@ -40,7 +40,7 @@ The valid copy with the higher sequence number is current.
 | 42 | 2 | M0 | Neighbors per layer-0 list |
 | 44 | 1 | Max layers | Layers a node can belong to |
 | 45 | 1 | Metric | `0`: Euclidean; `1`: cosine, over vectors stored at unit length |
-| 46 | 1 | Flags | Bit 0: some id differs from its slot. Bit 1: superseded, a compacted copy is replacing this file at its path ([ADR-0011](../adr/011-compaction.md)) |
+| 46 | 1 | Flags | Bit 0: some id differs from its slot. Bit 1: superseded, a compacted copy is replacing this file at its path ([ADR-0011](https://github.com/tanvincible/chassis/blob/main/docs/adr/011-compaction.md)) |
 | 47 | 1 | Table page log2 | Entries per table page, as a power of two |
 | 48 | 1 | Segment base log2 | Slots in the first segment, as a power of two |
 | 49 | 1 | Doubling segments | Segments that double in size before the size stays constant |

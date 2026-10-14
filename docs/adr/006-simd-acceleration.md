@@ -57,7 +57,7 @@ End-to-end search latency for 1536d vectors drops from ~330µs to ~35µs, enabli
 > Amended 2026-10-03: these figures come from `search_bench`, which searches a hand-wired 500-node
 > graph, and an older machine. A graph built by `VectorIndex` with 20,000 1536-d vectors searches in
 > about 1.1 ms at `ef_search` 50 on an Apple M5, where SIMD reaches about 10 Gelem/s. See
-> [Performance](../architecture/performance.md).
+> [Performance](../src/architecture/performance.md).
 
 #### Stable P99 Latency
 

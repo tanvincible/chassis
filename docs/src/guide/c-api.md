@@ -136,7 +136,7 @@ ChassisIndex* chassis_open_with_precision(
 );
 ```
 Like `chassis_open_with_metric`, with a precision: `CHASSIS_PRECISION_FULL` (0) keeps each
-component of a vector as a 32-bit float, `CHASSIS_PRECISION_HALF` (1) as a 16-bit float ([ADR-0018](../adr/018-half-precision.md)). Half precision
+component of a vector as a 32-bit float, `CHASSIS_PRECISION_HALF` (1) as a 16-bit float ([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)). Half precision
 halves the vectors' size in the file and in memory, and a search over an index too large for the
 CPU's caches is faster for it. Each component is rounded to about three decimal digits, and a
 vector with a component of 65,520 or more in magnitude is refused. The precision is fixed when
@@ -165,7 +165,7 @@ created with.
 int chassis_use_huge_pages(ChassisIndex* index);
 ```
 Ask the operating system to keep the index's vectors on huge pages
-([ADR-0016](../adr/016-huge-pages-on-request.md)). On an index too large for the CPU's caches,
+([ADR-0016](https://github.com/tanvincible/chassis/blob/main/docs/adr/016-huge-pages-on-request.md)). On an index too large for the CPU's caches,
 searches are up to a quarter faster. Linux only, where the kernel and filesystem keep files on huge pages
 (ext4 on Linux 6.17 does); elsewhere it does nothing. Call it right after opening, on a writer's
 handle or a reader's. Returns `0`, or `-1` for a NULL handle.
@@ -174,7 +174,7 @@ handle or a reader's. Returns `0`, or `-1` for a NULL handle.
 ```c
 int chassis_warm(ChassisIndex* index);
 ```
-Read the index into memory on another thread ([ADR-0019](../adr/019-warm.md)), so that searches
+Read the index into memory on another thread ([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md)), so that searches
 stop waiting for the disk one page at a time while its file is not in memory yet, as after a
 reboot. Doesn't wait for the reading: searches go on meanwhile. What is read is what the index
 holds when this is called; while that is under way, calling again does nothing. A reader that opens
@@ -229,7 +229,7 @@ size_t chassis_add_batch(
 );
 ```
 Add many vectors at once, linking them on every core: a large batch builds many times faster than
-`chassis_add` in a loop ([ADR-0010](../adr/010-parallel-batch-builds.md)). Writes their ids, assigned
+`chassis_add` in a loop ([ADR-0010](https://github.com/tanvincible/chassis/blob/main/docs/adr/010-parallel-batch-builds.md)). Writes their ids, assigned
 as `chassis_add` assigns them, to `out_ids`. Returns `count`, or `0` if the batch fails, in which
 case none of it is added.
 
@@ -342,7 +342,7 @@ Flush changes to disk. Returns `0` on success, `-1` on error.
 int chassis_compact(ChassisIndex* index);
 ```
 Rewrite the index without its deleted vectors and with a newly built graph, then replace the file
-with the copy ([ADR-0011](../adr/011-compaction.md)). Ids don't change. Like `chassis_flush`, it
+with the copy ([ADR-0011](https://github.com/tanvincible/chassis/blob/main/docs/adr/011-compaction.md)). Ids don't change. Like `chassis_flush`, it
 makes every add and delete so far durable. Returns `0`, or `-1` with the index left as it was; on
 Windows it fails while another process has the index open. It takes as long as building the index
 and needs free disk for a second copy.

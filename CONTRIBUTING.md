@@ -9,7 +9,7 @@ If you like what we are doing but do not have the time to write code or document
 ## I Have a Question
 
 We maintain two primary sources of documentation:
-1. **[The Chassis book](docs/src/SUMMARY.md)**: guides, the API and error references, architecture, the file format, and the decision records.
+1. **[The Chassis book](docs/src/SUMMARY.md)**: guides, the API and error references, architecture and the file format. The [decision records](docs/adr) say why it works the way it does.
 2. **[Python docs](chassisdb/docs/index.md)**: usage guides and API reference for the Python package (`chassisdb`).
 
 Before asking a question, please check these resources. If the answer isn't there, search the existing [issues](https://github.com/tanvincible/chassis/issues) on GitHub.

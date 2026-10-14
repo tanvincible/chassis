@@ -10,7 +10,7 @@ Chassis stores vectors under your ids and searches them. It manages a single mem
 
 * **Vector Similarity Search**: Performs approximate nearest neighbor (ANN) search using a fully persistent HNSW graph.
 * **High-Level Orchestration**: The `VectorIndex` facade manages the complexity of coordinate storage, graph topology, and search logic.
-* **Crash Consistency**: After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/src/adr/005-crash-consistent-linking.md)).
+* **Crash Consistency**: After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. ([ADR-005](https://github.com/tanvincible/chassis/blob/main/docs/adr/005-crash-consistent-linking.md)).
 * **Memory-Mapped Access**: Searches read vectors straight from the operating system's page cache, so opening an index loads nothing and takes about a millisecond.
 
 ## What Chassis Does Not Do

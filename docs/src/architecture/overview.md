@@ -15,7 +15,7 @@ Chassis uses memory-mapped I/O (`mmap`) as its exclusive persistence mechanism, 
 
 **Trade-off**: Requires `unsafe` Rust and careful lifetime management. Since file format 3 the file
 grows by appending regions that are each mapped once, so growth never invalidates a mapping
-([ADR-0008](../adr/008-format-v3-and-multi-process-readers.md)).
+([ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md)).
 
 ### 2. Sequential Construction (ADR-0002)
 
