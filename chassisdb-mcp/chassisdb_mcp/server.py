@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -205,7 +206,7 @@ def _sentence_transformers(model: str) -> Callable[[list[str]], object]:
 def _openai(model: str) -> Callable[[list[str]], object]:
     base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     key = os.environ.get("OPENAI_API_KEY")
-    if not key and "api.openai.com" in base:
+    if not key and urllib.parse.urlsplit(base).hostname == "api.openai.com":
         raise Problem(
             "OPENAI_API_KEY isn't set, and OpenAI's API needs it\nhelp: give the server the key "
             "(claude mcp add ... -e OPENAI_API_KEY=...), or point OPENAI_BASE_URL at a local "

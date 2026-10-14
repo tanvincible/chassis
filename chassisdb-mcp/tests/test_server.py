@@ -308,6 +308,10 @@ def test_openai_compatible_api(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY")
     with pytest.raises(Problem, match="OPENAI_API_KEY isn't set"):
         Embedder("openai:text-embedding-3-small")(["a"])
+    # Only OpenAI's own host needs a key, wherever else its name appears.
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:9/api.openai.com")
+    with pytest.raises(Problem, match="Nothing answered"):
+        Embedder("openai:m")(["a"])
 
 
 def test_fastembed_suggests_the_model_meant():
