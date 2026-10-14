@@ -1,6 +1,6 @@
 # Summary
 
-[Local Semantic Search in One File](./introduction.md)
+[Introduction](./introduction.md)
 
 # User Guide
 
