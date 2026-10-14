@@ -1,7 +1,7 @@
 # Roadmap
 
 What is planned for Chassis and not yet built. Chassis is for local semantic search in one file;
-the introduction says [what it will not grow into](docs/src/introduction.md#what-chassis-does-not-do).
+the introduction says [what it will not grow into](docs/src/introduction.md#non-goals).
 
 Only what has been measured and found worth building is listed here. Ideas that have not been
 validated are kept in `IDEAS.md` on the [`ideas`](https://github.com/tanvincible/chassis/blob/ideas/IDEAS.md)

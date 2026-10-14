@@ -1,12 +1,57 @@
-# Getting Started
+# Getting started
 
-## Installation
+This page takes you from nothing to a first search, in Python or Rust. From C, start with the
+[C API](c-api.md).
+
+## Python
+
+```sh
+pip install chassisdb
+```
+
+```python
+from chassisdb import VectorIndex
+
+index = VectorIndex("quickstart.chassis", dimensions=3)  # created if it doesn't exist
+
+index.add([1.0, 0.0, 0.0])  # id 0
+index.add([0.0, 1.0, 0.0])  # id 1
+index.add([0.0, 0.0, 1.0])  # id 2
+index.flush()  # on disk once this returns
+
+results = index.search([1.0, 0.1, 0.0], k=1)
+print("nearest:", results[0].id)  # 0
+```
+
+The [Python docs](https://tanvincible.github.io/chassis/python/) go on from here: batches, your own
+ids, options and every method.
+
+## Rust
 
 Add Chassis to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 chassisdb = "0.8"
+```
+
+```rust
+use chassisdb::{IndexOptions, VectorIndex};
+
+fn main() -> chassisdb::Result<()> {
+    // Created if it doesn't exist
+    let mut index = VectorIndex::open("quickstart.chassis", 3, IndexOptions::default())?;
+
+    index.add(&[1.0, 0.0, 0.0])?; // id 0
+    index.add(&[0.0, 1.0, 0.0])?; // id 1
+    index.add(&[0.0, 0.0, 1.0])?; // id 2
+    index.flush()?; // on disk once this returns
+
+    let results = index.search(&[1.0, 0.1, 0.0], 1)?;
+    assert_eq!(results[0].id, 0);
+    println!("nearest: {}", results[0].id);
+    Ok(())
+}
 ```
 
 A debug build runs Chassis's arithmetic many times slower. To build Chassis optimized while your
@@ -17,36 +62,5 @@ own crate stays in debug:
 opt-level = 3
 ```
 
-From Python, `pip install chassisdb` and start with the
-[Python docs](https://tanvincible.github.io/chassis/python/); from C, see the [C API](c-api.md).
-
-## Quick Start
-
-```rust
-use chassisdb::{VectorIndex, IndexOptions};
-
-fn main() -> chassisdb::Result<()> {
-    // 1. Open the index (creates file if missing)
-    let mut index = VectorIndex::open(
-        "quickstart.chassis", 
-        3, // 3D vectors for demo
-        IndexOptions::default()
-    )?;
-
-    // 2. Add some data
-    index.add(&[1.0, 0.0, 0.0])?; // ID 0
-    index.add(&[0.0, 1.0, 0.0])?; // ID 1
-    index.add(&[0.0, 0.0, 1.0])?; // ID 2
-    
-    index.flush()?;
-
-    // 3. Search
-    let query = vec![1.0, 0.1, 0.0];
-    let results = index.search(&query, 1)?;
-
-    assert_eq!(results[0].id, 0); // Should match ID 0 best
-    println!("Nearest neighbor: ID {}", results[0].id);
-
-    Ok(())
-}
-```
+[Basic usage](./basic-usage.md) goes on from here, and the [Rust API](./api-reference.md) has every
+method.

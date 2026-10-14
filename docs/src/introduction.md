@@ -1,42 +1,83 @@
 # Chassis
 
-Chassis is an embedded vector index for local semantic search, written in Rust. It keeps an index in one file and runs inside your process, with no server to run or connect to.
+Chassis is an embedded vector index for local semantic search. Your index is one file, and Chassis
+runs inside your process: no server to run, nothing to connect to. Store embeddings under your own
+ids, search them, and keep the rest of your data where it already lives.
 
-Using Python? Start with the [Python docs](https://tanvincible.github.io/chassis/python/). From
-Rust, start with [Getting Started](./guide/getting-started.md).
+```sh
+pip install chassisdb   # Python 3.11+: import chassisdb
+cargo add chassisdb     # Rust: use chassisdb
+```
 
-## What Chassis Does
+The C library and its header come with each
+[release](https://github.com/tanvincible/chassis/releases).
 
-Chassis stores vectors under your ids and searches them. It manages a single memory-mapped file that holds both the vectors and a persistent HNSW graph over them.
+## Example
 
-### Key Capabilities
+```python
+import numpy as np
+from chassisdb import VectorIndex
 
-* **Vector Similarity Search**: Performs approximate nearest neighbor (ANN) search using a fully persistent HNSW graph.
-* **High-Level Orchestration**: The `VectorIndex` facade manages the complexity of coordinate storage, graph topology, and search logic.
-* **Crash Consistency**: After a crash, reopening keeps every add and delete up to the last `flush()`, drops later ones, and finds the graph as that flush left it; a power loss between flushes can still leave some neighbor lists changed, which can lower recall. ([ADR-0012](https://github.com/tanvincible/chassis/blob/main/docs/adr/012-rolling-back-lost-adds.md)).
-* **Memory-Mapped Access**: Searches read vectors straight from the operating system's page cache, so opening an index loads nothing and takes about a millisecond.
+embeddings = np.random.rand(1000, 768).astype(np.float32)  # stands for your model's output
+note_ids = np.arange(1000, 2000)  # the ids your notes already have
 
-## What Chassis Does Not Do
+index = VectorIndex("notes.chassis", dimensions=768)
+index.add_batch(embeddings, ids=note_ids)
+index.flush()
 
-Chassis is intentionally limited in scope to ensure correctness and performance. It is **not**:
+query = embeddings[0]
+for hit in index.search(query, k=5):
+    print(hit.id, hit.distance)  # 1000 first, at distance 0
+```
 
-* **A Database Server**: There is no network listener, SQL interface, or daemon.
-* **A Distributed System**: Replication and sharding are left to the application layer.
-* **A Metadata Store**: Chassis stores vectors and IDs only. You should map these IDs to your application data (JSON, text, etc.) using a separate store like SQLite, and pass the ids it selects to `search_filtered` to search among them.
+## Start
 
-## Current Status
+- **Python**: the [Python docs](https://tanvincible.github.io/chassis/python/), from the quickstart
+  to every method.
+- **Rust**: [Getting started](./guide/getting-started.md), then the [Rust API](./guide/api-reference.md).
+- **C**: the [C API](./guide/c-api.md).
+- **Your text and metadata**: [With a database](./guide/with-a-database.md) keeps them in SQLite
+  under the same ids as the vectors.
+- **Coding agents**: [Coding agents](./guide/agents.md), and [llms.txt](./llms.md) for the docs as
+  Markdown.
 
-The latest release is **v0.8.0**: deletes and your own ids, filtered search, compaction, readers
-in other processes, half precision and more, in a new file format that v0.6.3 can't open. Opening
-an older file for writing converts it. Search, the C API and the Python bindings work end to end.
-Measured numbers are on the [Performance](./architecture/performance.md) page and in the
-[decision records](https://github.com/tanvincible/chassis/tree/main/docs/adr). To replace a
-vector, delete its id and add it again.
+## Features
+
+- Approximate nearest-neighbor search (HNSW) by Euclidean or cosine distance.
+- Filtered search, over the ids your application allows.
+- Your own ids, deletes, and `compact()` to reclaim their space.
+- Batch builds on every core.
+- Half precision, for half the file and half the memory.
+- Durable `flush()`: after a crash, reopening keeps every add and delete up to the last flush and
+  drops the rest.
+- One writer and any number of readers, in other processes too.
+- Errors that say what was wrong and what to do instead.
+
+Opening an index reads only its headers. On an Apple M5 (2026-10-15), opening one of 50,000 vectors
+of 384 dimensions took 0.08 ms through Python, with the file in memory. At the same recall, Chassis
+searches a million 128-dimension vectors faster than hnswlib on every server CPU measured, x86 and
+ARM ([Performance](./architecture/performance.md)).
+
+## Non-goals
+
+Chassis is kept small on purpose, so that it stays correct and fast. It is not:
+
+- **A database server**: there is no network listener, query language or daemon.
+- **A distributed system**: replication and sharding are left to the application.
+- **A metadata store**: Chassis keeps vectors and ids only. Keep your text and metadata in a store
+  of your own, such as SQLite, under the same ids, and pass the ids it selects to a filtered search.
+
+## Status
+
+The latest release is **v0.8.0**; the
+[changelog](https://github.com/tanvincible/chassis/blob/main/CHANGELOG.md) lists what each release
+changed. Files from older releases open, and opening one for writing converts it.
 
 ## Requirements
 
-* Rust 1.88 or later
-* A filesystem that supports memory mapping (Linux, macOS, Windows) and `fsync` for durability.
+- Python 3.11 or later with numpy 1.26 or later, or Rust 1.88 or later.
+- Linux, macOS or Windows, on a file system that supports memory mapping and `fsync`. Wheels and
+  the C library are built for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64).
 
 ## License
 

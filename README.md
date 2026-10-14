@@ -14,6 +14,7 @@ The C library and its header come with each [release](https://github.com/tanvinc
 ```python
 from chassisdb import VectorIndex
 
+# embeddings: your model's vectors, one row per note; note_ids: the notes' ids
 index = VectorIndex("notes.chassis", dimensions=768)
 index.add_batch(embeddings, ids=note_ids)
 index.flush()
