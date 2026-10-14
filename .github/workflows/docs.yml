@@ -57,6 +57,17 @@ jobs:
           cp llms.txt site/
           python3 scripts/llms_full.py > site/llms-full.txt
 
+      # For search engines, which may not run the JavaScript that draws the book's sidebar.
+      - name: Write sitemap.xml
+        run: |
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            (cd site && find . -name '*.html' ! -name 404.html ! -name print.html ! -name toc.html ! -path ./introduction.html | sort) |
+              sed -E -e 's#^\./##' -e 's#(^|/)index\.html$#\1#' -e 's#.*#  <url><loc>https://tanvincible.github.io/chassis/&</loc></url>#'
+            echo '</urlset>'
+          } > site/sitemap.xml
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:

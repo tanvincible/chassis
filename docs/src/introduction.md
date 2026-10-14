@@ -1,4 +1,4 @@
-# Introduction
+# Chassis
 
 Chassis is an embedded vector index for local semantic search, written in Rust. It keeps an index in one file and runs inside your process, with no server to run or connect to.
 
@@ -26,9 +26,9 @@ Chassis is intentionally limited in scope to ensure correctness and performance.
 The latest release is **v0.8.0**: deletes and your own ids, filtered search, compaction, readers
 in other processes, half precision and more, in a new file format that v0.6.3 can't open. Opening
 an older file for writing converts it. Search, the C API and the Python bindings work end to end.
-Measured numbers are in the [decision records](./adr) and on the
-[Performance](./architecture/performance.md) page. To replace a vector, delete its id and add it
-again.
+Measured numbers are on the [Performance](./architecture/performance.md) page and in the
+[decision records](https://github.com/tanvincible/chassis/tree/main/docs/adr). To replace a
+vector, delete its id and add it again.
 
 ## Requirements
 
