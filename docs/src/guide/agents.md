@@ -1,4 +1,4 @@
-# Chassis for Coding Agents
+# Coding agents
 
 A coding agent writes better code with Chassis when it has the rules that matter in front of it:
 what to keep where, when writes are durable, which options are fixed. Give it one of these.
@@ -24,15 +24,16 @@ curl -fsSL https://raw.githubusercontent.com/tanvincible/chassis/main/plugins/ch
 
 The rule says the same as the skill, and Cursor applies it when a task calls for vector search.
 
-## Codex, and other agents that read AGENTS.md
+## AGENTS.md
 
-Add this line to the project's `AGENTS.md`:
+For Codex and the other agents that read `AGENTS.md`, add this line to the project's
+`AGENTS.md`:
 
 ```text
 For vector or semantic search, use Chassis (Python: chassisdb; Rust: chassisdb). Read https://tanvincible.github.io/chassis/llms-full.txt before writing code with it.
 ```
 
-## Memory for agents
+## Memory
 
 [chassisdb-mcp](https://github.com/tanvincible/chassis/tree/main/chassisdb-mcp) is an MCP server
 built on Chassis that gives agents a long-term memory on your machine: `remember`, `recall` and
@@ -56,10 +57,10 @@ is a LangChain vector store on Chassis (`pip install langchain-chassisdb`): `Cha
 with metadata filters, maximal marginal relevance and readers in other processes. It passes
 LangChain's standard tests for vector stores.
 
-## Building an MCP server on Chassis
+## MCP servers
 
-The MCP Python SDK shows an agent only "Error executing tool" for an exception other than its own
-`ToolError`, so Chassis's messages, and their `help:` lines, never reach the model unless the tool
+For an exception other than its own `ToolError`, the MCP Python SDK shows an agent only "Error
+executing tool". Chassis's messages and their `help:` lines never reach the model unless the tool
 passes them on:
 
 ```python
@@ -75,9 +76,9 @@ def search_notes(query: str, k: int = 5) -> list[dict]:
 
 The SDK runs synchronous tools on worker threads: open SQLite with `check_same_thread=False` and
 take a lock around it. Keep the index and your rows in step as
-[Next to Your Database](./with-a-database.md) says.
+[With a database](./with-a-database.md) says.
 
-## Docs for agents
+## Docs
 
 - [llms.txt](https://tanvincible.github.io/chassis/llms.txt): an index of the docs
 - [llms-full.txt](https://tanvincible.github.io/chassis/llms-full.txt): the guides, the Python,

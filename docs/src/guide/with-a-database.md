@@ -1,10 +1,10 @@
-# Chassis Next to Your Database
+# With a database
 
 Chassis keeps vectors and integer ids; the rows they belong to live in your database. This page
 is how to keep the two in step, through a crash at any point. The examples use SQLite from
 Python; the same order works with Postgres, and from Rust or C.
 
-## One id for both
+## One id
 
 Use the row's integer key as the vector's id. In SQLite that is `INTEGER PRIMARY KEY
 AUTOINCREMENT`: `AUTOINCREMENT` never gives a deleted row's id out again, which plain `INTEGER
@@ -22,7 +22,7 @@ index = VectorIndex("notes.chassis", dimensions=384, options=IndexOptions(metric
 
 `embed(texts)` below stands for your embedding model.
 
-## Writing: the index flushes inside the transaction
+## Writing
 
 Write the rows in a transaction, change the index, `flush()` it, and only then commit:
 
@@ -68,7 +68,7 @@ What a crash leaves:
 To replace a vector, `delete(id)` then `add(vector, id=id)`. Until the next flush neither is
 saved, and the flush saves both or neither.
 
-## Reading: search among the rows that exist
+## Reading
 
 Pass the database's ids as `allowed`, so a vector a crash left takes no result's place, and join
 the rows back by id:
@@ -88,7 +88,7 @@ def search(query, k=5):
 
 A filter works the same way: `SELECT id FROM notes WHERE owner = ?` gives the `allowed` ids.
 
-## Mending at start
+## Mending
 
 What a crash left is found by comparing the two sets of ids, which takes one pass over each:
 
@@ -105,7 +105,7 @@ def mend():
     return len(held - rows.keys()), len(missing)
 ```
 
-## Readers in other processes
+## Other processes
 
 Processes that only search open the index with `read_only=True` (Python), `IndexReader` (Rust)
 or `chassis_open_reader` (C). They see each flush, so with the order above a reader can see a

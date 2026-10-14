@@ -9,5 +9,5 @@ These docs as plain Markdown, for coding agents and other LLM tools:
 - Each page of this book: its address with `.md` in place of `.html`, as
   [guide/errors.md](https://tanvincible.github.io/chassis/guide/errors.md)
 
-[Chassis for Coding Agents](./guide/agents.md) has a line to paste into an agent's rules that
+[Coding agents](./guide/agents.md) has a line to paste into an agent's rules that
 points it at llms-full.txt.
