@@ -8,7 +8,8 @@ fails. [docs.rs](https://docs.rs/chassisdb) has the same API generated from the 
 ### `VectorIndex`
 
 `VectorIndex` opens an index file to add, delete and search vectors. One process writes a file at
-a time; to search a file that another process writes, use [`IndexReader`](#indexreader).
+a time; to search a file that another process writes, use [`IndexReader`](#indexreader). The
+examples below continue from one another, starting with the index opened here.
 
 #### Open
 
@@ -67,6 +68,7 @@ lookup in a process, which scans the index once ([ADR-0007](https://github.com/t
 #### Batches
 
 ```rust
+let rows: Vec<Vec<f32>> = (0..100).map(|i| vec![i as f32 / 100.0; 768]).collect(); // your vectors
 let vectors: Vec<f32> = rows.concat(); // count × dims floats, back to back
 let ids = index.add_batch(&vectors)?;  // or index.add_batch_with_ids(&my_ids, &vectors)?
 ```
@@ -79,7 +81,7 @@ differ slightly, as sequential builds already do through their random layers.
 #### Delete
 
 ```rust
-let deleted = index.delete(42)?; // false if no live vector has id 42
+let deleted = index.delete(id)?; // false if no live vector has that id
 ```
 
 Search stops returning the vector immediately, and `len()` drops by one. The delete is durable
@@ -129,8 +131,10 @@ for hit in results {
 #### Filtered search
 
 ```rust
-// The ids your application allows, e.g. from `SELECT id FROM docs WHERE owner = ?`
-let allowed: HashSet<u64> = owner_doc_ids();
+use std::collections::HashSet;
+
+// Stands for the ids your application allows, e.g. from `SELECT id FROM docs WHERE owner = ?`
+let allowed: HashSet<u64> = HashSet::from([42, 101, 102]);
 let results = index.search_filtered(&query, 10, |id| allowed.contains(&id))?;
 ```
 
