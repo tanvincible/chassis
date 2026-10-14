@@ -203,6 +203,19 @@ _lib.chassis_search_filtered.argtypes = [
 ]
 _lib.chassis_search_filtered.restype = ctypes.c_size_t
 
+# chassis_search_excluding
+_lib.chassis_search_excluding.argtypes = [
+    ChassisIndexPtr,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_uint64),  # excluded_ids
+    ctypes.c_size_t,  # excluded_len
+    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.POINTER(ctypes.c_float),
+]
+_lib.chassis_search_excluding.restype = ctypes.c_size_t
+
 # chassis_search_batch
 _lib.chassis_search_batch.argtypes = [
     ChassisIndexPtr,
@@ -230,6 +243,27 @@ _lib.chassis_use_huge_pages.restype = ctypes.c_int
 # chassis_warm
 _lib.chassis_warm.argtypes = [ChassisIndexPtr]
 _lib.chassis_warm.restype = ctypes.c_int
+
+# chassis_get
+_lib.chassis_get.argtypes = [
+    ChassisIndexPtr,
+    ctypes.c_uint64,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+]
+_lib.chassis_get.restype = ctypes.c_int
+
+# chassis_contains
+_lib.chassis_contains.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
+_lib.chassis_contains.restype = ctypes.c_int
+
+# chassis_ids
+_lib.chassis_ids.argtypes = [ChassisIndexPtr, ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t]
+_lib.chassis_ids.restype = ctypes.c_size_t
+
+# chassis_deleted_count
+_lib.chassis_deleted_count.argtypes = [ChassisIndexPtr]
+_lib.chassis_deleted_count.restype = ctypes.c_uint64
 
 # chassis_len
 _lib.chassis_len.argtypes = [ChassisIndexPtr]

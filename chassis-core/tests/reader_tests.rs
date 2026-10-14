@@ -60,6 +60,35 @@ fn test_reader_sees_only_committed_adds_and_deletes() {
 }
 
 #[test]
+fn test_reader_looks_up_ids_given_again_after_a_delete() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.chassis");
+    let mut writer = VectorIndex::open(&path, DIMS, options()).unwrap();
+    for id in [10, 20, 30] {
+        writer.add_with_id(id, &vector(id)).unwrap();
+    }
+    writer.flush().unwrap();
+    let mut reader = IndexReader::open(&path, DIMS, options()).unwrap();
+    assert_eq!(reader.get(20).unwrap(), Some(vector(20)));
+
+    // Id 20 moves to a later slot: both readers, one that had mapped the old slot and a new one,
+    // must find it there, and neither may see what isn't flushed.
+    writer.delete(20).unwrap();
+    writer.add_with_id(20, &vector(99)).unwrap();
+    writer.add_with_id(40, &vector(40)).unwrap();
+    assert_eq!(reader.get(20).unwrap(), Some(vector(20)));
+    assert!(!reader.contains(40).unwrap());
+    writer.flush().unwrap();
+    let mut fresh = IndexReader::open(&path, DIMS, options()).unwrap();
+    for reader in [&mut reader, &mut fresh] {
+        assert_eq!(reader.get(20).unwrap(), Some(vector(99)));
+        assert_eq!(reader.ids().unwrap(), [10, 30, 20, 40]);
+        assert_eq!(reader.deleted_count(), 1);
+        assert_eq!(reader.get(u64::MAX - 1).unwrap(), None);
+    }
+}
+
+#[test]
 fn test_reader_returns_custom_ids_and_maps_new_segments() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("index.chassis");

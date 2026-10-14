@@ -489,6 +489,26 @@ size_t chassis_search(const struct ChassisIndex *ptr, const float *query, size_t
 size_t chassis_search_filtered(const struct ChassisIndex *ptr, const float *query, size_t len, size_t k, const uint64_t *allowed_ids, size_t allowed_len, uint64_t *out_ids, float *out_dists);
 
 /**
+ * Search for the k nearest neighbors, leaving out the given ids
+ *
+ * # Arguments
+ *
+ * - `excluded_ids`: The ids results may not have; ids not in the index are ignored. May be NULL
+ *   when `excluded_len` is 0, which leaves out nothing.
+ * - `excluded_len`: Number of ids in `excluded_ids`
+ * - The other arguments are as for `chassis_search()`.
+ *
+ * # Returns
+ *
+ * As for `chassis_search()`.
+ *
+ * # Safety
+ *
+ * As for `chassis_search()`, and `excluded_ids` must point to `excluded_len` valid u64 values.
+ */
+size_t chassis_search_excluding(const struct ChassisIndex *ptr, const float *query, size_t len, size_t k, const uint64_t *excluded_ids, size_t excluded_len, uint64_t *out_ids, float *out_dists);
+
+/**
  * Search for the k nearest neighbors of each of many queries, in one call
  *
  * # Arguments
@@ -636,6 +656,81 @@ int chassis_warm(struct ChassisIndex *ptr);
 int chassis_compact(struct ChassisIndex *ptr);
 
 /**
+ * Copy the vector with `id` into `out`
+ *
+ * The vector comes back as the index keeps it: scaled to length 1 in a cosine index, and
+ * rounded in half precision.
+ *
+ * # Arguments
+ *
+ * - `ptr`: Non-NULL pointer to index (shared access)
+ * - `id`: The vector's id
+ * - `out`: Space for `len` floats
+ * - `len`: The index's dimensions
+ *
+ * # Returns
+ *
+ * - `1` if a live vector has `id`, now in `out`
+ * - `0` if none has
+ * - `-1` on failure (check `chassis_last_error_message()`)
+ *
+ * # Thread Safety
+ *
+ * Safe from any thread. A reader sees the writer's last flush.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ * - `out` must have space for `len` floats
+ */
+int chassis_get(const struct ChassisIndex *ptr, uint64_t id, float *out, size_t len);
+
+/**
+ * Whether a live vector has `id`
+ *
+ * # Returns
+ *
+ * - `1` if one has, `0` if none has
+ * - `-1` on failure (check `chassis_last_error_message()`)
+ *
+ * # Thread Safety
+ *
+ * Safe from any thread. A reader sees the writer's last flush.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_contains(const struct ChassisIndex *ptr, uint64_t id);
+
+/**
+ * Copy the ids of the live vectors into `out`, in the order they were added
+ *
+ * # Arguments
+ *
+ * - `ptr`: Non-NULL pointer to index (shared access)
+ * - `out`: Space for `cap` ids. May be NULL when `cap` is 0.
+ * - `cap`: How many ids `out` has space for
+ *
+ * # Returns
+ *
+ * - The number of live vectors. Only the first `cap` ids are written, so if this is more than
+ *   `cap`, call again with more space.
+ * - 0 on failure (check `chassis_last_error_code()`), as for an empty index, which sets no error
+ *
+ * # Thread Safety
+ *
+ * Safe from any thread. A reader sees the writer's last flush, which can have more vectors than
+ * a `chassis_len()` just before.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ * - `out` must have space for `cap` u64 values
+ */
+size_t chassis_ids(const struct ChassisIndex *ptr, uint64_t *out, size_t cap);
+
+/**
  * Get the number of vectors in the index
  *
  * # Arguments
@@ -655,6 +750,21 @@ int chassis_compact(struct ChassisIndex *ptr);
  * - `ptr` must be non-NULL and valid
  */
 uint64_t chassis_len(const struct ChassisIndex *ptr);
+
+/**
+ * Get the number of deleted vectors the index file still holds
+ *
+ * `chassis_compact()` removes them, and sets this to 0.
+ *
+ * # Returns
+ *
+ * - Number of deleted vectors, or 0 if `ptr` is NULL
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+uint64_t chassis_deleted_count(const struct ChassisIndex *ptr);
 
 /**
  * Check if the index is empty

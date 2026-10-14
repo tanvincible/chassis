@@ -411,6 +411,20 @@ class TestIdsAndDelete:
             assert len(index) == 1
             assert [r.id for r in index.search([1.0, 0.0, 0.0], k=2)] == [20]
 
+    def test_lookups(self, simple_index):
+        for i in range(5):
+            simple_index.add([float(i), 0.0, 0.0], id=10 + i)
+        simple_index.delete(12)
+        assert simple_index.get(11).tolist() == [1.0, 0.0, 0.0]
+        assert simple_index.get(12) is None
+        assert (11 in simple_index, 12 in simple_index, -1 in simple_index) == (True, False, False)
+        assert simple_index.ids().tolist() == [10, 11, 13, 14]
+        assert simple_index.deleted_count() == 1
+        with pytest.raises(TypeError):
+            "11" in simple_index
+        with pytest.raises(ValueError):
+            simple_index.get(-1)
+
 
 class TestReadOnly:
     """An index opened read-only next to a writer."""
@@ -431,6 +445,12 @@ class TestReadOnly:
         writer.flush()
         assert len(reader) == 2
         assert reader.search([0.0, 1.0, 0.0], k=1)[0].id == 11
+
+        writer.delete(10)
+        assert (10 in reader, reader.ids().tolist(), reader.deleted_count()) == (True, [10, 11], 0)
+        writer.flush()
+        assert (10 in reader, reader.ids().tolist(), reader.deleted_count()) == (False, [11], 1)
+        assert reader.get(11).tolist() == [0.0, 1.0, 0.0]
         reader.close()
         writer.close()
 
@@ -607,6 +627,19 @@ class TestFiltered:
         for bad in (np.array([-6]), [105.9], ["105"], np.array([[105, 110]]), np.array([True])):
             with pytest.raises((TypeError, ValueError)):
                 index.search([0.0, 0.0], k=4, allowed=bad)
+        index.close()
+
+    def test_excluded_ids_never_come_back(self, tmp_path):
+        index = VectorIndex(tmp_path / "f.chassis", dimensions=2)
+        for i in range(20):
+            index.add([float(i), 0.0], id=100 + i)
+        results = index.search([0.0, 0.0], k=3, excluded=[100, 102, 7])
+        assert [r.id for r in results] == [101, 103, 104]
+        assert [r.id for r in index.search([0.0, 0.0], k=2, excluded=[])] == [100, 101]
+        both = index.search([0.0, 0.0], k=4, allowed=[119, 105, 110], excluded={105})
+        assert [r.id for r in both] == [110, 119]
+        with pytest.raises(TypeError, match="excluded is a function"):
+            index.search([0.0, 0.0], k=4, excluded=lambda i: i == 100)
         index.close()
 
 
