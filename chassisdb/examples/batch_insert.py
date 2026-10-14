@@ -9,7 +9,7 @@ This script demonstrates:
 
 import time
 import numpy as np
-from chassis import VectorIndex
+from chassisdb import VectorIndex
 
 
 def main():

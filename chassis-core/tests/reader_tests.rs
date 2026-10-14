@@ -1,7 +1,7 @@
 //! Readers searching a file a writer is changing (ADR-0008, decision 5). Readers take no lock, so
 //! most tests run the writer and the reader in one process; one runs the writer in a child.
 
-use chassis_core::{IndexOptions, IndexReader, VectorIndex};
+use chassisdb::{IndexOptions, IndexReader, VectorIndex};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -318,7 +318,7 @@ fn test_a_newer_write_version_is_read_only() {
     for copy in [0, 64 * 1024] {
         let header = &mut bytes[copy..copy + 64 * 1024];
         let len = u32::from_le_bytes(header[32..36].try_into().unwrap()) as usize;
-        header[12..16].copy_from_slice(&(chassis_core::VERSION + 1).to_le_bytes());
+        header[12..16].copy_from_slice(&(chassisdb::VERSION + 1).to_le_bytes());
         // Longer than any header this release writes.
         let extended = len + 10_000;
         header[len..extended].fill(0xab);

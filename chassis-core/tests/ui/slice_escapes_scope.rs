@@ -2,7 +2,7 @@
 //!
 //! If this code compiles, there is a bug in the API design.
 
-use chassis_core::Storage;
+use chassisdb::Storage;
 
 fn main() {
     let slice = {

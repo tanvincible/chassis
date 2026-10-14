@@ -1,4 +1,4 @@
 # Configuration
 
-::: chassis.index.IndexOptions
-::: chassis.index.SearchResult
+::: chassisdb.index.IndexOptions
+::: chassisdb.index.SearchResult

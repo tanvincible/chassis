@@ -2,7 +2,7 @@
 //!
 //! Tests cover the complete lifecycle: open -> add -> search -> flush
 
-use chassis_core::{ErrorKind, IndexOptions, VectorIndex};
+use chassisdb::{ErrorKind, IndexOptions, VectorIndex};
 use tempfile::NamedTempFile;
 
 #[test]
@@ -80,11 +80,11 @@ fn test_dimension_validation() {
 
     // Wrong dimension on add
     let result = index.add(&vec![0.1; 64]);
-    assert_eq!(result.unwrap_err().kind(), chassis_core::ErrorKind::DimensionMismatch);
+    assert_eq!(result.unwrap_err().kind(), chassisdb::ErrorKind::DimensionMismatch);
 
     // Wrong dimension on search
     let error = index.search(&vec![0.1; 64], 5).unwrap_err();
-    assert_eq!(error.kind(), chassis_core::ErrorKind::DimensionMismatch);
+    assert_eq!(error.kind(), chassisdb::ErrorKind::DimensionMismatch);
     assert!(error.to_string().contains("The query has 64 components"));
 }
 
@@ -250,7 +250,7 @@ fn test_ghost_node_recovery() {
 
     // Manually create a ghost node scenario
     {
-        use chassis_core::{HnswGraph, HnswParams, Storage};
+        use chassisdb::{HnswGraph, HnswParams, Storage};
 
         let mut storage = Storage::open(&path, 128).unwrap();
 
@@ -303,7 +303,7 @@ fn test_dimension_mismatch_on_reopen() {
     // Try to open with different dimensions
     {
         let error = VectorIndex::open(&path, 256, IndexOptions::default()).unwrap_err();
-        assert_eq!(error.kind(), chassis_core::ErrorKind::DimensionMismatch);
+        assert_eq!(error.kind(), chassisdb::ErrorKind::DimensionMismatch);
         assert!(error.to_string().contains("holds vectors of 128 dimensions, not 256"));
     }
 }
@@ -336,7 +336,7 @@ fn test_max_connections_mismatch_on_reopen_keeps_data() {
 
 #[test]
 fn test_vectors_without_graph_are_an_error_not_a_reset() {
-    use chassis_core::Storage;
+    use chassisdb::Storage;
 
     let temp_file = NamedTempFile::new().unwrap();
     {
@@ -541,7 +541,7 @@ fn test_unflushed_delete_and_add_roll_back_together() {
 
 #[test]
 fn test_open_never_overwrites_a_short_foreign_file() {
-    use chassis_core::Storage;
+    use chassisdb::Storage;
 
     for contents in [&b"some notes, not an index"[..], b"CHASSIS\0 but truncated"] {
         let temp_file = NamedTempFile::new().unwrap();

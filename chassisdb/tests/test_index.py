@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from pathlib import Path
 
-from chassis import VectorIndex, IndexOptions, SearchResult
-from chassis.exceptions import (
+from chassisdb import VectorIndex, IndexOptions, SearchResult
+from chassisdb.exceptions import (
     ChassisError,
     DimensionMismatchError,
     ReadOnlyError,

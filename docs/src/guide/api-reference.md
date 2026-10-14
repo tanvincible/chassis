@@ -9,7 +9,7 @@ The primary entry point for Chassis. `VectorIndex` orchestrates the storage laye
 #### Opening an Index
 
 ```rust
-use chassis_core::{VectorIndex, IndexOptions};
+use chassisdb::{VectorIndex, IndexOptions};
 
 // Open or create a persistent index
 let mut index = VectorIndex::open(
@@ -185,7 +185,7 @@ lock, so any number of readers can open one file next to its single writer
 and precision from the file; `max_connections` has to be the one the index was created with.
 
 ```rust
-use chassis_core::{IndexOptions, IndexReader};
+use chassisdb::{IndexOptions, IndexReader};
 
 let mut reader = IndexReader::open("embeddings.chassis", 768, IndexOptions::default())?;
 let results = reader.search(&query, 10)?;
@@ -202,12 +202,12 @@ open it once with `VectorIndex::open` to create or migrate it.
 
 ## Errors
 
-`VectorIndex` and `IndexReader` return `chassis_core::Result<T>`, whose error says what was wrong,
+`VectorIndex` and `IndexReader` return `chassisdb::Result<T>`, whose error says what was wrong,
 with the value, and on a line starting `help:` what to do instead. `Error::kind()` is an
 `ErrorKind` to act on ([Errors](./errors.md) lists them, with causes and fixes):
 
 ```rust
-use chassis_core::{ErrorKind, IndexOptions, IndexReader, VectorIndex};
+use chassisdb::{ErrorKind, IndexOptions, IndexReader, VectorIndex};
 
 match VectorIndex::open("embeddings.chassis", 768, IndexOptions::default()) {
     Ok(index) => { /* write */ }
@@ -219,7 +219,7 @@ match VectorIndex::open("embeddings.chassis", 768, IndexOptions::default()) {
 }
 ```
 
-`chassis_core::Error` converts into `anyhow::Error` and `Box<dyn std::error::Error>`, so `?` works
+`chassisdb::Error` converts into `anyhow::Error` and `Box<dyn std::error::Error>`, so `?` works
 in functions that return those.
 
 ## Configuration

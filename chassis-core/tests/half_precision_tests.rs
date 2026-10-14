@@ -2,7 +2,7 @@
 //! vectors as given finds, in a smaller file of its own format version; the precision is the
 //! file's.
 
-use chassis_core::{
+use chassisdb::{
     DistanceMetric, IndexOptions, IndexReader, Precision, Storage, VectorIndex, cosine_distance,
     euclidean_distance,
 };
@@ -164,7 +164,7 @@ fn test_precision_is_the_files() {
 
     // A writer has to name it, as it names the metric; a reader takes it from the file.
     let error = VectorIndex::open(&path, DIMS, IndexOptions::default()).err().unwrap();
-    assert_eq!(error.kind(), chassis_core::ErrorKind::OptionsMismatch);
+    assert_eq!(error.kind(), chassisdb::ErrorKind::OptionsMismatch);
     assert!(error.to_string().contains("opened with half precision too"), "{error}");
     let mut reader = IndexReader::open(&path, DIMS, IndexOptions::default()).unwrap();
     assert_eq!(reader.precision(), Precision::Half);

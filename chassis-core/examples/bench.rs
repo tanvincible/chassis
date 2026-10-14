@@ -8,7 +8,7 @@
 //! bench search <data_dir> <dataset> <index> <truth> <ef>...
 //! ```
 
-use chassis_core::{IndexOptions, IndexReader, Precision, VectorIndex, euclidean_distance};
+use chassisdb::{IndexOptions, IndexReader, Precision, VectorIndex, euclidean_distance};
 use std::path::Path;
 use std::time::Instant;
 

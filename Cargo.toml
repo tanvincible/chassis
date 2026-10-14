@@ -13,7 +13,7 @@ repository = "https://github.com/tanvincible/chassis"
 description = "An embedded vector index for local semantic search: one file, in your process, no server."
 
 [workspace.dependencies]
-chassis-core = { path = "./chassis-core" }
+chassisdb = { path = "./chassis-core" }
 
 anyhow = "1.0.100"
 cbindgen = "0.29.2"

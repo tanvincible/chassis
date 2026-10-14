@@ -4,7 +4,7 @@ line starting "help:" that says what to do instead."""
 import numpy as np
 import pytest
 
-from chassis import (
+from chassisdb import (
     ChassisError,
     DimensionMismatchError,
     IdInUseError,

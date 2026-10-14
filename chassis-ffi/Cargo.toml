@@ -16,7 +16,7 @@ name = "chassis_ffi"
 
 [dependencies]
 anyhow = { workspace = true }
-chassis-core = { path = "../chassis-core" }
+chassisdb = { path = "../chassis-core" }
 libc = { workspace = true }
 
 [build-dependencies]

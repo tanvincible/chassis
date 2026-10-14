@@ -3,7 +3,7 @@
 //!
 //! `cargo run --release --example recall -- [count] [dims]`
 
-use chassis_core::{IndexOptions, VectorIndex, euclidean_distance};
+use chassisdb::{IndexOptions, VectorIndex, euclidean_distance};
 use std::time::Instant;
 
 const QUERIES: usize = 200;

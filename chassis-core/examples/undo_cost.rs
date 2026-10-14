@@ -4,7 +4,7 @@
 //!
 //! `cargo run --release --example undo_cost -- <base> <batch> <singles>`
 
-use chassis_core::{IndexOptions, VectorIndex};
+use chassisdb::{IndexOptions, VectorIndex};
 use std::time::Instant;
 
 const DIMS: usize = 128;

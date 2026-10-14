@@ -6,7 +6,7 @@
 //!
 //! `cargo run --release --example lost_adds -- <kept> <lost>`
 
-use chassis_core::{IndexOptions, VectorIndex, euclidean_distance};
+use chassisdb::{IndexOptions, VectorIndex, euclidean_distance};
 
 const DIMS: usize = 24;
 
