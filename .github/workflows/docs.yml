@@ -51,6 +51,15 @@ jobs:
           cp -r docs/book/. site/
           cp -r chassisdb/site site/python
 
+      # Each book page's Markdown next to its HTML, which a fetch would otherwise get with the
+      # sidebar, menus and keyboard help mixed in. Relative links between pages keep working.
+      - name: Write each page's Markdown
+        run: |
+          (cd docs/src && find . -name '*.md') | while read -r page; do
+            if [ -f "site/${page%.md}.html" ]; then cp "docs/src/$page" "site/$page"; fi
+          done
+          cp docs/src/introduction.md site/index.md
+
       # For agents: an index, and the guides and API references as one page of Markdown.
       - name: Write llms.txt and llms-full.txt
         run: |
