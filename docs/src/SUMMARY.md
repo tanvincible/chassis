@@ -16,10 +16,10 @@
 # Architecture
 
 - [Overview](./architecture/overview.md)
-- [Storage Layer](./architecture/storage.md)
-- [Graph Topology & Construction](./architecture/graph.md)
-- [File Format](./architecture/file-format.md)
-- [Performance Guide](./architecture/performance.md)
+- [Storage](./architecture/storage.md)
+- [Graph](./architecture/graph.md)
+- [File format](./architecture/file-format.md)
+- [Performance](./architecture/performance.md)
 
 # Development
 

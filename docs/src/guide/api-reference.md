@@ -167,7 +167,7 @@ discarded, as after a crash.
 
 At rest the index is one file. A `<name>.undo` file sits beside it from the first add after a flush
 until the next flush, and after a crash until a writer reopens the index ([file
-format](../architecture/file-format.md#the-undo-file)). Move, copy or delete the two together.
+format](../architecture/file-format.md#undo-file)). Move, copy or delete the two together.
 
 #### Lookups
 

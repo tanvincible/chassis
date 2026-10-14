@@ -1,6 +1,9 @@
-# Performance Guide
+# Performance
 
-## Where Chassis stands
+How fast Chassis searches and builds, against hnswlib, FAISS and usearch, with the machines, the
+data and the commands to measure it yourself.
+
+## Summary
 
 Measured from 2026-10-08 to 2026-10-10, one thread searching, on GitHub's server runners (AMD EPYC
 Zen 3, 4 and 5, Intel Xeon, Arm Neoverse-N2) and an Apple M5. The decision records hold the
@@ -30,10 +33,11 @@ a third of its speed from Rust, 15 to 38 µs a query; in one call it is within 5
 | 1,536 dims × 99k | Zen 4 1.26×, Xeon 1.05×, N2 2.92× | Zen 4 0.78×, Xeon 0.95×, N2 1.09× |
 | 1,536 dims × 99k, half | Zen 4 1.91×, Xeon 1.55×, N2 2.92× | Zen 4 1.19×, Xeon 1.40×, N2 1.09× |
 
-**From a cold start** ([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md), Apple M5, 99,000 × 1,536 dims, the file not
-in memory): the first result came 0.11 s after the process started, where hnswlib, which loads its
-file first, gave its first at 0.5 to 0.8 s. With `warm()`, the hundredth result came at 0.37 s
-instead of 1.9 s.
+**From a cold start**
+([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md), Apple M5, 99,000
+× 1,536 dims, the file not in memory): the first result came 0.11 s after the process started.
+hnswlib, which loads its file first, gave its first at 0.5 to 0.8 s. With `warm()`, the hundredth
+result came at 0.37 s instead of 1.9 s.
 
 The sections below are earlier measurements, from 2026-10-03 to 2026-10-05 on the M5 and mostly
 of file format 2: they show how Chassis got here, not where it is now.
@@ -43,7 +47,7 @@ with rustc 1.99.0 and release builds, on a machine that was also running other a
 on other machines will differ, so the commands to reproduce them are at the end. Search and build
 numbers below are for the code after the 33-candidate cap was removed (ADR-0004 amendment).
 
-## Against hnswlib and usearch
+## Other engines
 
 From `bench/ann`: the same settings for every engine (`M` 16, `ef_construction` 200), one thread for
 building and searching, 1,000 queries per dataset, recall@10 against the datasets' ground truth.
@@ -79,7 +83,7 @@ What these numbers do and don't show:
 * **Removing the 33-candidate cap made dbpedia's build 19% slower** (420 s against 352 s), in
   exchange for higher recall at every `ef`; on SIFT and the 20k example, build time didn't increase.
 
-## End to End
+## End to end
 
 From
 [`examples/recall.rs`](https://github.com/tanvincible/chassis/blob/main/chassis-core/examples/recall.rs):
@@ -132,7 +136,7 @@ From `storage_bench`, 768-dimensional vectors, in a temp dir on APFS.
 elsewhere). Insert in batches and flush once per batch. A temp dir on tmpfs makes fsync free, so
 benchmarks run there understate this cost.
 
-## Distance Kernels
+## Distance kernels
 
 From `distance_bench`, NEON on this machine (AVX2 on x86_64).
 
@@ -147,14 +151,14 @@ From `distance_bench`, NEON on this machine (AVX2 on x86_64).
 
 SIMD throughput is about 10 billion elements per second at 384 dimensions and up.
 
-## Other Benchmarks
+## Other benchmarks
 
 `search_bench`, `link_bench`, `graph_io_bench` and `hnsw_node_bench` are microbenchmarks.
 `search_bench` searches hand-wired graphs (single-layer, except the greedy-descent bench) over
 vectors with at most 16 non-zero dimensions, not graphs built by `VectorIndex`, so its latencies are
 far below real search. Use `examples/recall.rs` for end-to-end numbers.
 
-## Index Size
+## Index size
 
 Each slot takes a 24-byte slot header, its vector, and a level-0 record of `8 + 4 × M0` bytes (136
 with the defaults). The few nodes above layer 0 add `4 × M` bytes per extra layer in the upper heap,
@@ -177,9 +181,7 @@ results. In short, on the same graphs converted from format 2:
 * **Files are 4.7× smaller on SIFT-1M** (713 MB against 3,379 MB) and 1.2× on dbpedia (821 MB
   against 982 MB). Converting SIFT-1M took 9.4 s.
 * **Opening a 10M-slot file takes under 1 ms;** it only maps the file, so pages load on first
-  touch. An index with its own ids builds its id table on the first add or delete in each process:
-  at 10M ids, a median of 0.47 s with the file in the page cache and 0.91 s right after copying it,
-  on a machine with other load. Filling the hash table is over 90% of that.
+  touch. An index with its own ids builds its id table on the first add or delete in each process. At 10M ids that took a median of 0.47 s with the file in the page cache, and 0.91 s right after copying it, on a machine with other load. Filling the hash table is over 90% of that.
 
 Built from scratch on format 3 (one thread, same settings as the table above, with other
 applications running, so build times are indicative):
