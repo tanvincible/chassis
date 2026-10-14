@@ -110,7 +110,9 @@ def check_spec(spec: str) -> str:
     kind, _, model = spec.partition(":")
     if kind not in KINDS or not model:
         guess = difflib.get_close_matches(kind, KINDS, n=1, cutoff=0.5)
-        did_you_mean = f"did you mean {guess[0]}:{model or '<model>'}? " if guess else ""
+        did_you_mean = (
+            f"did you mean {guess[0]}:{model or '<model>'}? " if guess else ""
+        )
         raise Problem(
             f"The embedder is {spec!r}, but has to be <kind>:<model>\nhelp: {did_you_mean}"
             f"pick one of\n{EMBEDDERS}"
@@ -132,7 +134,9 @@ class Embedder:
         def load() -> None:
             try:
                 self._load()
-            except Exception as e:  # The first call that needs the model reports it again.
+            except (
+                Exception
+            ) as e:  # The first call that needs the model reports it again.
                 log(str(e).replace("\n", " "))
 
         threading.Thread(target=load, daemon=True).start()
@@ -242,7 +246,9 @@ def _openai(model: str) -> Callable[[list[str]], object]:
             ) from None
         try:
             data = json.loads(said)["data"]
-            return [row["embedding"] for row in sorted(data, key=lambda row: row["index"])]
+            return [
+                row["embedding"] for row in sorted(data, key=lambda row: row["index"])
+            ]
         except (ValueError, KeyError, TypeError):
             raise Problem(
                 f"The embeddings API at {base} answered with no embeddings: {said.strip()[:300]}\n"
@@ -291,8 +297,7 @@ class Memory:
                 db, isolation_level=None, timeout=WAIT_SECONDS, check_same_thread=False
             )
             self.db.execute("PRAGMA journal_mode=WAL")
-            self.db.executescript(
-                """
+            self.db.executescript("""
                 CREATE TABLE IF NOT EXISTS memories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     text TEXT NOT NULL,
@@ -300,8 +305,7 @@ class Memory:
                     created TEXT NOT NULL DEFAULT (datetime('now'))
                 );
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                """
-            )
+                """)
         except sqlite3.Error as e:
             raise Problem(
                 f"{db} can't be used as a memory: {e}\nhelp: check that the folder can be "
@@ -395,10 +399,15 @@ class Memory:
     def _ids(self, tag: str | None) -> list[int]:
         if tag is None:
             return [row[0] for row in self.db.execute("SELECT id FROM memories")]
-        ids = [row[0] for row in self.db.execute(_TAGGED, (tag,))]
+        # In id order, which Chassis searches without copying (ADR-0022).
+        ids = [
+            row[0] for row in self.db.execute(_TAGGED + " ORDER BY memories.id", (tag,))
+        ]
         if not ids and self.db.execute("SELECT 1 FROM memories LIMIT 1").fetchone():
             counts = self._tag_counts()
-            close = difflib.get_close_matches(tag.lower(), [t.lower() for t in counts], n=1)
+            close = difflib.get_close_matches(
+                tag.lower(), [t.lower() for t in counts], n=1
+            )
             meant = next((t for t in counts if close and t.lower() == close[0]), None)
             tags = ", ".join(f"{t} ({n})" for t, n in counts.items())
             raise Problem(
@@ -415,6 +424,9 @@ class Memory:
                 "GROUP BY json_each.value ORDER BY count(*) DESC, json_each.value"
             ).fetchall()
         )
+
+    def _count(self) -> int:
+        return int(self.db.execute("SELECT count(*) FROM memories").fetchone()[0])
 
     def _no_index(self, count: int) -> Problem:
         return Problem(
@@ -449,17 +461,19 @@ class Memory:
         vector = embedder([text])[0]  # Outside the lock: a model can take seconds
         with self.lock, self._writing():
             self._check_model(embedder)
-            others = self._ids(None)
+            others = self._count()
             if self._meta("embedder") is None:
                 self._set_meta("embedder", embedder.spec)
                 self._set_meta("dimensions", len(vector))
             elif others and not self.path.exists():
-                raise self._no_index(len(others))
+                raise self._no_index(others)
             id = self.db.execute(
-                "INSERT INTO memories (text, tags) VALUES (?, ?)", (text, json.dumps(tags))
+                "INSERT INTO memories (text, tags) VALUES (?, ?)",
+                (text, json.dumps(tags)),
             ).lastrowid
             with self._open(len(vector)) as index:
-                nearest = index.search(vector, k=3, allowed=others) if others else []
+                # A vector a crash left under this id has no row yet; _rows drops any other.
+                nearest = index.search(vector, k=3, excluded=[id]) if others else []
                 if id in index:  # A vector a crash left before its row was saved
                     index.delete(id)
                 index.add(vector, id=id)
@@ -479,13 +493,17 @@ class Memory:
         vector = embedder([query])[0]
         with self.lock:
             self._check_model(embedder)
-            ids = self._ids(tag)
-            if not ids:
+            # Every memory needs no filter: _rows drops a vector a crash left without its row.
+            ids = self._ids(tag) if tag is not None else None
+            count = len(ids) if ids is not None else self._count()
+            if not count:
                 return []
             if not self.path.exists():
-                raise self._no_index(len(ids))
+                raise self._no_index(count)
             try:
-                with self._open(int(self._meta("dimensions") or 0), read_only=True) as reader:
+                with self._open(
+                    int(self._meta("dimensions") or 0), read_only=True
+                ) as reader:
                     hits = reader.search(vector, k=k, allowed=ids)
             except DimensionMismatchError as e:
                 raise self._mismatch(e) from e
@@ -513,10 +531,16 @@ class Memory:
             self.db.execute("DELETE FROM memories WHERE id = ?", (id,))
             return {"forgotten": _memory(row)}
 
-    def overview(self, tag: str | None = None, limit: int = 20, offset: int = 0) -> Overview:
+    def overview(
+        self, tag: str | None = None, limit: int = 20, offset: int = 0
+    ) -> Overview:
         with self.lock:
-            where, args = (f"WHERE id IN ({_TAGGED})", (tag,)) if tag is not None else ("", ())
-            total = self.db.execute(f"SELECT count(*) FROM memories {where}", args).fetchone()[0]
+            where, args = (
+                (f"WHERE id IN ({_TAGGED})", (tag,)) if tag is not None else ("", ())
+            )
+            total = self.db.execute(
+                f"SELECT count(*) FROM memories {where}", args
+            ).fetchone()[0]
             rows = self.db.execute(
                 f"SELECT id, text, tags, created FROM memories {where} ORDER BY id DESC "
                 "LIMIT ? OFFSET ?",
@@ -550,27 +574,43 @@ class Memory:
             )
         target = Embedder(self.default)
         with self.lock:
-            first = self.db.execute("SELECT id, text FROM memories ORDER BY id").fetchall()
+            first = self.db.execute(
+                "SELECT id, text FROM memories ORDER BY id"
+            ).fetchall()
         vectors: dict[int, np.ndarray] = {}
         for start in range(0, len(first), 64):
             batch = first[start : start + 64]
-            vectors.update(zip([id for id, _ in batch], target([t for _, t in batch]), strict=True))
-            print(f"embedded {len(vectors)} of {len(first)}", file=sys.stderr, flush=True)
+            vectors.update(
+                zip([id for id, _ in batch], target([t for _, t in batch]), strict=True)
+            )
+            print(
+                f"embedded {len(vectors)} of {len(first)}", file=sys.stderr, flush=True
+            )
         fresh = self.folder / "memory-reembed.chassis"
         try:
             with self.lock, self._writing():
-                rows = self.db.execute("SELECT id, text FROM memories ORDER BY id").fetchall()
+                rows = self.db.execute(
+                    "SELECT id, text FROM memories ORDER BY id"
+                ).fetchall()
                 added = [(id, text) for id, text in rows if id not in vectors]
                 if added:
                     vectors.update(
-                        zip([id for id, _ in added], target([t for _, t in added]), strict=True)
+                        zip(
+                            [id for id, _ in added],
+                            target([t for _, t in added]),
+                            strict=True,
+                        )
                     )
-                Path(f"{self.path}.undo").unlink(missing_ok=True)  # The old index's, if any
+                Path(f"{self.path}.undo").unlink(
+                    missing_ok=True
+                )  # The old index's, if any
                 if rows:
                     ids = [id for id, _ in rows]
                     matrix = np.stack([vectors[id] for id in ids])
                     _remove_index(fresh)
-                    with VectorIndex(fresh, dimensions=matrix.shape[1], options=OPTIONS) as index:
+                    with VectorIndex(
+                        fresh, dimensions=matrix.shape[1], options=OPTIONS
+                    ) as index:
                         index.add_batch(matrix, ids=ids)
                         index.flush()
                     _replace(fresh, self.path)
@@ -710,7 +750,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     # Not set_defaults: the subcommands share these options, defaults and all.
     args.embedder = getattr(args, "embedder", os.environ.get("CHASSISDB_MCP_EMBEDDER"))
-    args.dir = getattr(args, "dir", Path(os.environ.get("CHASSISDB_MCP_DIR", DEFAULT_DIR)))
+    args.dir = getattr(
+        args, "dir", Path(os.environ.get("CHASSISDB_MCP_DIR", DEFAULT_DIR))
+    )
     args.json = getattr(args, "json", False)
     serving = args.command in (None, "serve")
 

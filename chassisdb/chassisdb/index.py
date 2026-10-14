@@ -543,7 +543,9 @@ class VectorIndex:
             k: Number of nearest neighbors to return (default: 10)
             allowed: If given, only these ids can be returned. When walking
                 the graph would cost more, as when few vectors match, every
-                vector is checked instead and the results are exact.
+                vector is checked instead and the results are exact. A
+                numpy array of ids in ascending order costs the least; don't
+                pass every id just to keep stray vectors out.
             excluded: If given, these ids are never returned, as for "more
                 like this" leaving out the vector it starts from.
 

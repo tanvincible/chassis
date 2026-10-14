@@ -70,15 +70,11 @@ saved, and the flush saves both or neither.
 
 ## Reading
 
-Pass the database's ids as `allowed`, so a vector a crash left takes no result's place, and join
-the rows back by id:
+Search the index, then join the rows back by id:
 
 ```python
 def search(query, k=5):
-    ids = [row[0] for row in db.execute("SELECT id FROM notes")]
-    if not ids:
-        return []
-    hits = index.search(embed([query])[0], k=k, allowed=ids)
+    hits = index.search(embed([query])[0], k=k)
     rows = dict(db.execute(
         f"SELECT id, text FROM notes WHERE id IN ({','.join('?' * len(hits))})",
         [hit.id for hit in hits],
@@ -86,7 +82,14 @@ def search(query, k=5):
     return [(hit.distance, rows[hit.id]) for hit in hits if hit.id in rows]
 ```
 
-A filter works the same way: `SELECT id FROM notes WHERE owner = ?` gives the `allowed` ids.
+A vector a crash left without its row finds no row in the join and is dropped, and `mend()` at the
+next start removes it, so a search needs no filter for it. Don't pass every row's id as `allowed`
+to keep such vectors out: building the filter costs a pass over all of them on every search.
+
+For a filter of your own, pass the ids it selects as `allowed`, in id order:
+`SELECT id FROM notes WHERE owner = ? ORDER BY id`. Ids in ascending order are searched where they
+lie; in any other order they are copied into a set first
+([ADR-0022](https://github.com/tanvincible/chassis/blob/main/docs/adr/022-allowed-ids.md)).
 
 ## Mending
 
