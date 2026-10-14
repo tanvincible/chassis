@@ -30,7 +30,7 @@ from chassisdb.exceptions import (
 )
 from chassisdb.index import IndexOptions, SearchResult, VectorIndex
 
-__version__ = "0.7.2"
+__version__ = "0.8.0"
 __all__ = [
     "VectorIndex",
     "SearchResult",

@@ -58,7 +58,7 @@ Chassis fits an app that embeds its own data and searches it on the same machine
 
 ## Status
 
-Early, and moving fast. The latest release is v0.7.2. See [CHANGELOG.md](CHANGELOG.md).
+Early, and moving fast. The latest release is v0.8.0. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
