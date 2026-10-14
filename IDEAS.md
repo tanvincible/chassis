@@ -309,6 +309,72 @@ asked for is below, most asked first.
 * **To validate**: nothing to measure. Taking every option from the file when none are given is an
   API decision; C's `chassis_open_reader` would keep a `max_connections` it no longer needs.
 
+## Where Chassis could plug in
+
+Frameworks and tools whose vector store can be swapped, from a survey (2026-10-14). What was
+checked against their code says so; the rest is the survey's.
+
+### A txtai backend
+
+* **Known** (checked): txtai takes a backend by name or by full class path, so a `txtai-chassisdb`
+  package needs nothing from upstream; zvec is already a backend. Its ids are positions from 0 that
+  continue on append, as Chassis's own are; scores are 1 − distance; txtai keeps the text itself.
+  `save(path)` puts the index at a path txtai picks, which wants Python `snapshot()` (above).
+* **To validate**: txtai's benchmarks with Chassis against its hnsw and faiss backends, then a PR
+  to name `chassis` as a built-in.
+
+### A Rig vector store
+
+* **Known**: Rig is the main Rust LLM framework; its stores are companion crates implementing
+  `VectorStoreIndex`, and the embedded ones are LanceDB and SQLite. A search returns each hit's
+  document, so like the LangChain store it would keep documents in SQLite (unchecked against the
+  current trait). Outside the root workspace, Rig's dependencies and MSRV don't bind the core's.
+* **To validate**: the trait as it is now, and whether Rig lists outside crates.
+
+### LlamaIndex
+
+* **Known**: Hnswlib and Faiss are among its local stores. A store with `stores_text = False`
+  leaves node text in LlamaIndex's docstore, so Chassis keeps only vectors.
+* **To validate**: where LlamaIndex lists outside packages now.
+
+### mem0
+
+* **Known** (checked): its stores are a fixed map from names to classes, so getting in is a PR to
+  mem0. Memories are filtered by user and agent: payloads in SQLite and `allowed`, as
+  `chassisdb-mcp` does.
+* **To validate**: whether mem0 takes new providers.
+
+### A Node binding
+
+* **Known**: the local-first agent tools with the most users are TypeScript and run Python or a
+  server for their vectors: claude-mem (SQLite and Chroma, installing uv for it), Roo Code (Qdrant
+  only), Kilo Code (LanceDB, which its docs say doesn't work on Intel Macs). zvec has a Node SDK.
+  `chassisdb` is free on npm. napi-rs keeps the Rust and npm sides in one folder, with a prebuilt
+  binary per platform; it would be a third binding to keep in step with the others.
+* **To validate**: ask claude-mem's and Kilo's maintainers whether they'd take it, before building.
+
+### VIBE
+
+* **Known**: ann-benchmarks says it's no longer maintained and points to VIBE.
+* **To validate**: run VIBE locally first; submit where Chassis holds up against hnswlib and FAISS.
+
+### One payload store for every integration
+
+* **Known**: the survey suggests a shared "Chassis and SQLite payloads" helper. txtai and
+  LlamaIndex keep text themselves; the LangChain store and `chassisdb-mcp` each have their own.
+* **To validate**: once mem0 or Rig makes a third copy, whether the copies are the same code, and
+  whether a helper fits one file, not a database.
+
+### Where they'd live
+
+* **Known**: `integrations/` already holds `langchain-chassisdb`, and new packages fit there and
+  beside `chassis-ffi` without moving anything. Moving `chassis-core`, `chassis-ffi` and
+  `chassisdb` into `crates/` and `bindings/` touches CI, releases, wheels, `build.rs`'s path to the
+  skill and every doc link, for nothing a user sees. One name everywhere: `txtai-chassisdb`,
+  `rig-chassisdb`, `llama-index-vector-stores-chassisdb`, `chassisdb` on npm.
+* **To validate**: integrations now release with the core's tag; with several, a tag of their own
+  lets each follow its framework's releases.
+
 ## Results nobody has explained
 
 * **FAISS's HNSW still searches long vectors faster on x86**: at 1,536 dimensions in full precision,
