@@ -11,7 +11,7 @@ site_dir: site
 
 nav:
   - Home: index.md
-  - User Guide:
+  - Guide:
       - Quickstart: user-guide/quickstart.md
       - Performance: user-guide/performance.md
   - API:

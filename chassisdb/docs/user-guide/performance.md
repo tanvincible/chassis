@@ -1,15 +1,20 @@
-# Performance & Tuning
+# Performance
 
-A search over tens of thousands of vectors takes about a tenth of a millisecond, and adding a few
-thousand vectors with `add_batch` a tenth of a second, so in most apps the embedding model sets the
-speed: embedding a query takes milliseconds, and embedding a corpus most of the time an index takes
-to build. With several worker processes on one machine, limit each model's threads (fastembed's
-`threads=`, PyTorch's `torch.set_num_threads`) so they don't fight over the cores; embed texts of
-similar length together, since a batch is padded to its longest text.
+This page shows how fast Chassis is through Python, and the options that trade build speed, search
+speed and recall.
 
-Chassis is built on HNSW (Hierarchical Navigable Small World) graphs. You can tune the trade-off between build speed, search speed, and recall accuracy using `IndexOptions`.
+On an Apple M5 in Low Power Mode (2026-10-15), through Python, a search over 20,000 random vectors
+of 384 dimensions took a median of 0.16 ms, and `add_batch` of 5,000 of them into an empty index
+took 0.57 s. Time your embedding model too: in most apps it, not the index, sets the speed.
 
-## Configuration Options
+- With several worker processes on one machine, limit each model's threads (fastembed's
+  `threads=`, PyTorch's `torch.set_num_threads`) so they don't fight over the cores.
+- Embed texts of similar length together, since a batch is padded to its longest text.
+
+Chassis searches an HNSW graph (Hierarchical Navigable Small World). `IndexOptions` sets how it
+trades build speed, search speed and recall.
+
+## Options
 
 You can pass an `IndexOptions` object when opening the index.
 
@@ -25,7 +30,7 @@ options = IndexOptions(
 index = VectorIndex("tuned.chassis", dimensions=128, options=options)
 ```
 
-### Understanding Parameters
+### Parameters
 
 | Parameter | Description | Default | Impact |
 | --- | --- | --- | --- |
@@ -36,31 +41,31 @@ index = VectorIndex("tuned.chassis", dimensions=128, options=options)
 | **`huge_pages`** | Ask Linux to keep the vectors on 2 MB pages. | `False` | On an index too large for the CPU's caches, up to a quarter faster search. Does nothing off Linux, or where the kernel and filesystem don't keep files on huge pages (ext4 on Linux 6.17 does). An index much larger than memory reads 2 MB per miss. |
 | **`warm`** | Read the index into memory on another thread from the moment it is opened; `warm()` asks for it later. | `False` | While the file isn't in memory yet, as after a reboot, searches stop waiting for the disk one page at a time. On an Apple M5 the hundredth search over 99,000 vectors of 1,536 dimensions came 0.37 s after the process started, instead of 1.9 s. For an index that fits in memory. Linux 5.14 or later, or macOS; an older Linux reads in only some of the index, and Windows none. |
 
-## Smaller Files
+## Smaller files
 
 An index is mostly its vectors: 4 bytes a dimension, 2 with `precision="half"`, and about 160 bytes
-a vector for the graph. Besides half precision, the way to shrink it is fewer dimensions. Some
-embedding models are trained so that the first part of a vector works on its own ("Matryoshka"
-embeddings); OpenAI's text-embedding-3 models take a `dimensions` argument for it. Keeping 512 of
-1,536 dimensions makes the index about a third of the size. Measure recall on your own queries
-first: OpenAI reports text-embedding-3-large at 256 dimensions doing better than ada-002 at 1,536,
-but a model not trained this way loses much more. Cut vectors yourself only with the `cosine`
-metric, or normalize them again. Lower `max_connections` saves less: 12 instead of 16 makes a
-128-dimension file in half precision 7% smaller and one of 1,536 dimensions 1%, and builds 7 to 18%
-faster, but searches for 0.99 recall at 128 and 384 dimensions take up to 14% longer.
+a vector for the graph. Besides half precision, the way to shrink it is fewer dimensions. Matryoshka
+embeddings are trained so that the first part of a vector works on its own; OpenAI's
+text-embedding-3 models take a `dimensions` argument for it. Keeping 512 of 1,536 dimensions makes
+the index about a third of the size. Measure recall on your own queries first: OpenAI reports
+text-embedding-3-large at 256 dimensions doing better than ada-002 at 1,536, but a model not trained
+this way loses much more. Cut vectors yourself only with the `cosine` metric, or normalize them
+again. Lower `max_connections` saves less. 12 instead of 16 makes a 128-dimension file in half
+precision 7% smaller, and one of 1,536 dimensions 1%. Builds are 7 to 18% faster, but searches for
+0.99 recall at 128 and 384 dimensions take up to 14% longer.
 
-## Many Queries
+## Many queries
 
 `search_batch(queries, k)` searches a `(count, dimensions)` array in one call and returns the ids
 and distances as two `(count, k)` arrays. `search` adds 15 to 38 µs a query on the server CPUs
 measured (checking the query, buffers, result objects), which `search_batch` pays once per batch. On
-GitHub's server runners a batch made 1.20 to 1.42 times the queries a second of one call per query
-over a million vectors of 128 dimensions, and 1.10 to 1.13 times over 99,000 of 1,536, within 5% of
-the same searches from Rust (0.95 recall).
+GitHub's server runners, a batch made 1.20 to 1.42 times the queries a second of one call per query
+over a million vectors of 128 dimensions, and 1.10 to 1.13 times over 99,000 of 1,536. That is
+within 5% of the same searches from Rust (0.95 recall).
 
-## Batch Insertion Strategy
+## Batches
 
-Calling `flush()` involves an `fsync` system call, which is expensive. For maximum write throughput:
+A flush waits for the disk (`fsync`), so it takes milliseconds. To add many vectors quickly:
 
 1. Add vectors with `add_batch`, which links them on every core, in chunks of, say, 10,000.
 2. Call `flush()` once at the end, or every few chunks to bound what a crash can lose.
