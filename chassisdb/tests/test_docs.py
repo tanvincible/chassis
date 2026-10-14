@@ -62,4 +62,3 @@ def test_the_database_guide_survives_what_it_says_a_crash_leaves(tmp_path, monke
     assert sorted(index.ids()) == sorted(r[0] for r in db.execute("SELECT id FROM notes"))
     page["delete_note"](ids[0])
     assert ids[0] not in index and "apples" not in {t for _, t in page["search"]("x", k=10)}
-
