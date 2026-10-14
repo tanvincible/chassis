@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=80.10"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langchain-chassisdb"
+version = "0.1.0"
+description = "LangChain vector store on Chassis: semantic search in one file, in your own process"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+authors = [{name = "Chassis Contributors"}]
+keywords = ["langchain", "vector store", "semantic search", "rag", "embeddings"]
+dependencies = [
+    "chassisdb>=0.8",
+    "langchain-core>=1.0,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/tanvincible/chassis"
+Repository = "https://github.com/tanvincible/chassis"
+
+[tool.setuptools]
+packages = ["langchain_chassisdb"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
