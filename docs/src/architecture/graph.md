@@ -32,7 +32,7 @@ graph.link_node_bidirectional(2, 1, &[vec![0, 1]])?;    // Node 2: links to 0, 1
 
 ## 2. Crash Consistency Model
 
-After a crash, reopening keeps every add and delete up to the last `flush()` and drops later ones; graph edges changed after that flush may be partly lost, which can lower recall. Process kills are tested by
+After a crash, reopening keeps every add and delete up to the last `flush()`, drops later ones, and finds the graph as that flush left it; a power loss between flushes can still leave some neighbor lists changed, which can lower recall. Process kills are tested by
 `chassis-core/tests/crash_tests.rs`, and power loss is simulated by `chassis-core/src/power_loss.rs`
 (not on real hardware). The write order below protects against a process crash only, because the OS
 writes mmap pages back in any order; under power loss the fsyncs in `flush()` are what order writes. See the
