@@ -1,7 +1,7 @@
 # ADR-0010: Parallel Batch Builds
 
 **Date:** 2026-10-07
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#17)
 
 ## Context
 

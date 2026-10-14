@@ -1,7 +1,7 @@
 # ADR-0019: Reading an Index into Memory in the Background, on Request
 
 **Date:** 2026-10-10
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#40)
 
 ## Context
 

@@ -1,7 +1,9 @@
 # ADR-0008: File Format v3 and Multi-Process Readers
 
-**Date:** 2026-10-04 **Status:** Proposed. Accept only after the experiments in "Before Accepting"
-pass. Implemented on 2026-10-05, readers in other processes included; see "Implementation Status".
+**Date:** 2026-10-04 **Status:** Accepted; shipped in v0.7.0. Implemented on 2026-10-05, readers
+in other processes included. "Before Accepting" passed with gaps, recorded under "Implementation
+Status": exFAT on Windows is untested, readers were not tested during a compaction, and the id
+table meets its time only with the file in the page cache.
 
 ## Summary
 

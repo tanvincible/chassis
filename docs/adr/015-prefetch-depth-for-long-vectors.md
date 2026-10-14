@@ -1,7 +1,7 @@
 # ADR-0015: Prefetch Depth for Long Vectors
 
 **Date:** 2026-10-09
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#30)
 
 ## Context
 

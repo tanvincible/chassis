@@ -1,7 +1,7 @@
 # ADR-0011: Compaction
 
 **Date:** 2026-10-08
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#21)
 
 ## Context
 

@@ -1,7 +1,7 @@
 # ADR-0012: Rolling Back Lost Adds
 
 **Date:** 2026-10-08
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#23)
 
 ## Context
 
