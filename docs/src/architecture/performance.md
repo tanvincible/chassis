@@ -7,7 +7,7 @@ Zen 3, 4 and 5, Intel Xeon, Arm Neoverse-N2) and an Apple M5. The decision recor
 details and the commands.
 
 **Against hnswlib, at the same recall**: queries a second, Chassis over hnswlib
-([ADR-0017](../adr/017-equal-recall-and-long-vectors.md), [ADR-0018](../adr/018-half-precision.md)).
+([ADR-0017](https://github.com/tanvincible/chassis/blob/main/docs/adr/017-equal-recall-and-long-vectors.md), [ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)).
 
 | Vectors | x86 | Neoverse-N2 |
 | --- | --- | --- |
@@ -15,7 +15,7 @@ details and the commands.
 | 960 dims × 200k | 0.86–1.05×; in half precision 1.0–2.1× | 1.65–1.77×; half 2.3–2.5× |
 | 1,536 dims × 99k | 0.82–1.13×; in half precision 1.0–1.7× | 1.85–2.33×; half 2.45–2.93× |
 
-These came before distances were computed in groups ([ADR-0021](../adr/021-grouped-distances.md)),
+These came before distances were computed in groups ([ADR-0021](https://github.com/tanvincible/chassis/blob/main/docs/adr/021-grouped-distances.md)),
 which made searches over vectors of a kilobyte or more another 11 to 60% faster out of cache.
 
 **Through Python**: each engine through its Python package on one thread, every query in one call
@@ -30,7 +30,7 @@ a third of its speed from Rust, 15 to 38 µs a query; in one call it is within 5
 | 1,536 dims × 99k | Zen 4 1.26×, Xeon 1.05×, N2 2.92× | Zen 4 0.78×, Xeon 0.95×, N2 1.09× |
 | 1,536 dims × 99k, half | Zen 4 1.91×, Xeon 1.55×, N2 2.92× | Zen 4 1.19×, Xeon 1.40×, N2 1.09× |
 
-**From a cold start** ([ADR-0019](../adr/019-warm.md), Apple M5, 99,000 × 1,536 dims, the file not
+**From a cold start** ([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md), Apple M5, 99,000 × 1,536 dims, the file not
 in memory): the first result came 0.11 s after the process started, where hnswlib, which loads its
 file first, gave its first at 0.5 to 0.8 s. With `warm()`, the hundredth result came at 0.37 s
 instead of 1.9 s.
@@ -168,7 +168,7 @@ ever copied to grow the file.
 
 ## Format 3
 
-[ADR-0008](../adr/008-format-v3-and-multi-process-readers.md) "Implementation Status" has the full
+[ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md) "Implementation Status" has the full
 results. In short, on the same graphs converted from format 2:
 
 * **Search returns identical results,** ids and distances, for every query at every ef on SIFT-1M
@@ -210,7 +210,7 @@ Graphs built on every core reach the same recall as one-thread builds of either 
 0.002 from `ef` 32 up, and 0.007 below). Their QPS varied by up to 40% either way between single
 passes, so these runs don't compare search speed. An earlier parallel dbpedia run the same day took 159 s for Chassis and 158 s
 for hnswlib, so builds vary by about 10% between runs. The 1,536-dimension build scales less for
-both engines; [ADR-0010](../adr/010-parallel-batch-builds.md) has the details.
+both engines; [ADR-0010](https://github.com/tanvincible/chassis/blob/main/docs/adr/010-parallel-batch-builds.md) has the details.
 
 ## Reproduce
 

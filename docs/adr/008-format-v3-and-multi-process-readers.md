@@ -34,7 +34,7 @@ readers need, so that adding them later needs no format change.
 
 ## Context
 
-Measured on 2026-10-04 (see the [Performance](../architecture/performance.md) page and the
+Measured on 2026-10-04 (see the [Performance](../src/architecture/performance.md) page and the
 `bench/ann` suite):
 
 * Every node record reserves 2,192 bytes: room for 16 layers of u64 neighbor ids. 94% of nodes only
@@ -371,7 +371,7 @@ original stays in use, and migration retries on the next open.
 
 On 2026-10-05. Built:
 * **Layout (decision 1):** header copies at 0 and 64 KiB, the live page, then 64 KiB-aligned
-  segments, upper-heap chunks and table pages, as in [File Format](../architecture/file-format.md).
+  segments, upper-heap chunks and table pages, as in [File Format](../src/architecture/file-format.md).
   A heap reference is `chunk << 32 | offset`, so chunks need no shared offset formula. No metadata
   heap is created yet; every slot's metadata reference is 0.
 * **Compact records (decision 3):** u32 neighbor ids; `M` from 2 to 32,767.
@@ -405,7 +405,7 @@ lock), allocating space before writing to it, an explicit `migrate()`, and chang
 `max_connections`.
 
 Results of "Before Accepting", measured on the same Apple M5 as the
-[Performance](../architecture/performance.md) page:
+[Performance](../src/architecture/performance.md) page:
 
 1. **Windows: passes on NTFS; exFAT and one migration step untested.** A probe on GitHub's
    `windows-latest` (branch `probe/windows-mmap`, 2026-10-06), each check run against another

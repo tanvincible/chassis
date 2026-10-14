@@ -11,7 +11,7 @@ branch, and move here when they have been.
 
 ### Eight bits a component
 
-Half precision halved the file with the same recall ([ADR-0018](docs/src/adr/018-half-precision.md)).
+Half precision halved the file with the same recall ([ADR-0018](docs/adr/018-half-precision.md)).
 Eight bits will halve the vectors again: 1,544 bytes each at 1,536 dimensions, against 3,072.
 
 Each vector will be stored as its difference from a center, in 256 steps between that

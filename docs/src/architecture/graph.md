@@ -36,7 +36,7 @@ After a crash, reopening keeps every add and delete up to the last `flush()` and
 `chassis-core/tests/crash_tests.rs`, and power loss is simulated by `chassis-core/src/power_loss.rs`
 (not on real hardware). The write order below protects against a process crash only, because the OS
 writes mmap pages back in any order; under power loss the fsyncs in `flush()` are what order writes. See the
-[ADR-0005 amendment](../adr/005-crash-consistent-linking.md#amendment-2026-10-03).
+[ADR-0005 amendment](https://github.com/tanvincible/chassis/blob/main/docs/adr/005-crash-consistent-linking.md#amendment-2026-10-03).
 
 ### The Atomic Write Sequence
 
@@ -72,7 +72,7 @@ When a neighbor list exceeds its capacity (`M` or `M0`), we prune it using **Div
 A new node chooses from all of its `ef_construction` search candidates. Each candidate is compared
 with each neighbor already kept at most once, so there is nothing to cache. An earlier lazy distance
 cache never got a hit and limited selection to 33 candidates; it was removed (see the
-[ADR-0004 amendment](../adr/004-diversity-heuristic-with-lazy-cache.md#amendment-2026-10-04)).
+[ADR-0004 amendment](https://github.com/tanvincible/chassis/blob/main/docs/adr/004-diversity-heuristic-with-lazy-cache.md#amendment-2026-10-04)).
 
 ## 4. Idempotency & Retry Safety
 

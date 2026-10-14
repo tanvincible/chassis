@@ -11,7 +11,7 @@ help: open it with 768 dimensions, or create a new index at another path
 Each also has a kind, the same in every language, for a program to act on: `Error::kind()` in
 Rust, `chassis_last_error_code()` in C, and the exception's class in Python. Each Python class is
 also the built-in exception it is a kind of, so `except ValueError` catches a bad argument
-([ADR-0020](../adr/020-errors.md)).
+([ADR-0020](https://github.com/tanvincible/chassis/blob/main/docs/adr/020-errors.md)).
 
 | Kind | Rust `ErrorKind` | C code | Python exception |
 | --- | --- | --- | --- |
