@@ -2,15 +2,15 @@
 
 [Introduction](./introduction.md)
 
-# User Guide
+# Guide
 
-- [Getting Started](./guide/getting-started.md)
-- [Basic Usage](./guide/basic-usage.md)
-- [API Reference](./guide/api-reference.md)
-- [C API Reference](./guide/c-api.md)
+- [Getting started](./guide/getting-started.md)
+- [Basic usage](./guide/basic-usage.md)
+- [Rust API](./guide/api-reference.md)
+- [C API](./guide/c-api.md)
 - [Errors](./guide/errors.md)
-- [Next to Your Database](./guide/with-a-database.md)
-- [Chassis for Coding Agents](./guide/agents.md)
+- [With a database](./guide/with-a-database.md)
+- [Coding agents](./guide/agents.md)
 - [llms.txt](./llms.md)
 
 # Architecture

@@ -1,32 +1,24 @@
-# Chassis FFI - C Bindings for Chassis Vector Storage
+# C API
 
-This crate provides a C-compatible shared library interface to Chassis, an embedded vector index.
+Chassis from C, or from any language that can call C: a shared library and its header,
+`chassis.h`. This page shows how to get them and build against them, then describes every
+function.
 
-## Features
+## Install
 
-- **Panic-safe**: All panics are caught at the FFI boundary
-- **Thread-safe error handling**: Thread-local error storage
-- **ABI stable**: `#[repr(C)]` guarantees
-- **Zero-copy where possible**: Direct mmap access for search operations
-- **Comprehensive documentation**: Every function documented with safety requirements
-
-## Building
+Each [release](https://github.com/tanvincible/chassis/releases) has the library and the header for
+Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64). To build them from a checkout instead,
+which needs Rust:
 
 ```bash
 cd chassis-ffi
 cargo build --release
 ```
 
-This generates:
-- **Linux**: `target/release/libchassis_ffi.so`
-- **macOS**: `target/release/libchassis_ffi.dylib`
-- **Windows**: `target/release/chassis_ffi.dll`
+That writes the library to `target/release`: `libchassis_ffi.so` on Linux, `libchassis_ffi.dylib`
+on macOS, `chassis_ffi.dll` on Windows. The header is `chassis-ffi/include/chassis.h`.
 
-The C header is automatically generated at `include/chassis.h`.
-
-## Usage
-
-### Basic Example (C)
+## Example
 
 ```c
 #include "chassis.h"
@@ -64,7 +56,7 @@ int main(void) {
     
     size_t count = chassis_search(index, query, 768, 10, ids, distances);
     for (size_t i = 0; i < count; i++) {
-        printf("ID: %" PRIu64 ", Distance: %f\n", ids[i], distances[i]);
+        printf("id %" PRIu64 ", distance %f\n", ids[i], distances[i]);
     }
     
     // Clean up
@@ -73,7 +65,7 @@ int main(void) {
 }
 ```
 
-### Compilation
+### Compiling
 
 ```bash
 # Linux and macOS, from the repository or an unpacked release
@@ -85,7 +77,7 @@ cc -o myapp myapp.c -Ichassis-ffi/include -Ltarget/release -lchassis_ffi \
 cl myapp.c /I chassis-ffi\include /link /LIBPATH:target\release chassis_ffi.dll.lib
 ```
 
-## API Reference
+## Functions
 
 ### Lifecycle
 
@@ -321,9 +313,7 @@ size_t chassis_search_batch(
 );
 ```
 Search for the k nearest neighbors of each of `count` queries, given one after another, `dim`
-floats each. `out_ids` and `out_dists` hold `count * k` values: row `i` is query `i`'s results,
-nearest first, and a row with fewer than `k` is filled out with id `UINT64_MAX`, which no vector
-has, and distance `INFINITY`. Returns `count`, or `0` on error or for an empty batch, which sets no
+floats each. `out_ids` and `out_dists` hold `count * k` values: row `i` is query `i`'s results, nearest first. A row with fewer than `k` results is filled out with id `UINT64_MAX`, which no vector has, and distance `INFINITY`. Returns `count`, or `0` on error or for an empty batch, which sets no
 error. An error names the query that failed, as in `Query 3 of the batch has NaN at component 0`.
 
 **Thread Safety**: Safe from any thread; runs concurrently with other searches, and a write waits
@@ -420,7 +410,7 @@ int chassis_precision(const ChassisIndex* index);
 ```
 The precision the index keeps its vectors in: `0` full, `1` half, `-1` if `index` is `NULL`.
 
-### Error Handling
+### Errors
 
 #### `chassis_last_error_message`
 ```c
@@ -440,7 +430,7 @@ The last error's kind, for a program to act on: one of the `CHASSIS_ERROR_` cons
 or `CHASSIS_OK` (0) after a call that succeeded. [Errors](./errors.md) lists them, with their
 causes and fixes.
 
-### Versioning
+### Version
 
 #### `chassis_version`
 ```c
@@ -448,7 +438,7 @@ const char* chassis_version(void);
 ```
 Get library version string.
 
-## Thread Safety
+## Threads
 
 Every function except `chassis_free` is safe to call from any thread on the same handle. Searches,
 `chassis_len`, `chassis_is_empty` and `chassis_dimensions` run concurrently. `chassis_add`,
@@ -457,7 +447,8 @@ write lock, so they run one at a time and searches wait for them. `chassis_free`
 any other call on the same handle. A handle from `chassis_open_reader` runs one call at a time,
 introspection included; open one per thread to search in parallel.
 
-### Concurrency Example
+In this example, `generate_vector`, `generate_query`, `process_results` and `keep_running` stand
+for your own code.
 
 ```c
 // Thread 1: Writer
@@ -494,82 +485,39 @@ void* reader_thread(void* arg) {
 }
 ```
 
-## Error Handling Patterns
+## Error checks
 
-### Pattern 1: Check Return Value
-```c
-uint64_t id = chassis_add(index, vec, 768);
-if (id == UINT64_MAX) {
-    fprintf(stderr, "Error: %s\n", chassis_last_error_message());
-    // Handle error
-}
-```
+A function's return value says whether it failed: `NULL`, `UINT64_MAX` or `-1`, or a count of `0`
+with an error set, as its entry above says. `chassis_last_error_message` and
+`chassis_last_error_code` then describe the failure. Each thread keeps its own last error, so
+threads never see each other's.
 
-### Pattern 2: Check and Cleanup
 ```c
 if (chassis_flush(index) != 0) {
-    const char* error = chassis_last_error_message();
-    fprintf(stderr, "Flush failed: %s\n", error ? error : "Unknown error");
+    fprintf(stderr, "Flush failed: %s\n", chassis_last_error_message());
     chassis_free(index);
     exit(1);
 }
 ```
 
-### Pattern 3: Thread-Local Errors
-```c
-// Thread A sets error
-chassis_add(index, vec, 768);  // Fails
-printf("Thread A: %s\n", chassis_last_error_message());
+A panic inside Chassis never unwinds into C. The call returns its error value with a message that
+starts `Chassis panicked:`. After a panic in a write, the handle refuses later calls: free it and
+open the index again.
 
-// Thread B has different error storage
-// (no race condition)
-```
+## Safety
 
-## Safety Requirements
+Each function's entry in `chassis.h` lists what it needs from you. These hold for all of them:
 
-All functions document their safety requirements. Key rules:
+1. Never pass `NULL` where a function doesn't say it accepts one.
+2. A vector's length must match the index's dimensions.
+3. The message from `chassis_last_error_message` is valid until the next call on the same thread.
+4. Don't call `chassis_free` while another thread still uses the handle, or use the handle after.
 
-1. **Null Checks**: Never pass `NULL` unless explicitly allowed
-2. **Lifetime**: Pointers from `chassis_last_error_message()` are only valid until next FFI call
-3. **Dimensions**: Vector length must match index dimensions
-4. **Thread Safety**: Don't call `chassis_free` while other threads still use the handle
-5. **Double Free**: Don't use pointers after `chassis_free()`
+## Performance
 
-## Performance Tips
+1. Add many vectors before each `chassis_flush`: a flush waits for the disk.
+2. Allocate result buffers once, and reuse them for every search.
+3. Tune `max_connections`, `ef_construction` and `ef_search` as the
+   [Rust API](./api-reference.md#indexoptions) describes; the options mean the same in C.
 
-1. **Batch inserts**: Add many vectors before calling `chassis_flush()`
-2. **Reuse buffers**: Allocate result buffers once, reuse for multiple searches
-3. **Tune parameters**: Adjust `max_connections`, `ef_construction`, `ef_search` for your use case
-
-## Panic Safety
-
-All panics are caught at the FFI boundary and converted to errors:
-
-```c
-// Even if Rust code panics internally, this will return an error
-uint64_t id = chassis_add(index, vec, 768);
-if (id == UINT64_MAX) {
-    // Error message will contain "Panic: ..." if a panic occurred
-    fprintf(stderr, "%s\n", chassis_last_error_message());
-}
-```
-
-**This is a critical safety guarantee** - undefined behavior will never occur due to unwinding across the FFI boundary.
-
-## Examples
-
-See `examples/example.c` for a complete working example.
-
-## Testing
-
-Run FFI tests:
-```bash
-cargo test
-```
-
-This includes:
-- Lifecycle tests
-- Null safety tests
-- Dimension mismatch tests
-- Thread-local error tests
-- UTF-8 validation tests
+`chassis-ffi/examples/example.c` is a complete program, with a Makefile beside it.

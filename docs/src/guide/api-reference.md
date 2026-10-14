@@ -1,12 +1,16 @@
-# API Reference
+# Rust API
 
-## Core Facade
+Every type and method of the `chassisdb` crate, with what each one does to the file and when it
+fails. [docs.rs](https://docs.rs/chassisdb) has the same API generated from the code.
+
+## Indexes
 
 ### `VectorIndex`
 
-The primary entry point for Chassis. `VectorIndex` orchestrates the storage layer, graph topology, and search index into a single, crash-consistent unit.
+`VectorIndex` opens an index file to add, delete and search vectors. One process writes a file at
+a time; to search a file that another process writes, use [`IndexReader`](#indexreader).
 
-#### Opening an Index
+#### Open
 
 ```rust
 use chassisdb::{VectorIndex, IndexOptions};
@@ -32,7 +36,7 @@ let mut index = VectorIndex::open(
 * `Ok(VectorIndex)`: Handle to the index.
 * `Err`: If file is locked, corrupted, or dimensions mismatch.
 
-#### Adding Vectors
+#### Add
 
 ```rust
 let vector = vec![0.5; 768];
@@ -50,7 +54,7 @@ let id = index.add(&vector)?;
 * Dimension mismatch.
 * Storage write failure (e.g., disk full).
 
-#### Your Own Ids
+#### Your ids
 
 ```rust
 index.add_with_id(42, &vector)?;
@@ -60,7 +64,7 @@ Search results report `42`. Fails if a live vector already has that id; delete i
 it. `u64::MAX` is reserved. Indexes that use their own ids build an id table in memory on the first
 lookup in a process, which scans the index once ([ADR-0007](https://github.com/tanvincible/chassis/blob/main/docs/adr/007-ids-and-deletes.md)).
 
-#### Adding Many Vectors
+#### Batches
 
 ```rust
 let vectors: Vec<f32> = rows.concat(); // count × dims floats, back to back
@@ -72,7 +76,7 @@ Links the batch on every core, so a large batch builds many times faster than `a
 added whole or not at all. The graph depends on thread timing, so two builds of the same data
 differ slightly, as sequential builds already do through their random layers.
 
-#### Deleting
+#### Delete
 
 ```rust
 let deleted = index.delete(42)?; // false if no live vector has id 42
@@ -84,7 +88,7 @@ are all-or-nothing, so `delete(id)` followed by `add_with_id(id, new_vector)` re
 safely. Deleted vectors keep their disk space until `compact()`; `deleted_count()` says how many
 the file holds.
 
-#### Compacting
+#### Compact
 
 ```rust
 index.compact()?;
@@ -97,14 +101,14 @@ building the index, on every core, and needs free disk for a second copy of the 
 Readers in other processes keep searching and move to the new file by themselves. On Windows it
 fails, leaving the index as it was, while another process has the index open.
 
-When to compact: deletes cost speed and space, not recall. With half the vectors deleted,
-searches ran at about 70% of their speed, and with 90% at a fifth
-([ADR-0011](https://github.com/tanvincible/chassis/blob/main/docs/adr/011-compaction.md)), so compacting once `deleted_count()` nears `len()` keeps
-most of the speed; compact sooner when disk space matters. The file shrinks only by whole
-segments, which double in size as an index grows, so it gets smaller only when the live vectors
-fit in fewer of them.
+When to compact: deletes cost speed and space, not recall. With half the vectors deleted, searches
+ran at about 70% of their speed, and with 90% deleted at a fifth
+([ADR-0011](https://github.com/tanvincible/chassis/blob/main/docs/adr/011-compaction.md)).
+Compacting once `deleted_count()` nears `len()` keeps most of the speed; compact sooner when disk
+space matters. The file shrinks only by whole segments, which double in size as an index grows, so
+it gets smaller only when the live vectors fit in fewer of them.
 
-#### Searching
+#### Search
 
 ```rust
 let query = vec![0.5; 768];
@@ -113,7 +117,7 @@ let k = 10; // Neighbors to retrieve
 let results = index.search(&query, k)?;
 
 for hit in results {
-    println!("ID: {}, Distance: {}", hit.id, hit.distance);
+    println!("id {}, distance {}", hit.id, hit.distance);
 }
 ```
 
@@ -132,10 +136,12 @@ let results = index.search_filtered(&query, 10, |id| allowed.contains(&id))?;
 
 Only vectors whose id the filter accepts are returned. The filter is called with ids from
 `add`/`add_with_id`, many times per search, so it should be cheap. When the filter passes many
-vectors, the search walks the graph as usual; when it passes few, or its matches lie far from the
-query, walking the graph would visit most of the index to find them, so the search checks every
-vector instead and returns the exact nearest. Measured, a filtered search takes at most about twice an exact scan of the matching
-vectors ([ADR-0009](https://github.com/tanvincible/chassis/blob/main/docs/adr/009-filtered-search.md)). `IndexReader` has the same method.
+vectors, the search walks the graph as usual. When it passes few, or its matches lie far from the
+query, walking the graph would visit most of the index to find them. Then the search checks every
+vector instead and returns the exact nearest. Measured, a filtered search takes at most about twice
+an exact scan of the matching vectors
+([ADR-0009](https://github.com/tanvincible/chassis/blob/main/docs/adr/009-filtered-search.md)).
+`IndexReader` has the same method.
 
 To leave a few ids out, as "more like this" leaves out the vector it starts from, pass a filter
 that rejects them:
@@ -145,24 +151,25 @@ let vector = index.get(42)?.expect("42 is in the index");
 let results = index.search_filtered(&vector, 10, |id| id != 42)?;
 ```
 
-#### Persistence
+#### Flush
 
 ```rust
-// Flush all pending writes to physical disk (fsync)
+// Every add and delete so far is durable once this returns.
 index.flush()?;
 ```
 
-**Recommendation**: `flush()` is an expensive syscall. Call it after a batch of insertions (e.g., every 1,000 vectors) or before shutting down. To bound what a crash can lose by time instead, flush from a timer.
+A flush waits for the disk, so it takes milliseconds. Call it after a batch of changes, every
+1,000 vectors say, or before shutting down. To bound what a crash can lose by time instead, flush
+from a timer.
 
 Dropping a `VectorIndex` doesn't flush: what was added or deleted since the last `flush()` is
 discarded, as after a crash.
 
-At rest the index is one file. From the first add after a flush until the next flush, and after a
-crash until a writer reopens the index, a `<name>.undo` file sits beside it
-([file format](../architecture/file-format.md#the-undo-file)): move, copy or delete the two
-together.
+At rest the index is one file. A `<name>.undo` file sits beside it from the first add after a flush
+until the next flush, and after a crash until a writer reopens the index ([file
+format](../architecture/file-format.md#the-undo-file)). Move, copy or delete the two together.
 
-#### Looking up ids
+#### Lookups
 
 ```rust
 let vector = index.get(42)?;     // Some(vector), or None if no live vector has id 42
@@ -230,7 +237,7 @@ match VectorIndex::open("embeddings.chassis", 768, IndexOptions::default()) {
 `chassisdb::Error` converts into `anyhow::Error` and `Box<dyn std::error::Error>`, so `?` works
 in functions that return those.
 
-## Configuration
+## Options
 
 ### `IndexOptions`
 
@@ -268,26 +275,25 @@ The metric is fixed when the index is created: reopening with another one is an 
 scaled to unit length, rejects zero vectors and vectors with NaN or infinite components, and
 reports `1 - cosine similarity`, from 0 to 2. Search speed is the same for both.
 
-`precision` is fixed when the index is created, as the metric is: reopening with another one is
-an error, an `IndexReader` uses the file's, and `precision()` on either reports it.
-`Precision::Half` keeps each component of a vector as a 16-bit float
-([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)), so the vectors take half the space in the file and in
-memory. A search over an index too large for the CPU's caches is faster for it, by a tenth to
-two thirds on most of the machines measured, and builds on x86 take 11 to 48% less time. An index
-that fits in cache searches no faster, and on Neoverse-N2 a fifth more slowly when its vectors are
-long. Each component is rounded to 11 significant bits, about three decimal digits, and reported
-distances are to the vectors as kept; on the embeddings measured, recall was the same. A vector
-with a component of 65,520 or more in magnitude is refused. A file in half precision is format
-version 4, which releases from before this option refuse to open.
+`precision` is fixed when the index is created, as the metric is: reopening with another one is an
+error, an `IndexReader` uses the file's, and `precision()` on either reports it. `Precision::Half`
+keeps each component of a vector as a 16-bit float
+([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)), so
+the vectors take half the space in the file and in memory. A search over an index too large for the
+CPU's caches is a tenth to two thirds faster for it on most of the machines measured. Builds on x86
+take 11 to 48% less time. An index that fits in cache searches no faster, and on Neoverse-N2 a fifth
+more slowly when its vectors are long. Each component is rounded to 11 significant bits, about three
+decimal digits, and reported distances are to the vectors as kept; on the embeddings measured,
+recall was the same. A vector with a component of 65,520 or more in magnitude is refused. A file in
+half precision is format version 4, which releases from before this option refuse to open.
 
-Besides half precision, the way to shrink an index is fewer dimensions. Some embedding models are
-trained so that the first part of a vector works on its own ("Matryoshka" embeddings, such as
-OpenAI's text-embedding-3 with its `dimensions` argument): 512 of 1,536 dimensions make the index
-about a third of the size. Measure recall on your own queries first, and cut vectors yourself only
-with `DistanceMetric::Cosine`, or normalize them again. `max_connections: 12` instead of 16 saves
-less: a 128-dimension file in half precision is 7% smaller and one of 1,536 dimensions 1%, and
-builds are 7 to 18% faster, but searches for 0.99 recall at 128 and 384 dimensions take up to 14%
-longer.
+Besides half precision, the way to shrink an index is fewer dimensions. Matryoshka embeddings, such
+as OpenAI's text-embedding-3 with its `dimensions` argument, are trained so that the first part of a
+vector works on its own. 512 of 1,536 dimensions make the index about a third of the size. Measure
+recall on your own queries first, and cut vectors yourself only with `DistanceMetric::Cosine`, or
+normalize them again. `max_connections: 12` instead of 16 saves less. A 128-dimension file in half
+precision is 7% smaller, and one of 1,536 dimensions 1%. Builds are 7 to 18% faster, but searches
+for 0.99 recall at 128 and 384 dimensions take up to 14% longer.
 
 `huge_pages` is for an index too large for the CPU's caches: with the vectors on 2 MB pages,
 searches are up to a quarter faster and batch builds a little faster
@@ -297,18 +303,19 @@ and its readers each ask for themselves. It is off by default because a page not
 then read 2 MB at a time, which an index much larger than memory pays for on every miss.
 `VectorIndex::use_huge_pages` and `IndexReader::use_huge_pages` turn it on after opening.
 
-`warm` is for an index whose file is not in memory yet, as after a reboot. Until it is, each page
-a search touches is read from the disk, one read at a time. With `warm`, another thread reads in
-what the index holds, at the disk's sequential speed, while searches go on
-([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md)). On an Apple M5, from the start of a process, the hundredth search over 99,000
-vectors of 1,536 dimensions returned after 0.37 s with it and 1.9 s without; on Linux servers
-with slower disks, after 1.3 to 1.7 s where it took 1.5 to 2.9 s. It reads only what has been written, and changes
-nothing in the file. It is off by default because an index much larger than memory would push
-everything else out, itself included, and on a slow disk reading the whole file can take longer
-than the searches would. It takes Linux 5.14 or later, or macOS; an older Linux reads
-in only some of the index, and Windows none. `VectorIndex::warm` and `IndexReader::warm` ask for
-it after opening and return at once; from then on the option is on, so a reader that opens the
-file again after a compaction reads the new one in too.
+`warm` is for an index whose file is not in memory yet, as after a reboot. Until it is, each page a
+search touches is read from the disk, one read at a time. With `warm`, another thread reads in what
+the index holds, at the disk's sequential speed, while searches go on
+([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md)). On an Apple M5,
+from the start of a process, the hundredth search over 99,000 vectors of 1,536 dimensions returned
+after 0.37 s with it and 1.9 s without. On Linux servers with slower disks, it returned after 1.3 to
+1.7 s where it took 1.5 to 2.9 s. It reads only what has been written, and changes nothing in the
+file. It is off by default because an index much larger than memory would push everything else out,
+itself included, and on a slow disk reading the whole file can take longer than the searches would.
+It takes Linux 5.14 or later, or macOS; an older Linux reads in only some of the index, and Windows
+none. `VectorIndex::warm` and `IndexReader::warm` ask for it after opening and return at once. From
+then on the option is on, so a reader that opens the file again after a compaction reads the new one
+in too.
 
 **Tuning Guide**:
 
@@ -316,7 +323,7 @@ file again after a compaction reads the new one in too.
 * **Fast Search**: Decrease `ef_search` to 20-30.
 * **Low Memory**: `Precision::Half`, or vectors with fewer dimensions.
 
-## Data Types
+## Results
 
 ### `SearchResult`
 
