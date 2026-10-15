@@ -7,7 +7,9 @@ use crate::error::fail;
 use crate::half::Precision;
 use crate::header::FLAG_CUSTOM_IDS;
 use crate::hnsw::HnswParams;
-use crate::hnsw::node::{INVALID_NODE_ID, Node, NodeId, NodeRecord, NodeRecordParams};
+#[cfg(any(test, feature = "internals"))]
+use crate::hnsw::node::Node;
+use crate::hnsw::node::{INVALID_NODE_ID, NodeId, NodeRecord, NodeRecordParams};
 use crate::storage::EMPTY;
 use anyhow::{Result, bail};
 use std::collections::HashSet;
@@ -71,6 +73,7 @@ impl HnswGraph {
     /// # Errors
     ///
     /// Returns an error if the file was created with different graph parameters.
+    #[cfg(any(test, feature = "internals"))]
     pub fn open(storage: Storage, params: HnswParams) -> Result<Self> {
         Self::open_inner(storage, params, false)
     }
@@ -164,6 +167,7 @@ impl HnswGraph {
     /// # Errors
     ///
     /// Returns an error if `node_id` has no written record.
+    #[cfg(any(test, feature = "internals"))]
     pub fn read_node_record(&self, node_id: NodeId) -> Result<NodeRecord> {
         let layer_count = self.storage.layer_count(node_id)?;
         let mut record = NodeRecord::new(node_id, layer_count as u8, self.record_params);
@@ -258,6 +262,7 @@ impl HnswGraph {
     ///
     /// Returns an error unless `vector_id` is the next slot (node ids are dense and
     /// monotonically increasing), or if the record cannot be written.
+    #[cfg(any(test, feature = "internals"))]
     pub fn insert(&mut self, vector_id: NodeId, layer: usize) -> Result<()> {
         // Enforce dense, monotonic node ID invariant
         debug_assert!(
@@ -292,6 +297,7 @@ impl HnswGraph {
     /// # Errors
     ///
     /// Returns an error if the node doesn't exist or `record` has a different layer count.
+    #[cfg(any(test, feature = "internals"))]
     pub fn update_node_record(&mut self, record: &NodeRecord) -> Result<()> {
         let node_id = record.slot;
         if node_id >= self.node_count {
@@ -309,6 +315,7 @@ impl HnswGraph {
 
     /// Returns the record params for this graph
     #[inline]
+    #[cfg(any(test, feature = "internals"))]
     pub fn record_params(&self) -> NodeRecordParams {
         self.record_params
     }

@@ -298,13 +298,7 @@ fn test_node_record_with_partial_neighbors() {
     let path = temp_file.path();
 
     // Create graph with custom params
-    let custom_params = HnswParams {
-        max_connections: 4,
-        ef_construction: 200,
-        ef_search: 50,
-        ml: 1.0 / (4.0_f32).ln(),
-        max_layers: 3,
-    };
+    let custom_params = HnswParams { max_connections: 4, ml: 1.0 / (4.0_f32).ln(), max_layers: 3 };
 
     let params = NodeRecordParams::new(4, 8, 3); // Matches custom_params
     let mut storage = Storage::open_with(path, 128, params, Default::default()).unwrap();

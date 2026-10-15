@@ -35,7 +35,8 @@ fn filter_budget(matches: u64, slots: u64, ef: usize) -> u64 {
     (matches / 2).min(far)
 }
 
-/// Search result with distance
+/// A search result: a vector's id and its distance from the query. Results compare by distance,
+/// then id, and are equal only when both are.
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub id: NodeId,
@@ -44,7 +45,7 @@ pub struct SearchResult {
 
 impl PartialEq for SearchResult {
     fn eq(&self, other: &Self) -> bool {
-        self.distance.total_cmp(&other.distance) == std::cmp::Ordering::Equal
+        self.cmp(other) == std::cmp::Ordering::Equal
     }
 }
 
@@ -57,14 +58,9 @@ impl PartialOrd for SearchResult {
 }
 
 impl Ord for SearchResult {
-    /// Total ordering using f32::total_cmp (NaN-safe)
-    ///
-    /// This ensures:
-    /// - No panics on NaN values
-    /// - Deterministic ordering
-    /// - Correct heap behavior
+    /// By distance (`f32::total_cmp`, so NaN has a place), then id.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.distance.total_cmp(&other.distance)
+        self.distance.total_cmp(&other.distance).then(self.id.cmp(&other.id))
     }
 }
 
@@ -779,7 +775,9 @@ mod tests {
         let r3 = SearchResult { id: 3, distance: 0.5 };
 
         assert!(r1 < r2);
-        assert!(r1 == r3); // Same distance
+        assert!(r1 != r3, "the same distance, but other ids");
+        assert!(r1 < r3, "ties go by id");
+        assert_eq!(r1, SearchResult { id: 1, distance: 0.5 });
         assert!(r2 > r1);
     }
 

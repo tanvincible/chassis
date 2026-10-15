@@ -65,7 +65,20 @@ pub use hnsw::*;
 pub use distance::{DistanceMetric, cosine_distance, euclidean_distance};
 pub use error::{Error, ErrorKind, Result};
 pub use half::Precision;
+pub use hnsw::SearchResult;
+// The layers below the index, for this crate's tests and benchmarks: public, they would make
+// every change to them a breaking one, and `HnswGraph` could write a record that corrupts the file.
+#[cfg(feature = "internals")]
 pub use header::{MAGIC, VERSION};
+#[cfg(feature = "internals")]
+pub use hnsw::{HnswGraph, HnswParams, NodeRecordParams};
+#[cfg(feature = "internals")]
+pub use storage::Storage;
+#[cfg(not(feature = "internals"))]
+use {
+    hnsw::{HnswGraph, HnswParams},
+    storage::Storage,
+};
 
 /// The README's example, compiled with the doctests so that it stays true.
 #[cfg(doctest)]
@@ -74,8 +87,6 @@ struct ReadmeDoctests;
 #[cfg(all(doctest, chassis_skill))]
 #[doc = include_str!("../../plugins/chassis/skills/chassis/SKILL.md")]
 struct SkillDoctests;
-pub use hnsw::{HnswBuilder, HnswGraph, HnswParams, NodeRecordParams, SearchResult};
-pub use storage::Storage;
 
 use error::fail;
 use hnsw::layer_from_uniform;
@@ -971,8 +982,6 @@ fn precision_name(precision: Precision) -> &'static str {
 fn hnsw_params(options: &IndexOptions) -> HnswParams {
     HnswParams {
         max_connections: options.max_connections,
-        ef_construction: options.ef_construction,
-        ef_search: options.ef_search,
         ml: 1.0 / f32::from(options.max_connections).ln(),
         max_layers: 16, // Fixed for now
     }
