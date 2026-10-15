@@ -29,7 +29,9 @@ jobs:
         with:
           toolchain: nightly
 
-      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
 
       - uses: Swatinem/rust-cache@v2
         with:
