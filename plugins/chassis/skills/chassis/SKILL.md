@@ -101,8 +101,10 @@ reader.close()
   never reuses one. Use the app's own row ids with `add(vector, id=...)` or
   `add_batch(vectors, ids=...)`.
 - **Next to a database**: give each vector its row's id; flush the index inside the database
-  transaction, before committing; search with `allowed=` the ids of rows that exist; replace a
-  vector by delete, then add, under one flush. The guide, with what a crash leaves:
+  transaction, before committing; search, then join the hits to their rows by id, dropping any
+  without a row (a crash left it; `mend()` at start removes it); replace a vector by delete, then
+  add, under one flush. Pass `allowed=` only for a real filter, in id order (`ORDER BY id`), never
+  every row's id. The guide, with what a crash leaves:
   https://tanvincible.github.io/chassis/guide/with-a-database.html
 - **Compacting**: deletes cost speed, not recall; compact once `deleted_count()` nears `len()`.
 - **Many at once**: `add_batch` links on every core, far faster than `add` in a loop;

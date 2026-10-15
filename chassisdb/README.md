@@ -199,9 +199,9 @@ to match); any number can search while one writer writes, in this process or oth
 
 - **`search(query: Sequence[float] | ndarray, k: int = 10, allowed: Iterable[int] | ndarray | None = None, excluded: Iterable[int] | ndarray | None = None) -> List[SearchResult]`**  
   Search for k nearest neighbors. Returns sorted list of results. With `allowed`, only those ids
-  can be returned, e.g. `allowed=[row[0] for row in db.execute("SELECT id FROM docs WHERE owner = ?", (user,))]`;
-  when walking the graph would cost more, as when few vectors match, every vector is checked
-  instead and the results are exact. With `excluded`, those ids are never returned, as for "more
+  can be returned, e.g. `allowed=[row[0] for row in db.execute("SELECT id FROM docs WHERE owner = ? ORDER BY id", (user,))]`;
+  ids in ascending order cost the least. When walking the graph would cost more, as when few
+  vectors match, every vector is checked instead and the results are exact. With `excluded`, those ids are never returned, as for "more
   like this": `index.search(index.get(42), k=10, excluded=[42])`.
 
 - **`search_batch(queries: ndarray, k: int = 10) -> tuple[ndarray, ndarray]`**  
