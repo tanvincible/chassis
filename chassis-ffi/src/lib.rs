@@ -55,6 +55,70 @@ enum Kind {
 /// What searches and introspection need, from either kind of handle.
 type Filter<'a> = Option<&'a dyn Fn(u64) -> bool>;
 
+/// The ids a filtered search allows or leaves out, built once per call (ADR-0022). Ids in
+/// ascending order, as `np.arange`, `np.unique` and `ORDER BY id` give them, are searched where
+/// they lie, without a copy; others go into a hash set keyed by one multiply, which builds in
+/// half SipHash's time.
+enum IdSet<'a> {
+    Sorted(&'a [u64]),
+    Hashed(std::collections::HashSet<u64, IdHasher>),
+}
+
+impl<'a> IdSet<'a> {
+    fn new(ids: &'a [u64]) -> Self {
+        if ids.is_sorted() {
+            return Self::Sorted(ids);
+        }
+        let mut set =
+            std::collections::HashSet::with_capacity_and_hasher(ids.len(), IdHasher::new());
+        set.extend(ids);
+        Self::Hashed(set)
+    }
+
+    fn contains(&self, id: u64) -> bool {
+        match self {
+            Self::Sorted(ids) => ids.binary_search(&id).is_ok(),
+            Self::Hashed(set) => set.contains(&id),
+        }
+    }
+}
+
+/// Hashes an id with one 64×64→128-bit multiply folded to 64 bits, keyed per set, as
+/// `chassis-core`'s id table does: ids are integers, so SipHash's byte-stream work buys nothing.
+#[derive(Clone, Copy)]
+struct IdHasher(u64);
+
+impl IdHasher {
+    fn new() -> Self {
+        use std::hash::BuildHasher;
+        Self(std::collections::hash_map::RandomState::new().hash_one(0u64))
+    }
+}
+
+impl std::hash::BuildHasher for IdHasher {
+    type Hasher = Self;
+    fn build_hasher(&self) -> Self {
+        *self
+    }
+}
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(word));
+        }
+    }
+    fn write_u64(&mut self, id: u64) {
+        let product = u128::from(id ^ self.0) * 0x9e37_79b9_7f4a_7c15;
+        self.0 = (product as u64) ^ ((product >> 64) as u64);
+    }
+}
+
 trait Readable {
     fn search(
         &mut self,
@@ -1133,7 +1197,8 @@ pub unsafe extern "C" fn chassis_search(
 /// - The other arguments are as for `chassis_search()`.
 ///
 /// When walking the graph would cost more, as when few vectors match, the search checks every
-/// vector instead and returns the exact nearest.
+/// vector instead and returns the exact nearest. Ids in ascending order are read where they lie;
+/// in any other order they are copied into a set first, a pass over all of them per call.
 ///
 /// # Returns
 ///
@@ -1161,13 +1226,13 @@ pub unsafe extern "C" fn chassis_search_filtered(
             );
             return 0;
         }
-        let allowed: std::collections::HashSet<u64> = if allowed_len == 0 {
-            Default::default()
+        let allowed = IdSet::new(if allowed_len == 0 {
+            &[]
         } else {
             // SAFETY: caller guarantees allowed_ids points to allowed_len u64 values
-            unsafe { slice::from_raw_parts(allowed_ids, allowed_len) }.iter().copied().collect()
-        };
-        let filter = |id| allowed.contains(&id);
+            unsafe { slice::from_raw_parts(allowed_ids, allowed_len) }
+        });
+        let filter = |id| allowed.contains(id);
         unsafe {
             read(ptr, |index| search_into(index, query, len, k, Some(&filter), out_ids, out_dists))
         }
@@ -1211,14 +1276,14 @@ pub unsafe extern "C" fn chassis_search_excluding(
             );
             return 0;
         }
-        let excluded: std::collections::HashSet<u64> = if excluded_len == 0 {
-            Default::default()
+        let excluded = IdSet::new(if excluded_len == 0 {
+            &[]
         } else {
             // SAFETY: caller guarantees excluded_ids points to excluded_len u64 values
-            unsafe { slice::from_raw_parts(excluded_ids, excluded_len) }.iter().copied().collect()
-        };
-        let filter = |id| !excluded.contains(&id);
-        let filter: Filter = if excluded.is_empty() { None } else { Some(&filter) };
+            unsafe { slice::from_raw_parts(excluded_ids, excluded_len) }
+        });
+        let filter = |id| !excluded.contains(id);
+        let filter: Filter = if excluded_len == 0 { None } else { Some(&filter) };
         unsafe { read(ptr, |index| search_into(index, query, len, k, filter, out_ids, out_dists)) }
             .unwrap_or(0)
     })
@@ -2294,8 +2359,11 @@ mod tests {
         let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
 
         let query = [0.0f32, 0.0];
-        let allowed = [7u64, 119, 105, 110];
-        for handle in [writer as *const ChassisIndex, reader] {
+        // In any order, and in ascending order, which is searched without a copy.
+        for (allowed, handle) in [[7u64, 119, 105, 110], [7, 105, 110, 119]]
+            .into_iter()
+            .flat_map(|allowed| [(allowed, writer as *const ChassisIndex), (allowed, reader)])
+        {
             let (mut ids, mut dists) = ([0u64; 4], [0.0f32; 4]);
             let n = unsafe {
                 chassis_search_filtered(

@@ -476,7 +476,8 @@ size_t chassis_search(const struct ChassisIndex *ptr, const float *query, size_t
  * - The other arguments are as for `chassis_search()`.
  *
  * When walking the graph would cost more, as when few vectors match, the search checks every
- * vector instead and returns the exact nearest.
+ * vector instead and returns the exact nearest. Ids in ascending order are read where they lie;
+ * in any other order they are copied into a set first, a pass over all of them per call.
  *
  * # Returns
  *
