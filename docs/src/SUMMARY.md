@@ -25,7 +25,7 @@
 
 # Development
 
-- [Building from Source](./dev/building.md)
-- [Running Tests](./dev/testing.md)
+- [Building](./dev/building.md)
+- [Testing](./dev/testing.md)
 - [Benchmarking](./dev/benchmarking.md)
-- [Contributing Guidelines](./dev/contributing.md)
+- [Contributing](./dev/contributing.md)

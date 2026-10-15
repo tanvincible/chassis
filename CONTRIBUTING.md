@@ -1,4 +1,4 @@
-# Contributing to Chassis
+# Contributing
 
 Thank you for looking at this project. Chassis is a small embedded vector index for local semantic search: one file, in your process, no server. It stays small, correct and fast only through careful work.
 
@@ -6,7 +6,7 @@ Whether you are fixing a bug in the Rust core, improving the Python bindings, or
 
 If you like what we are doing but do not have the time to write code or documentation, you can still help by starring the repository or mentioning the project to others who might find a local vector index useful.
 
-## I Have a Question
+## Questions
 
 We maintain two primary sources of documentation:
 1. **[The Chassis book](docs/src/SUMMARY.md)**: guides, the API and error references, architecture and the file format. The [decision records](docs/adr) say why it works the way it does.
@@ -16,13 +16,13 @@ Before asking a question, please check these resources. If the answer isn't ther
 
 If you still need help, feel free to [open an issue](https://github.com/tanvincible/chassis/issues/new). Please be specific about which part of the stack you are using (Rust Core, C FFI, or Python).
 
-## How to Contribute
+## Contributions
 
 We value stability and correctness above all else. 
 
 By contributing, you agree that your work is your own and that it may be distributed under the project’s MIT and Apache 2.0 licenses.
 
-### Reporting Bugs
+### Bugs
 
 A good bug report helps us fix things quickly.
 
@@ -33,25 +33,27 @@ Before reporting a bug, please check the [issue tracker](https://github.com/tanv
 3. **Environment**: OS (Linux/Mac/Windows), Architecture (x86/ARM), and Python/Rust versions.
 4. **Logs/Errors**: Full stack traces or panic messages.
 
-### Security Issues
+### Security
 
 If you discover a security vulnerability (e.g., memory safety issue in the FFI boundary), please do not report it publicly. Instead, send an email to **[tanvipm19@gmail.com](mailto:tanvipm19@gmail.com)** so it can be handled responsibly.
 
-### Suggesting Enhancements
+### Features
 
 Chassis is intentionally small and focused. If you have an idea for a new feature, please consider whether it fits the project’s goal: local semantic search in one file, in your process, with no server.
 
 We prefer features that benefit most users rather than specialized functionality that can be built on top of Chassis by the host application.
 
-### Development Setup
+### Setup
 
-Chassis is a monorepo containing three distinct components:
+Chassis is one repository with five parts:
 
 * `chassis-core/`: the `chassisdb` crate, the index itself: storage, graph and search (Rust).
-* `chassis-ffi`: The C API (Rust).
-* `chassisdb`: The Python package (Python, over the C API with ctypes).
+* `chassis-ffi/`: the C API (Rust).
+* `chassisdb/`: the Python package (Python, over the C API with ctypes).
+* `chassisdb-mcp/`: the MCP memory server (Python).
+* `integrations/langchain-chassisdb/`: the LangChain vector store (Python).
 
-#### 1. Rust Development (Core & FFI)
+#### Rust
 
 You will need Rust 1.88 or later.
 
@@ -68,7 +70,7 @@ cargo clippy --all-features --all-targets -- -D warnings
 
 On ARM, clippy currently stops at known warnings in the NEON kernels in `chassis-core/src/distance.rs`.
 
-#### 2. Python Development (`chassisdb`)
+#### Python
 
 To work on the Python bindings, you need the C library built first. The package finds it in `target/release`, or wherever `CHASSIS_LIB_PATH` points.
 
@@ -88,9 +90,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-### Style Guidelines
+### Style
 
-#### Code Formatting
+#### Formatting
 
 - **Rust**: We use `rustfmt` and `clippy`. Run `cargo fmt` and `cargo clippy` before committing.
 - **Python**: We use `black` and `ruff`.
@@ -102,7 +104,7 @@ ruff check . --fix
 mypy .
 ```
 
-#### Commit Messages
+#### Commits
 
 We use the Conventional Commits specification to keep history readable.
 
@@ -120,7 +122,7 @@ We use the Conventional Commits specification to keep history readable.
 
 For larger changes, you may include a message body after a blank line with additional context. A git commit template is provided in the [repository](https://github.com/tanvincible/chassis/blob/main/.gitmessage).
 
-### Improving Documentation
+### Documentation
 
 Documentation is as important as code.
 
@@ -130,6 +132,6 @@ Documentation is as important as code.
 Write them as [STYLE.md](STYLE.md) says: the tone, the terms, headings, examples and where each
 thing goes. If you find a typo or unclear explanation, please feel free to submit a pull request.
 
-## Final Note
+## Thanks
 
 This project exists because we believe in local, reliable software. We are glad you are here to help build it.
