@@ -4,13 +4,13 @@ Python bindings for Chassis, an embedded vector index for local semantic search:
 
 ## Features
 
-- **Zero-copy operations**: Direct memory access via ctypes
-- **NumPy integration**: Native support for NumPy arrays
-- **Type hints**: Full type annotations for IDE support
-- **Thread-safe**: Search from many threads while another adds or deletes; writes run one at a time
-- **Pythonic API**: Context managers, properties, and familiar patterns
+- Vectors go in as NumPy arrays or lists, and come out as NumPy arrays.
+- Many threads search one index at once, while writes run one at a time.
+- Other processes search the file while one writes it, with `read_only=True`.
+- Every error says what was wrong and what to do, and is also the matching built-in exception.
+- Type hints throughout.
 
-## Installation
+## Install
 
 ```bash
 pip install chassisdb
@@ -20,7 +20,7 @@ Import it as `chassisdb`. Wheels are built for Python 3.11 and later on Linux (x
 macOS on Apple silicon and Windows (x86-64). Elsewhere, or from a
 checkout of the repository, `pip install .` in this directory builds it, which needs Rust.
 
-### Development Installation
+### Development
 
 ```bash
 # Build the library, then install with dev dependencies
@@ -38,40 +38,31 @@ black chassisdb tests
 ruff check chassisdb tests
 ```
 
-## Quick Start
+## Quickstart
+
+The vectors here are random; in your app they come from your embedding model.
 
 ```python
 import numpy as np
 from chassisdb import VectorIndex
 
-# Create or open an index
-index = VectorIndex("embeddings.chassis", dimensions=768)
+index = VectorIndex("embeddings.chassis", dimensions=768)  # created if it doesn't exist
 
-# Add vectors
 vectors = np.random.rand(1000, 768).astype(np.float32)
-for i, vec in enumerate(vectors):
-    vector_id = index.add(vec)
-    print(f"Added vector {vector_id}")
+ids = index.add_batch(vectors)  # linked on every core; ids 0 to 999
+index.flush()  # on disk once this returns
 
-# Flush to disk
-index.flush()
-
-# Search
 query = np.random.rand(768).astype(np.float32)
-results = index.search(query, k=10)
+for result in index.search(query, k=10):  # nearest first
+    print(result.id, result.distance)
 
-for result in results:
-    print(f"ID: {result.id}, Distance: {result.distance:.6f}")
-
-# Index info
-print(f"Total vectors: {len(index)}")
-print(f"Dimensions: {index.dimensions}")
-print(f"Empty: {index.is_empty()}")
+print(len(index), index.dimensions)  # 1000 768
+index.close()
 ```
 
-## Advanced Usage
+## Usage
 
-### Custom HNSW Parameters
+### Options
 
 ```python
 from chassisdb import VectorIndex, IndexOptions
@@ -88,7 +79,7 @@ options = IndexOptions(
 index = VectorIndex("tuned.chassis", dimensions=768, options=options)
 ```
 
-### Context Manager
+### Closing
 
 ```python
 with VectorIndex("vectors.chassis", dimensions=128) as index:
@@ -100,7 +91,7 @@ Leaving the block flushes, unless an exception is leaving it, then closes the in
 without a flush, with `close()` or by garbage collection, discards what was added or deleted since
 the last `flush()`, as a crash would.
 
-### Batch Operations
+### Batches
 
 ```python
 import numpy as np
@@ -117,25 +108,21 @@ with VectorIndex("large.chassis", dimensions=768) as index:
     ids, distances = index.search_batch(queries, k=10)
 ```
 
-### NumPy Integration
+### Inputs
+
+A vector can be a NumPy array, a list or a tuple. Each is converted to 32-bit floats.
 
 ```python
 import numpy as np
+from chassisdb import VectorIndex
 
-# From NumPy array
-vec = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-index.add(vec)
-
-# From list
-index.add([0.1, 0.2, 0.3])
-
-# From tuple
-index.add((0.1, 0.2, 0.3))
-
-# All are automatically converted to float32
+with VectorIndex("small.chassis", dimensions=3) as index:
+    index.add(np.array([0.1, 0.2, 0.3], dtype=np.float32))
+    index.add([0.1, 0.2, 0.3])
+    index.add((0.1, 0.2, 0.3))
 ```
 
-### Error Handling
+### Errors
 
 ```python
 from chassisdb import VectorIndex, DimensionMismatchError, IndexLockedError
@@ -155,11 +142,11 @@ except IndexLockedError:
     reader = VectorIndex("vectors.chassis", dimensions=128, read_only=True)
 ```
 
-## API Reference
+## Reference
 
 ### `VectorIndex`
 
-Main class for interacting with Chassis indexes.
+Opens an index file to add, delete and search vectors.
 
 #### Constructor
 
@@ -210,7 +197,8 @@ to match); any number can search while one writer writes, in this process or oth
   first; a row with fewer than k results is filled out with id `2**64 - 1` and distance `inf`.
 
 - **`flush() -> None`**  
-  Flush changes to disk. Call after batch insertions.
+  Make every add and delete so far durable. It waits for the disk, so call it after a batch of
+  changes, not after each one.
 
 - **`warm() -> None`**  
   Read the index into memory on another thread, so that searches stop waiting for the disk while
@@ -230,7 +218,7 @@ to match); any number can search while one writer writes, in this process or oth
   after a crash; leaving a `with` block flushes first, unless an exception is leaving it.
 
 - **`__len__() -> int`**  
-  Get number of vectors in the index.
+  The number of live vectors.
 
 - **`deleted_count() -> int`**  
   Deleted vectors the file still holds, until `compact()` removes them.
@@ -242,7 +230,7 @@ to match); any number can search while one writer writes, in this process or oth
   there raises `ReadOnlyError`.
 
 - **`is_empty() -> bool`**  
-  Check if index is empty.
+  Whether the index has no live vectors.
 
 #### Properties
 
@@ -255,7 +243,8 @@ to match); any number can search while one writer writes, in this process or oth
 
 ### `IndexOptions`
 
-Configuration for HNSW algorithm.
+The index's options. `metric`, `precision` and `max_connections` are fixed when the index is
+created.
 
 ```python
 @dataclass
@@ -271,13 +260,13 @@ class IndexOptions:
 
 ### `SearchResult`
 
-Search result with ID and distance.
+One result: the vector's id, and its distance from the query.
 
 ```python
 @dataclass
 class SearchResult:
-    id: int          # Vector ID in index
-    distance: float  # Distance to query (lower = closer)
+    id: int          # the vector's id
+    distance: float  # its distance from the query; smaller is nearer
 ```
 
 ### Exceptions
@@ -300,7 +289,7 @@ lists their causes and fixes.
 - **`CorruptIndexError`**, **`IndexFullError`**, **`InvalidPathError`** (`OSError`) - a damaged
   file, a full index, an operating-system error
 
-## Thread Safety
+## Threads
 
 Every method is safe to call from any thread. Searches run concurrently (ctypes releases the GIL
 during each call); `add()`, `delete()` and `flush()` take the index's write lock, so they run one
@@ -315,40 +304,28 @@ loss, may already have been seen.
 ```python
 from concurrent.futures import ThreadPoolExecutor
 
+import numpy as np
+from chassisdb import VectorIndex
+
+index = VectorIndex("large.chassis", dimensions=768)
+queries = np.random.rand(100, 768).astype(np.float32)
 with ThreadPoolExecutor() as pool:
     results = list(pool.map(lambda q: index.search(q, k=10), queries))
 ```
 
-## Performance Tips
+## Performance
 
-1. **Batch inserts before flushing:**
-   ```python
-   for vec in many_vectors:
-       index.add(vec)
-   index.flush()  # Once at the end
-   ```
+1. Add many vectors with `add_batch`, which links them on every core, and flush once after a batch:
+   a flush waits for the disk.
+2. Search many queries with `search_batch`. Measured on 2026-10-10, one call for every query was
+   within 5% of Rust's speed, while a call per query cost 15 to 38 µs more each
+   ([Performance](https://tanvincible.github.io/chassis/architecture/performance.html)).
+3. Pass 32-bit float NumPy arrays: lists and other types are converted first.
+4. Tune `ef_search`, `ef_construction` and `max_connections` as
+   [Performance & tuning](https://tanvincible.github.io/chassis/python/user-guide/performance/)
+   describes.
 
-2. **Use NumPy arrays:**
-   ```python
-   # Faster (zero-copy)
-   vec = np.array([0.1] * 768, dtype=np.float32)
-   
-   # Slower (creates copy)
-   vec = [0.1] * 768
-   ```
-
-3. **Tune HNSW parameters:**
-   - Increase `ef_construction` for better index quality
-   - Increase `ef_search` for better search recall
-   - Increase `max_connections` for better graph connectivity
-
-4. **Use context managers:**
-   ```python
-   with VectorIndex(...) as index:
-       # Automatic cleanup
-   ```
-
-## Library Location
+## Library
 
 chassisdb looks for `libchassis_ffi` in this order:
 
@@ -367,8 +344,8 @@ python your_script.py
 
 See the `examples/` directory for complete examples:
 - `notes_search.py` - Notes in SQLite, their vectors in Chassis: search, "more like this", deletes
-- `basic_usage.py` - Simple add and search
-- `batch_insert.py` - Efficient bulk loading
+- `basic_usage.py` - Add and search
+- `batch_insert.py` - Many vectors at once with `add_batch`
 
 ## Testing
 
