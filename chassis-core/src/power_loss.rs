@@ -34,11 +34,13 @@ fn vector(id: u64) -> Vec<f32> {
     vec![id as f32; DIMS as usize]
 }
 
-/// A committed state: the ids that are live, and one past the largest id ever added.
+/// A committed state: the ids that are live, one past the largest id ever added, and the
+/// application's number the same flush committed (ADR-0023).
 #[derive(Clone, Debug, PartialEq)]
 struct State {
     live: BTreeSet<u64>,
     next_id: u64,
+    version: u64,
 }
 
 struct Recorder {
@@ -164,6 +166,7 @@ fn verify(path: &Path, accept: &[State], variant: usize, crash_in_recovery: bool
         .unwrap_or_else(|| panic!("len {} matches no accepted state; {}", index.len(), context()))
         .clone();
     check(&index, &state, &context);
+    assert_eq!(index.user_version(), state.version, "user_version of another flush; {}", context());
 
     // The recovered index must keep working: one more add and delete, flush and reopen.
     let mut next = state.clone();
@@ -174,10 +177,13 @@ fn verify(path: &Path, accept: &[State], variant: usize, crash_in_recovery: bool
     let first = *next.live.first().unwrap();
     assert!(index.delete(first).unwrap());
     next.live.remove(&first);
+    next.version += 1;
+    index.set_user_version(next.version);
     index.flush().unwrap();
     drop(index);
     let index = VectorIndex::open(path, DIMS, options()).unwrap();
     assert_eq!(index.len(), next.live.len() as u64, "after continuing; {}", context());
+    assert_eq!(index.user_version(), next.version, "after continuing; {}", context());
     check(&index, &next, &context);
 }
 
@@ -189,6 +195,7 @@ fn check_reader(mut reader: IndexReader, accept: &[State], context: &dyn Fn() ->
         .iter()
         .find(|s| s.live.len() as u64 == reader.len())
         .unwrap_or_else(|| panic!("reader len {} matches no state; {}", reader.len(), context()));
+    assert_eq!(reader.user_version(), state.version, "reader's user_version; {}", context());
     for &id in &state.live {
         let hits = reader
             .search(&vector(id), 3)
@@ -225,7 +232,7 @@ fn test_power_loss_at_every_fsync_and_operation() {
     index.flush().unwrap();
     SIMULATING.set(true);
 
-    let mut committed = State { live: BTreeSet::new(), next_id: 0 };
+    let mut committed = State { live: BTreeSet::new(), next_id: 0, version: 0 };
     RECORDER.with(|r| {
         *r.borrow_mut() = Some(Recorder {
             durable: std::fs::read(&path).unwrap(),
@@ -261,6 +268,8 @@ fn test_power_loss_at_every_fsync_and_operation() {
             assert!(index.delete(id).unwrap());
             next.live.remove(&id);
         }
+        next.version += 1;
+        index.set_user_version(next.version);
         between_operations(&index);
 
         set_accept(vec![committed.clone(), next.clone()]);
@@ -295,7 +304,7 @@ fn test_power_loss_while_creating() {
     SIMULATING.set(true);
     for seed in 0..100 {
         let dir = tempfile::tempdir().unwrap();
-        let empty = State { live: BTreeSet::new(), next_id: 0 };
+        let empty = State { live: BTreeSet::new(), next_id: 0, version: 0 };
         RECORDER.with(|r| {
             *r.borrow_mut() = Some(Recorder {
                 durable: Vec::new(),

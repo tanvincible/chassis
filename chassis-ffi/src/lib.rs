@@ -67,6 +67,7 @@ trait Readable {
     fn ids(&mut self) -> chassisdb::Result<Vec<u64>>;
     fn len(&mut self) -> u64;
     fn deleted_count(&mut self) -> u64;
+    fn user_version(&mut self) -> u64;
     fn dimensions(&self) -> u32;
     fn metric(&self) -> DistanceMetric;
     fn precision(&self) -> Precision;
@@ -98,6 +99,9 @@ impl Readable for &VectorIndex {
     }
     fn deleted_count(&mut self) -> u64 {
         VectorIndex::deleted_count(self)
+    }
+    fn user_version(&mut self) -> u64 {
+        VectorIndex::user_version(self)
     }
     fn dimensions(&self) -> u32 {
         VectorIndex::dimensions(self)
@@ -144,6 +148,12 @@ impl Readable for IndexReader {
             set_last_error(e);
         }
         IndexReader::deleted_count(self)
+    }
+    fn user_version(&mut self) -> u64 {
+        if let Err(e) = self.refresh() {
+            set_last_error(e);
+        }
+        IndexReader::user_version(self)
     }
     fn dimensions(&self) -> u32 {
         IndexReader::dimensions(self)
@@ -1755,6 +1765,54 @@ pub unsafe extern "C" fn chassis_deleted_count(ptr: *const ChassisIndex) -> u64 
     ffi_guard(|| unsafe { read(ptr, deleted_count) }.unwrap_or(0)).unwrap_or(0)
 }
 
+/// Get the application's number for the index: 0 until one is set
+///
+/// Like SQLite's `user_version`. `chassis_flush()` commits it with the data, so after a crash it
+/// says which flush the index holds: keep the same number in your own store, in the transaction
+/// the flush sits in, and compare the two on open. A reader handle returns the one in its newest
+/// snapshot.
+///
+/// # Returns
+///
+/// - The number, or 0 if `ptr` is NULL (check `chassis_last_error_code()`)
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_user_version(ptr: *const ChassisIndex) -> u64 {
+    let user_version = |index: &mut dyn Readable| {
+        clear_last_error();
+        index.user_version()
+    };
+    ffi_guard(|| unsafe { read(ptr, user_version) }.unwrap_or(0)).unwrap_or(0)
+}
+
+/// Set the application's number for the index, for the next `chassis_flush()` to commit
+///
+/// Until that flush, a crash leaves the number flushed before; see `chassis_user_version()`.
+///
+/// # Returns
+///
+/// - 0 on success
+/// - -1 on failure, as for a reader handle (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_set_user_version(ptr: *mut ChassisIndex, version: u64) -> c_int {
+    ffi_guard(|| {
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return -1;
+        };
+        index.set_user_version(version);
+        clear_last_error();
+        0
+    })
+    .unwrap_or(-1)
+}
+
 /// Check if the index is empty
 ///
 /// # Arguments
@@ -2270,6 +2328,30 @@ mod tests {
             assert_eq!(none, 0);
             assert!(chassis_last_error_message().is_null());
         }
+        unsafe { chassis_free(reader) };
+        unsafe { chassis_free(writer) };
+    }
+
+    #[test]
+    fn test_ffi_user_version() {
+        let (_dir, path) = temp_index_path();
+        let writer = unsafe { chassis_open(path.as_ptr(), 2) };
+        assert_eq!(unsafe { chassis_user_version(writer) }, 0, "never set");
+        assert_eq!(unsafe { chassis_set_user_version(writer, 5) }, 0);
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+        assert_eq!(unsafe { chassis_user_version(reader) }, 5);
+
+        assert_eq!(unsafe { chassis_set_user_version(writer, 6) }, 0);
+        assert_eq!(unsafe { chassis_user_version(writer) }, 6, "the writer sees what it set");
+        assert_eq!(unsafe { chassis_user_version(reader) }, 5, "until a flush commits it");
+        assert_eq!(unsafe { chassis_flush(writer) }, 0);
+        assert_eq!(unsafe { chassis_user_version(reader) }, 6);
+
+        assert_eq!(unsafe { chassis_set_user_version(reader, 7) }, -1);
+        assert!(!chassis_last_error_message().is_null());
+        assert_eq!(unsafe { chassis_user_version(ptr::null()) }, 0);
+        assert!(!chassis_last_error_message().is_null());
         unsafe { chassis_free(reader) };
         unsafe { chassis_free(writer) };
     }

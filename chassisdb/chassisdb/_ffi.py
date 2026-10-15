@@ -268,6 +268,12 @@ _lib.chassis_ids.restype = ctypes.c_size_t
 _lib.chassis_deleted_count.argtypes = [ChassisIndexPtr]
 _lib.chassis_deleted_count.restype = ctypes.c_uint64
 
+# chassis_user_version, chassis_set_user_version
+_lib.chassis_user_version.argtypes = [ChassisIndexPtr]
+_lib.chassis_user_version.restype = ctypes.c_uint64
+_lib.chassis_set_user_version.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
+_lib.chassis_set_user_version.restype = ctypes.c_int
+
 # chassis_len
 _lib.chassis_len.argtypes = [ChassisIndexPtr]
 _lib.chassis_len.restype = ctypes.c_uint64

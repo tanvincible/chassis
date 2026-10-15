@@ -2,7 +2,7 @@
 //!
 //! Tests cover the complete lifecycle: open -> add -> search -> flush
 
-use chassisdb::{ErrorKind, IndexOptions, VectorIndex};
+use chassisdb::{ErrorKind, IndexOptions, IndexReader, VectorIndex};
 use tempfile::NamedTempFile;
 
 #[test]
@@ -551,4 +551,35 @@ fn test_open_never_overwrites_a_short_foreign_file() {
         assert!(VectorIndex::open(temp_file.path(), 8, IndexOptions::default()).is_err());
         assert_eq!(std::fs::read(temp_file.path()).unwrap(), contents);
     }
+}
+
+/// The application's number is committed with the data (ADR-0023): a flush keeps it, a drop
+/// without one rolls it back with the adds, compaction carries it over, and readers see each
+/// flush's.
+#[test]
+fn test_user_version_is_committed_with_the_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("versioned.chassis");
+    let mut index = VectorIndex::open(&path, 4, IndexOptions::default()).unwrap();
+    assert_eq!(index.user_version(), 0, "never set");
+
+    index.add(&[1.0, 0.0, 0.0, 0.0]).unwrap();
+    index.set_user_version(7);
+    index.flush().unwrap();
+    let reader = IndexReader::open(&path, 4, IndexOptions::default()).unwrap();
+    assert_eq!(reader.user_version(), 7);
+
+    index.add(&[0.0, 1.0, 0.0, 0.0]).unwrap();
+    index.set_user_version(8);
+    assert_eq!(index.user_version(), 8, "the writer sees what it set");
+    drop(index);
+    let mut index = VectorIndex::open(&path, 4, IndexOptions::default()).unwrap();
+    assert_eq!((index.user_version(), index.len()), (7, 1), "unflushed, both rolled back");
+
+    index.delete(0).unwrap();
+    index.set_user_version(9);
+    index.compact().unwrap();
+    drop(index);
+    let index = VectorIndex::open(&path, 4, IndexOptions::default()).unwrap();
+    assert_eq!((index.user_version(), index.len()), (9, 0), "compaction carried it over");
 }

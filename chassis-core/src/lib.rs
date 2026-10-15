@@ -685,7 +685,8 @@ impl VectorIndex {
         // `add` must stop taking the slot number for the next id.
         fresh.graph.custom_ids |= next_id != fresh.graph.node_count();
         fresh.ids.get_mut().expect("built above").next = next_id;
-        fresh.graph.storage.carry_over(next_id, self.graph.storage.epoch() + 1);
+        let user_version = self.graph.storage.user_version();
+        fresh.graph.storage.carry_over(next_id, self.graph.storage.epoch() + 1, user_version);
         fresh.flush()?;
         Ok(fresh)
     }
@@ -783,6 +784,20 @@ impl VectorIndex {
     /// Deleted vectors the file still holds, until `compact` removes them.
     pub fn deleted_count(&self) -> u64 {
         self.graph.deleted_count
+    }
+
+    /// Your application's number for the index, as SQLite's `user_version` is for a database: 0
+    /// until you set one. The next `flush` commits it with the data (ADR-0023), so after a crash
+    /// it says which flush the index holds. Keep the same number in your own store, in the
+    /// transaction that `flush` sits in, and compare the two on open.
+    pub fn user_version(&self) -> u64 {
+        self.graph.storage.user_version()
+    }
+
+    /// Sets the number the next `flush` commits with the data; see `user_version`. Until then,
+    /// a crash leaves the one flushed before.
+    pub fn set_user_version(&mut self, version: u64) {
+        self.graph.storage.set_user_version(version);
     }
 
     /// Check if the index is empty
@@ -1172,6 +1187,12 @@ impl IndexReader {
     /// Deleted vectors in the last snapshot that the file still holds; see `len`.
     pub fn deleted_count(&self) -> u64 {
         self.graph.deleted_count
+    }
+
+    /// The application's number in the last snapshot (see `len` and
+    /// `VectorIndex::user_version`): the one committed with the flush the snapshot shows.
+    pub fn user_version(&self) -> u64 {
+        self.graph.storage.user_version()
     }
 
     /// Whether the last snapshot had no live vectors.
