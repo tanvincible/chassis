@@ -838,12 +838,6 @@ impl Storage {
         if header.dims != dims {
             return Err(dimension_mismatch(path, header.dims, dims));
         }
-        if header.file_end > file.metadata()?.len() {
-            fail!(
-                Corrupt,
-                "File truncated: it ends before its last region\nhelp: restore the index from a backup, or rebuild it from its vectors"
-            );
-        }
         let mut storage = Self::new(file, true, headers, header, copy)?;
         storage.map_regions(None)?;
         storage.undo = Some(Undo::new(sibling(path, "undo"), &storage.committed));
@@ -972,16 +966,26 @@ impl Storage {
         committed: bool,
         file_len: &mut Option<u64>,
     ) -> Result<Option<Region>> {
-        let limit = match (committed, *file_len) {
-            (true, _) => self.state.file_end,
-            (false, Some(len)) => len,
-            (false, None) => *file_len.insert(self.file.metadata()?.len()),
+        // A writer lengthens the file before it commits a region, so a committed region past the
+        // file's end means the file was cut off; mapped, its first read would be a SIGBUS.
+        let actual = match *file_len {
+            Some(len) => len,
+            None => *file_len.insert(self.file.metadata()?.len()),
         };
+        let limit = if committed { self.state.file_end.min(actual) } else { actual };
+        let end = offset.checked_add(len as u64);
         let fits = offset >= REGIONS_START
             && offset.is_multiple_of(REGION_ALIGN)
-            && offset.checked_add(len as u64).is_some_and(|end| end <= limit);
+            && end.is_some_and(|end| end <= limit);
         match (fits, committed) {
             (true, _) => Ok(Some(Region::map(&self.file, offset, len, self.writable)?)),
+            (false, true) if end.is_some_and(|end| end <= self.state.file_end) => {
+                fail!(
+                    Corrupt,
+                    "The file is {actual} bytes, shorter than its header says: its regions end at {}\nhelp: it was cut off, as by a partial copy; restore the index from a backup, or rebuild it from its vectors",
+                    self.state.file_end
+                )
+            }
             (false, true) => {
                 fail!(
                     Corrupt,

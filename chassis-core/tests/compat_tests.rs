@@ -107,3 +107,22 @@ fn test_files_from_earlier_releases_open_and_search_as_they_did() {
         assert_eq!(index.search(&vector(500, dims), 1).unwrap()[0].id, id, "{name}");
     }
 }
+
+/// A file cut off after its header, as a partial copy leaves it, is an error: mapped, the regions
+/// the header names past the file's end read as SIGBUS, which fuzzing found.
+#[test]
+fn test_a_file_cut_short_is_an_error_not_a_crash() {
+    let case = cases().into_iter().find(|c| c.file == "v0.8.0-deletes.chassis").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = unpack(&case, dir.path());
+    let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_len(4 * 64 * 1024).unwrap(); // The headers, the live page and one region's start
+    drop(file);
+
+    let check = |e: chassisdb::Error| {
+        assert_eq!(e.kind(), chassisdb::ErrorKind::Corrupt, "{e}");
+        assert!(e.to_string().contains("shorter than its header says"), "{e}");
+    };
+    check(IndexReader::open(&path, case.dims, case.options.clone()).unwrap_err());
+    check(VectorIndex::open(&path, case.dims, case.options.clone()).unwrap_err());
+}

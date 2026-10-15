@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
   agree and mend only when they don't. Files from older releases read it as 0, and older releases
   ignore it.
 
+### Fixed
+
+- A file cut off after its header, as a partial copy leaves it, ended the process with SIGBUS on
+  a reader's first search. Readers and writers now refuse it with an error that gives the file's
+  length and the length its header needs.
+
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 
 One name everywhere: `chassisdb` is the crate, the Python package and its import. Look up vectors

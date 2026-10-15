@@ -100,7 +100,8 @@ A reader was asked to add, delete, flush or compact. Open the index as a writer 
 
 The file is damaged: its header or regions don't add up. Restore it from a backup, or rebuild it
 from its vectors. A crash or power loss doesn't do this (the index recovers to its last
-`flush()`); a disk error or another program writing the file can.
+`flush()`); a disk error or another program writing the file can. So can a copy that stopped
+partway: a file shorter than its header says is refused with both lengths in the message.
 
 ## Full
 
