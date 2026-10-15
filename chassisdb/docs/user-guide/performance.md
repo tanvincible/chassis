@@ -68,16 +68,17 @@ within 5% of the same searches from Rust (0.95 recall).
 A flush waits for the disk (`fsync`), so it takes milliseconds. To add many vectors quickly:
 
 1. Add vectors with `add_batch`, which links them on every core, in chunks of, say, 10,000.
-2. Call `flush()` once at the end, or every few chunks to bound what a crash can lose.
+2. Call `flush()` once at the end, or every few chunks to bound what a crash can lose. A flush
+   after every `add` waits for the disk once per vector.
 
 ```python
-# Slow: one vector and one fsync at a time
-for vec in huge_dataset:
-    index.add(vec)
-    index.flush()
+import numpy as np
+from chassisdb import VectorIndex
 
-# Fast: batches on every core, one fsync
-for start in range(0, len(huge_dataset), 10_000):
-    index.add_batch(huge_dataset[start : start + 10_000])
-index.flush()
+vectors = np.random.rand(50_000, 384).astype(np.float32)  # stands for your embeddings
+
+with VectorIndex("bulk.chassis", dimensions=384) as index:
+    for start in range(0, len(vectors), 10_000):
+        index.add_batch(vectors[start : start + 10_000])
+    index.flush()
 ```
