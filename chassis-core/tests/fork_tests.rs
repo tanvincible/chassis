@@ -18,9 +18,11 @@ fn test_a_forked_child_can_drop_an_index_being_read_in() {
     let child = unsafe { libc::fork() };
     if child == 0 {
         let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(index)));
+        // SAFETY: exits the child without running anything the parent still owns.
         unsafe { libc::_exit(i32::from(dropped.is_err())) };
     }
     let mut status = -1;
+    // SAFETY: `child` is this process's child, and `status` a live `c_int`.
     assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
     assert_eq!(status, 0, "the child panicked dropping the index");
 }

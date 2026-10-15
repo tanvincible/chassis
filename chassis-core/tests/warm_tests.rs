@@ -100,8 +100,10 @@ fn in_memory(path: &std::path::Path) -> (f64, f64) {
     let file = std::fs::File::open(path).unwrap();
     // SAFETY: mapped only to ask the system about its pages; nothing is read through it.
     let map = unsafe { memmap2::Mmap::map(&file) }.unwrap();
+    // SAFETY: a query with no arguments.
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
     let mut pages = vec![0u8; map.len().div_ceil(page)];
+    // SAFETY: the range is the live mapping, and `pages` has a byte for each of its pages.
     let asked =
         unsafe { libc::mincore(map.as_ptr() as *mut _, map.len(), pages.as_mut_ptr().cast()) };
     assert_eq!(asked, 0, "mincore failed");

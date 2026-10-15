@@ -394,14 +394,15 @@ fn steps(ranges: Vec<(usize, usize)>) -> impl Iterator<Item = (usize, usize)> {
 #[cfg(unix)]
 fn read_in(at: usize, len: usize) {
     let at = at as *mut libc::c_void;
-    // SAFETY (both calls): advice about an address range, which nothing here reads or writes.
-    // `Warming` is stopped before a range it was given is unmapped.
     #[cfg(target_os = "linux")]
     // Reads the pages in and maps them, as touching each would, and leaves them clean. Linux 5.14
     // and later; before that, the request below, which the kernel honors only in part.
+    // SAFETY: advice about an address range, which nothing here reads or writes. `Warming` is
+    // stopped before a range it was given is unmapped.
     if unsafe { libc::madvise(at, len, libc::MADV_POPULATE_READ) } == 0 {
         return;
     }
+    // SAFETY: as above.
     unsafe { libc::madvise(at, len, libc::MADV_WILLNEED) };
 }
 
@@ -2249,6 +2250,7 @@ mod tests {
         assert_eq!(from_page_start(4096, (3 * 4096 + 24, 100)), (3 * 4096, 124));
         assert_eq!(from_page_start(16384, (16384, 5)), (16384, 5));
         // Through a view of the file, the same ranges at the same offsets in it.
+        // SAFETY: only addresses are taken from this view, and nothing is read through it.
         let view = unsafe { Mmap::map(&storage.file) }.unwrap();
         let base = view.as_ptr() as usize;
         let offsets = (storage.segments.iter().map(|s| &s.region))

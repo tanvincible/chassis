@@ -38,6 +38,8 @@ pub(crate) struct LegacyIndex {
 
 impl LegacyIndex {
     pub fn open(file: &File, dims: u32) -> Result<Self> {
+        // SAFETY: the caller holds the file's exclusive lock, which every release takes before
+        // writing a file, so nothing changes it while it is mapped.
         let map = unsafe { Mmap::map(file)? };
         let u32_at = |at: usize| u32::from_le_bytes(map[at..at + 4].try_into().expect("4 bytes"));
         let u64_at = |at: usize| u64::from_le_bytes(map[at..at + 8].try_into().expect("8 bytes"));

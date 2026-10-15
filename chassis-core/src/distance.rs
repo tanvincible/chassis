@@ -71,12 +71,14 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
     {
         // The kernel uses FMA instructions too; a CPU with AVX2 but not FMA must not run it.
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: the CPU has both, and the slices are the same length.
             return unsafe { euclidean_distance_avx2(a, b) };
         }
     }
 
     #[cfg(target_arch = "aarch64")]
     {
+        // SAFETY: every aarch64 CPU has NEON, and the slices are the same length.
         return unsafe { euclidean_distance_neon(a, b) };
     }
 
@@ -345,6 +347,11 @@ unsafe fn euclidean_distance_avx2(a: &[f32], b: &[f32]) -> f32 {
 unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::*;
 
+    // SAFETY: the loops below call it within `a`.
+    let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    // SAFETY: and within `b`, which the caller guarantees is as long.
+    let stored = |i: usize| unsafe { _mm256_loadu_ps(b.as_ptr().add(i)) };
+
     let len = a.len();
     let mut i = 0;
 
@@ -357,22 +364,10 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
     // Main loop: Process 32 floats per iteration (4 vectors × 8 floats)
     // This keeps 4 FMA units busy, hiding latency
     while i + 32 <= len {
-        // Load and compute differences
-        let va0 = unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
-        let vb0 = unsafe { _mm256_loadu_ps(b.as_ptr().add(i)) };
-        let diff0 = _mm256_sub_ps(va0, vb0);
-
-        let va1 = unsafe { _mm256_loadu_ps(a.as_ptr().add(i + 8)) };
-        let vb1 = unsafe { _mm256_loadu_ps(b.as_ptr().add(i + 8)) };
-        let diff1 = _mm256_sub_ps(va1, vb1);
-
-        let va2 = unsafe { _mm256_loadu_ps(a.as_ptr().add(i + 16)) };
-        let vb2 = unsafe { _mm256_loadu_ps(b.as_ptr().add(i + 16)) };
-        let diff2 = _mm256_sub_ps(va2, vb2);
-
-        let va3 = unsafe { _mm256_loadu_ps(a.as_ptr().add(i + 24)) };
-        let vb3 = unsafe { _mm256_loadu_ps(b.as_ptr().add(i + 24)) };
-        let diff3 = _mm256_sub_ps(va3, vb3);
+        let diff0 = _mm256_sub_ps(query(i), stored(i));
+        let diff1 = _mm256_sub_ps(query(i + 8), stored(i + 8));
+        let diff2 = _mm256_sub_ps(query(i + 16), stored(i + 16));
+        let diff3 = _mm256_sub_ps(query(i + 24), stored(i + 24));
 
         // Fused multiply-add: sum = diff * diff + sum
         // Each accumulator is independent, allowing parallel execution
@@ -386,9 +381,7 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
 
     // Tail loop: Process remaining 8-float chunks
     while i + 8 <= len {
-        let va = unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
-        let vb = unsafe { _mm256_loadu_ps(b.as_ptr().add(i)) };
-        let diff = _mm256_sub_ps(va, vb);
+        let diff = _mm256_sub_ps(query(i), stored(i));
         sum0 = _mm256_fmadd_ps(diff, diff, sum0);
         i += 8;
     }
@@ -426,8 +419,9 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
 unsafe fn squared_half_avx2(a: &[f32], b: &[u16]) -> f32 {
     use std::arch::x86_64::*;
 
-    // SAFETY (both): the loops below call them within the slices, which are the same length.
+    // SAFETY: the loops below call it within `a`.
     let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    // SAFETY: and within `b`, which the caller guarantees is as long.
     let stored = |i: usize| unsafe { _mm256_cvtph_ps(_mm_loadu_si128(b.as_ptr().add(i).cast())) };
 
     let len = a.len();
@@ -497,6 +491,11 @@ unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
 unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::*;
 
+    // SAFETY: the loops below call it within `a`.
+    let query = |i: usize| unsafe { vld1q_f32(a.as_ptr().add(i)) };
+    // SAFETY: and within `b`, which the caller guarantees is as long.
+    let stored = |i: usize| unsafe { vld1q_f32(b.as_ptr().add(i)) };
+
     let len = a.len();
     let mut i = 0;
 
@@ -508,21 +507,10 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
 
     // Main loop: Process 16 floats per iteration (4 vectors × 4 floats)
     while i + 16 <= len {
-        let va0 = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-        let vb0 = unsafe { vld1q_f32(b.as_ptr().add(i)) };
-        let diff0 = vsubq_f32(va0, vb0);
-
-        let va1 = unsafe { vld1q_f32(a.as_ptr().add(i + 4)) };
-        let vb1 = unsafe { vld1q_f32(b.as_ptr().add(i + 4)) };
-        let diff1 = vsubq_f32(va1, vb1);
-
-        let va2 = unsafe { vld1q_f32(a.as_ptr().add(i + 8)) };
-        let vb2 = unsafe { vld1q_f32(b.as_ptr().add(i + 8)) };
-        let diff2 = vsubq_f32(va2, vb2);
-
-        let va3 = unsafe { vld1q_f32(a.as_ptr().add(i + 12)) };
-        let vb3 = unsafe { vld1q_f32(b.as_ptr().add(i + 12)) };
-        let diff3 = vsubq_f32(va3, vb3);
+        let diff0 = vsubq_f32(query(i), stored(i));
+        let diff1 = vsubq_f32(query(i + 4), stored(i + 4));
+        let diff2 = vsubq_f32(query(i + 8), stored(i + 8));
+        let diff3 = vsubq_f32(query(i + 12), stored(i + 12));
 
         // Fused multiply-add
         sum0 = vfmaq_f32(sum0, diff0, diff0);
@@ -535,9 +523,7 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
 
     // Tail loop: Process remaining 4-float chunks
     while i + 4 <= len {
-        let va = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-        let vb = unsafe { vld1q_f32(b.as_ptr().add(i)) };
-        let diff = vsubq_f32(va, vb);
+        let diff = vsubq_f32(query(i), stored(i));
         sum0 = vfmaq_f32(sum0, diff, diff);
         i += 4;
     }
@@ -570,8 +556,9 @@ unsafe fn squared_half_neon(a: &[f32], b: &[u16]) -> f32 {
     use crate::half::widen4;
     use std::arch::aarch64::*;
 
-    // SAFETY (both): the loops below call them within the slices, which are the same length.
+    // SAFETY: the loops below call it within `a`.
     let query = |i: usize| unsafe { vld1q_f32(a.as_ptr().add(i)) };
+    // SAFETY: and within `b`, which the caller guarantees is as long.
     let stored = |i: usize| unsafe { widen4(b.as_ptr().add(i)) };
 
     let len = a.len();
@@ -667,8 +654,9 @@ fn group_sums_avx2<const W: usize>(
 #[target_feature(enable = "avx2", enable = "fma")]
 unsafe fn squared_group_avx2<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32; W] {
     use std::arch::x86_64::*;
-    // SAFETY (both): called within the slices, which all have `a`'s length.
+    // SAFETY: the loops below call it within `a`.
     let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    // SAFETY: and within each of `b`, which all have `a`'s length.
     let stored = |j: usize, i: usize| unsafe { _mm256_loadu_ps(b[j].as_ptr().add(i)) };
     let (mut totals, done) = group_sums_avx2::<W>(a.len(), query, stored);
     for (total, b) in totals.iter_mut().zip(b) {
@@ -686,8 +674,9 @@ unsafe fn squared_group_avx2<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32;
 #[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
 unsafe fn squared_half_group_avx2<const W: usize>(a: &[f32], b: [&[u16]; W]) -> [f32; W] {
     use std::arch::x86_64::*;
-    // SAFETY (both): as in `squared_group_avx2`.
+    // SAFETY: as in `squared_group_avx2`.
     let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    // SAFETY: as in `squared_group_avx2`, within each of `b`.
     let stored = |j: usize, i: usize| unsafe {
         _mm256_cvtph_ps(_mm_loadu_si128(b[j].as_ptr().add(i).cast()))
     };
@@ -747,8 +736,9 @@ fn group_sums_neon<const W: usize>(
 #[target_feature(enable = "neon")]
 unsafe fn squared_group_neon<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32; W] {
     use std::arch::aarch64::*;
-    // SAFETY (both): called within the slices, which all have `a`'s length.
+    // SAFETY: the loops below call it within `a`.
     let query = |i: usize| unsafe { vld1q_f32(a.as_ptr().add(i)) };
+    // SAFETY: and within each of `b`, which all have `a`'s length.
     let stored = |j: usize, i: usize| unsafe { vld1q_f32(b[j].as_ptr().add(i)) };
     let (mut totals, done) = group_sums_neon::<W>(a.len(), query, stored);
     for (total, b) in totals.iter_mut().zip(b) {
@@ -765,8 +755,9 @@ unsafe fn squared_group_neon<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32;
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn squared_half_group_neon<const W: usize>(a: &[f32], b: [&[u16]; W]) -> [f32; W] {
-    // SAFETY (both): as in `squared_group_neon`.
+    // SAFETY: as in `squared_group_neon`.
     let query = |i: usize| unsafe { std::arch::aarch64::vld1q_f32(a.as_ptr().add(i)) };
+    // SAFETY: as in `squared_group_neon`, within each of `b`.
     let stored = |j: usize, i: usize| unsafe { crate::half::widen4(b[j].as_ptr().add(i)) };
     let (mut totals, done) = group_sums_neon::<W>(a.len(), query, stored);
     for (total, b) in totals.iter_mut().zip(b) {
@@ -807,8 +798,11 @@ mod tests {
     fn check_groups<E: Element, K: Kernel<E>>(stored: impl Fn(&[f32]) -> Vec<E>) {
         fn compare<E: Element, K: Kernel<E>, const W: usize>(query: &[f32], vectors: &[Vec<E>]) {
             let group: [&[E]; W] = std::array::from_fn(|j| vectors[j].as_slice());
+            // SAFETY: each vector has the query's length, and callers pass only kernels this CPU
+            // has.
             let together = unsafe { K::squared_group::<W>(query, group) };
             for (j, got) in together.iter().enumerate() {
+                // SAFETY: as above.
                 let alone = unsafe { K::squared(query, &vectors[j]) };
                 assert_eq!(
                     got.to_bits(),
@@ -894,8 +888,8 @@ mod tests {
                 bits(squared_scalar(&query, &widened)),
                 "scalar, {len}"
             );
-            // SAFETY (here and below): the slices are the same length, and each kernel is used
-            // only on a CPU that has it.
+            // SAFETY: the slices are the same length, and each kernel is used only on a CPU that
+            // has it.
             let (half, full) = unsafe {
                 (
                     <Portable as Kernel<u16>>::squared(&query, &stored),
@@ -905,6 +899,7 @@ mod tests {
             assert_eq!(bits(half), bits(full), "portable, {len}");
             #[cfg(target_arch = "x86_64")]
             if has_f16c() {
+                // SAFETY: as above.
                 let (half, full) =
                     unsafe { (F16c::squared(&query, &stored), Avx2::squared(&query, &widened)) };
                 assert_eq!(bits(half), bits(full), "AVX2, {len}");
@@ -912,6 +907,7 @@ mod tests {
             // The pointer may be to a kernel `euclidean_distance` doesn't use: on a CPU with
             // AVX2 and no F16C, the scalar one.
             let (half, full) = (
+                // SAFETY: as above.
                 unsafe { <u16 as Element>::kernel()(&query, &stored) },
                 squared_scalar(&query, &widened).sqrt(),
             );
@@ -1048,10 +1044,12 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_avx2_specific() {
-        if is_x86_feature_detected!("avx2") {
+        // The kernel uses FMA too, which `has_avx2` checks for as well.
+        if has_avx2() {
             let a: Vec<f32> = (0..1024).map(|i| i as f32 * 0.01).collect();
             let b: Vec<f32> = (0..1024).map(|i| (i as f32) * 0.01 + 1.0).collect();
 
+            // SAFETY: the CPU has AVX2 and FMA, and the slices are the same length.
             let avx2_result = unsafe { euclidean_distance_avx2(&a, &b) };
             let scalar_result = euclidean_distance_scalar(&a, &b);
 
@@ -1070,6 +1068,7 @@ mod tests {
         let a: Vec<f32> = (0..1024).map(|i| i as f32 * 0.01).collect();
         let b: Vec<f32> = (0..1024).map(|i| (i as f32) * 0.01 + 1.0).collect();
 
+        // SAFETY: every aarch64 CPU has NEON, and the slices are the same length.
         let neon_result = unsafe { euclidean_distance_neon(&a, &b) };
         let scalar_result = euclidean_distance_scalar(&a, &b);
 
