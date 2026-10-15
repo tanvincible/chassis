@@ -404,9 +404,14 @@ impl HnswGraph {
             }
             let stored = self.storage.stored::<E>(candidate)?;
             let vector = E::widened(stored, &mut scratch);
-            // SAFETY: stored vectors all have the index's dimensions.
-            let near_a_kept =
-                |&(_, kept): &(NodeId, &[E])| unsafe { kernel(vector, kept) } < distance;
+            // A copy of a neighbor already kept adds nothing, even when the base node is a copy
+            // too and so no nearer to it: otherwise copies fill every list among themselves and
+            // leave the rest of the graph unreachable.
+            let near_a_kept = |&(_, kept): &(NodeId, &[E])| {
+                // SAFETY: stored vectors all have the index's dimensions.
+                let apart = unsafe { kernel(vector, kept) };
+                apart < distance || apart == 0.0
+            };
             if !selected.iter().any(near_a_kept) {
                 selected.push((candidate, stored));
             }

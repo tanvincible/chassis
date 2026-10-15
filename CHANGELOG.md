@@ -27,6 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 - A file cut off after its header, as a partial copy leaves it, ended the process with SIGBUS on
   a reader's first search. Readers and writers now refuse it with an error that gives the file's
   length and the length its header needs.
+- Exact copies of a vector, such as the same text embedded twice, could fill each other's
+  neighbor lists and leave other vectors unreachable: with 50 groups of 40 copies among 1,000
+  vectors, a third to two thirds of those were never found. A list now keeps one copy, and graphs
+  of data without copies are built as before.
 
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 
