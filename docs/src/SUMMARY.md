@@ -15,6 +15,7 @@
 
 # Architecture
 
+- [Verification](./architecture/verification.md)
 - [Overview](./architecture/overview.md)
 - [Storage Layer](./architecture/storage.md)
 - [Graph Topology & Construction](./architecture/graph.md)
