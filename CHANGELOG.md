@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.8.0...HEAD)
 
+### Breaking
+
+- The Rust crate exports what an app uses: `VectorIndex`, `IndexReader`, `IndexOptions`,
+  `SearchResult`, `Error`, `ErrorKind`, `Result`, `DistanceMetric`, `Precision`, and the
+  `cosine_distance` and `euclidean_distance` functions. `Storage`, `HnswGraph`, `HnswParams`,
+  `NodeRecordParams`, `MAGIC` and `VERSION` are behind the `internals` feature, for Chassis's own
+  tests and benchmarks; `HnswBuilder`, which nothing used, is gone. C and Python don't change.
+- `SearchResult`s are equal only when their ids and distances both are, and results with the same
+  distance order by id. Before, results with the same distance were equal whatever their ids.
+
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 
 One name everywhere: `chassisdb` is the crate, the Python package and its import. Look up vectors

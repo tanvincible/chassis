@@ -335,5 +335,8 @@ pub struct SearchResult {
     /// Distance from the query by the index's metric
     pub distance: f32,
 }
-
 ```
+
+Results order by distance, then by id, and two are equal only when both their ids and their
+distances are. Check a search's results with `==`: a result with the right distance but another
+id doesn't match.

@@ -566,6 +566,7 @@ impl Storage {
     /// - The file is already locked by another process
     /// - The file exists but has different dimensions
     /// - The file is corrupted
+    #[cfg(any(test, feature = "internals"))]
     pub fn open<P: AsRef<Path>>(path: P, dimensions: u32) -> Result<Self> {
         Self::open_with(path, dimensions, NodeRecordParams::default(), DistanceMetric::Euclidean)
     }
@@ -576,6 +577,7 @@ impl Storage {
     /// # Errors
     ///
     /// As for `open`.
+    #[cfg(any(test, feature = "internals"))]
     pub fn open_with<P: AsRef<Path>>(
         path: P,
         dimensions: u32,
@@ -1143,6 +1145,7 @@ impl Storage {
     ///
     /// This method does NOT guarantee durability. Call `commit()` to ensure
     /// data is written to disk.
+    #[cfg(any(test, feature = "internals"))]
     pub fn insert(&mut self, vector: &[f32]) -> Result<u64> {
         match self.metric() {
             DistanceMetric::Cosine => self.append(self.count, &crate::distance::unit(vector)?),
@@ -1308,6 +1311,7 @@ impl Storage {
     /// Returns an error if `index` is past the last written slot, or if the file keeps its
     /// vectors in half precision, which `get_vector` widens.
     #[inline]
+    #[cfg(any(test, feature = "internals"))]
     pub fn get_vector_slice(&self, index: u64) -> Result<&[f32]> {
         if self.geometry.precision != Precision::Full {
             bail!("This index keeps its vectors in half precision: read them with get_vector");
@@ -1636,6 +1640,7 @@ impl Storage {
     /// # Errors
     ///
     /// Returns an error if writing or syncing fails; after that, every later commit fails too.
+    #[cfg(any(test, feature = "internals"))]
     pub fn commit(&mut self) -> Result<()> {
         self.state.count = self.count;
         self.commit_deleting(&[])
