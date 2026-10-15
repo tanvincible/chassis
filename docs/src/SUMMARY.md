@@ -20,6 +20,7 @@
 - [Graph](./architecture/graph.md)
 - [File format](./architecture/file-format.md)
 - [Performance](./architecture/performance.md)
+- [Comparison](./architecture/comparison.md)
 
 # Development
 
