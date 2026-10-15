@@ -47,6 +47,9 @@
 //! These concerns are left to the application. Chassis is embedded the way
 //! SQLite is: a library in your process, with everything in one file.
 
+// Every unsafe block says why it is sound, in a `// SAFETY:` comment.
+#![warn(clippy::undocumented_unsafe_blocks)]
+
 pub mod distance;
 mod error;
 mod half;

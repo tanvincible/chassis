@@ -160,6 +160,8 @@ impl VisitedFilter {
         let word_idx = idx >> 6;
         let mask = 1u64 << (idx & 63);
 
+        // SAFETY: `idx < capacity`, and `data` has at least `capacity.div_ceil(64)` words: `new`
+        // sizes it so, and `reuse` only grows it.
         let word = unsafe { self.data.get_unchecked_mut(word_idx) };
         let before = *word;
         *word = before | mask;
@@ -182,6 +184,7 @@ impl VisitedFilter {
         let bit_idx = idx & 63;
         let mask = 1u64 << bit_idx;
 
+        // SAFETY: as in `visit`.
         let word = unsafe { self.data.get_unchecked(word_idx) };
         (*word & mask) != 0
     }
@@ -374,9 +377,9 @@ impl HnswGraph {
         entry: NodeId,
         layer: usize,
     ) -> Result<NodeId> {
-        // SAFETY (here and below): the caller chose a kernel this CPU has, and `E` as the file
-        // keeps its vectors; a stored vector has the index's dimensions, and so does a query.
         let mut best_id = entry;
+        // SAFETY: the caller chose a kernel this CPU has, and `E` as the file keeps its vectors; a
+        // stored vector has the index's dimensions, and so does a query.
         let mut best_dist = unsafe { K::squared(query, self.storage.stored::<E>(entry)?) };
         let prefetch = Prefetch::detect().for_dims::<E>(query.len());
 
@@ -398,6 +401,7 @@ impl HnswGraph {
             for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
                 if visited.0.visit(neighbor_id) {
                     let vector = self.storage.stored::<E>(neighbor_id)?;
+                    // SAFETY: as above.
                     let dist = unsafe { K::squared(query, vector) };
 
                     if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
@@ -633,8 +637,8 @@ impl HnswGraph {
         let mut fresh: Vec<(NodeId, &[E])> =
             Vec::with_capacity(self.record_params.max_neighbors(layer));
 
-        // SAFETY (here and below): the caller chose a kernel this CPU has, and `E` as the file
-        // keeps its vectors; a stored vector has the index's dimensions, and so does a query.
+        // SAFETY: the caller chose a kernel this CPU has, and `E` as the file keeps its vectors; a
+        // stored vector has the index's dimensions, and so does a query.
         let entry_dist = unsafe { K::squared(query, self.storage.stored::<E>(entry)?) };
         candidates.push(Reverse(pack(entry_dist, entry)));
         if !excluded(entry)? {
@@ -689,6 +693,7 @@ impl HnswGraph {
             };
             let (groups, rest) = fresh.as_chunks::<W>();
             for group in groups {
+                // SAFETY: as for `entry_dist`.
                 let dists =
                     unsafe { K::squared_group::<W>(query, group.map(|(_, vector)| vector)) };
                 for (&(neighbor_id, _), dist) in group.iter().zip(dists) {
@@ -698,6 +703,7 @@ impl HnswGraph {
                 }
             }
             for &(neighbor_id, vector) in rest {
+                // SAFETY: as for `entry_dist`.
                 if !take(neighbor_id, unsafe { K::squared(query, vector) })? {
                     return Ok(None);
                 }

@@ -394,14 +394,15 @@ fn steps(ranges: Vec<(usize, usize)>) -> impl Iterator<Item = (usize, usize)> {
 #[cfg(unix)]
 fn read_in(at: usize, len: usize) {
     let at = at as *mut libc::c_void;
-    // SAFETY (both calls): advice about an address range, which nothing here reads or writes.
-    // `Warming` is stopped before a range it was given is unmapped.
     #[cfg(target_os = "linux")]
     // Reads the pages in and maps them, as touching each would, and leaves them clean. Linux 5.14
     // and later; before that, the request below, which the kernel honors only in part.
+    // SAFETY: advice about an address range, which nothing here reads or writes. `Warming` is
+    // stopped before a range it was given is unmapped.
     if unsafe { libc::madvise(at, len, libc::MADV_POPULATE_READ) } == 0 {
         return;
     }
+    // SAFETY: as above.
     unsafe { libc::madvise(at, len, libc::MADV_WILLNEED) };
 }
 
@@ -837,12 +838,6 @@ impl Storage {
         if header.dims != dims {
             return Err(dimension_mismatch(path, header.dims, dims));
         }
-        if header.file_end > file.metadata()?.len() {
-            fail!(
-                Corrupt,
-                "File truncated: it ends before its last region\nhelp: restore the index from a backup, or rebuild it from its vectors"
-            );
-        }
         let mut storage = Self::new(file, true, headers, header, copy)?;
         storage.map_regions(None)?;
         storage.undo = Some(Undo::new(sibling(path, "undo"), &storage.committed));
@@ -971,16 +966,26 @@ impl Storage {
         committed: bool,
         file_len: &mut Option<u64>,
     ) -> Result<Option<Region>> {
-        let limit = match (committed, *file_len) {
-            (true, _) => self.state.file_end,
-            (false, Some(len)) => len,
-            (false, None) => *file_len.insert(self.file.metadata()?.len()),
+        // A writer lengthens the file before it commits a region, so a committed region past the
+        // file's end means the file was cut off; mapped, its first read would be a SIGBUS.
+        let actual = match *file_len {
+            Some(len) => len,
+            None => *file_len.insert(self.file.metadata()?.len()),
         };
+        let limit = if committed { self.state.file_end.min(actual) } else { actual };
+        let end = offset.checked_add(len as u64);
         let fits = offset >= REGIONS_START
             && offset.is_multiple_of(REGION_ALIGN)
-            && offset.checked_add(len as u64).is_some_and(|end| end <= limit);
+            && end.is_some_and(|end| end <= limit);
         match (fits, committed) {
             (true, _) => Ok(Some(Region::map(&self.file, offset, len, self.writable)?)),
+            (false, true) if end.is_some_and(|end| end <= self.state.file_end) => {
+                fail!(
+                    Corrupt,
+                    "The file is {actual} bytes, shorter than its header says: its regions end at {}\nhelp: it was cut off, as by a partial copy; restore the index from a backup, or rebuild it from its vectors",
+                    self.state.file_end
+                )
+            }
             (false, true) => {
                 fail!(
                     Corrupt,
@@ -2249,6 +2254,7 @@ mod tests {
         assert_eq!(from_page_start(4096, (3 * 4096 + 24, 100)), (3 * 4096, 124));
         assert_eq!(from_page_start(16384, (16384, 5)), (16384, 5));
         // Through a view of the file, the same ranges at the same offsets in it.
+        // SAFETY: only addresses are taken from this view, and nothing is read through it.
         let view = unsafe { Mmap::map(&storage.file) }.unwrap();
         let base = view.as_ptr() as usize;
         let offsets = (storage.segments.iter().map(|s| &s.region))
@@ -2472,6 +2478,33 @@ mod tests {
         store_list(&list, &[9, 11, 5]);
         let ids: Vec<u32> = list.iter().map(|e| e.load(Ordering::Relaxed)).collect();
         assert_eq!(ids, [5, 11, 9, EMPTY]);
+    }
+
+    /// Readers walk a list while the writer rewrites it (ADR-0008, decision 5): an id in both the
+    /// old and the new list is seen by every walk. Run under Miri, it also finds any word touched
+    /// other than atomically, as plain stores raced in 4 of 10 runs before the lists were atomic.
+    #[test]
+    fn test_readers_walking_a_list_see_every_id_it_keeps() {
+        let rounds = if cfg!(miri) { 20 } else { 2_000 };
+        let list: Vec<AtomicU32> = [EMPTY; 8].map(AtomicU32::new).into();
+        store_list(&list, &[1, 2, 3, 4]);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for round in 0..rounds {
+                    let ids: &[u64] = if round % 2 == 0 { &[2, 5, 1, 6, 7] } else { &[1, 2, 3, 4] };
+                    store_list(&list, ids);
+                }
+            });
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    for _ in 0..rounds {
+                        let seen: Vec<u32> =
+                            list.iter().map(|e| e.load(Ordering::Relaxed)).collect();
+                        assert!(seen.contains(&1) && seen.contains(&2), "a kept id went missing");
+                    }
+                });
+            }
+        });
     }
 
     #[test]

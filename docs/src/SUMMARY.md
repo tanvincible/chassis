@@ -15,6 +15,7 @@
 
 # Architecture
 
+- [Verification](./architecture/verification.md)
 - [Overview](./architecture/overview.md)
 - [Storage](./architecture/storage.md)
 - [Graph](./architecture/graph.md)

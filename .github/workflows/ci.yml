@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -17,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
         rust: [stable, "1.88"]
     # rust-toolchain.toml pins stable for local work; without this, every job would build with it.
     env:
@@ -205,3 +208,30 @@ jobs:
         run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: miri
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: miri
+
+      # Miri can't map a file, so it runs the tests that work in memory: the header, node
+      # records, the search loop's parts, distances, half precision, and lists rewritten while
+      # readers walk them, where it catches any word touched other than atomically (ADR-0008).
+      # The two skipped search tests build an index in a file.
+      - name: Run the in-memory tests under Miri
+        run: >
+          cargo +nightly miri test -p chassisdb --lib --
+          header:: hnsw::node:: hnsw::search::tests distance:: half::
+          storage::tests::test_store_list storage::tests::test_readers_walking
+          --skip test_distances_in_groups --skip test_ef_less_than_k

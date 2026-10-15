@@ -96,7 +96,8 @@ impl NodeHeader {
             return Err("Buffer too small for NodeHeader");
         }
 
-        // Use read_unaligned for safety - don't assume alignment
+        // SAFETY: `bytes` holds at least `SIZE` bytes, any bytes make a header of plain integers,
+        // and `read_unaligned` needs no alignment.
         let header = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>()) };
 
         // Validate fields
@@ -124,6 +125,7 @@ impl NodeHeader {
     #[inline]
     pub unsafe fn from_bytes_unchecked(bytes: &[u8]) -> Self {
         debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for NodeHeader");
+        // SAFETY: as in `from_bytes`; the caller guarantees the length.
         unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>()) }
     }
 
@@ -395,7 +397,8 @@ impl NodeRecord {
         let size = self.params.record_size();
         let mut bytes = vec![0u8; size];
 
-        // Write header
+        // SAFETY: the header is `repr(C)` with its padding as a field, so all of its `SIZE` bytes
+        // are initialized.
         let header_bytes: &[u8] = unsafe {
             std::slice::from_raw_parts(
                 (&self.header as *const NodeHeader).cast::<u8>(),
