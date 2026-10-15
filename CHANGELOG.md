@@ -15,6 +15,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 - `SearchResult`s are equal only when their ids and distances both are, and results with the same
   distance order by id. Before, results with the same distance were equal whatever their ids.
 
+### Added
+
+- `user_version`, like SQLite's: a number for your application that each flush commits with the
+  data, in Rust, C and Python, so an app can tell on open whether its own store and the index
+  agree and mend only when they don't. Files from older releases read it as 0, and older releases
+  ignore it.
+
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 
 One name everywhere: `chassisdb` is the crate, the Python package and its import. Look up vectors

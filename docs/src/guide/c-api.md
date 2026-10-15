@@ -388,6 +388,22 @@ uint64_t chassis_deleted_count(const ChassisIndex* index);
 ```
 Deleted vectors the file still holds, until `chassis_compact` removes them.
 
+#### `chassis_user_version`
+```c
+uint64_t chassis_user_version(const ChassisIndex* index);
+```
+Your application's number for the index, 0 until one is set: like SQLite's `user_version`. Each
+`chassis_flush` commits the number set before it with the data, so after a crash it says which
+flush the index holds; compare it on open with the same number kept in your own store. A reader
+handle returns the number in its newest snapshot. Returns `0` for a NULL handle, with an error set.
+
+#### `chassis_set_user_version`
+```c
+int chassis_set_user_version(ChassisIndex* index, uint64_t version);
+```
+Set the number the next `chassis_flush` commits. Until then, a crash leaves the one flushed before.
+Returns `0`, or `-1` for a reader handle or a NULL one.
+
 #### `chassis_is_empty`
 ```c
 int chassis_is_empty(const ChassisIndex* index);

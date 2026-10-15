@@ -234,6 +234,12 @@ to match); any number can search while one writer writes, in this process or oth
 
 - **`deleted_count() -> int`**  
   Deleted vectors the file still holds, until `compact()` removes them.
+- **`user_version: int`**  
+  Your application's number for the index, 0 until you set one, like SQLite's `user_version`.
+  The next `flush()` commits it with the data, so after a crash it says which flush the index
+  holds: keep the same number in your own store, in the transaction the flush sits in, and
+  compare the two on open. A `read_only=True` index reports its newest snapshot's; setting it
+  there raises `ReadOnlyError`.
 
 - **`is_empty() -> bool`**  
   Check if index is empty.
