@@ -1,7 +1,7 @@
 # ADR-0020: Errors That Say What to Do
 
 **Date:** 2026-10-10
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#41)
 
 ## Context
 

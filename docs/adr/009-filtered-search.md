@@ -1,7 +1,7 @@
 # ADR-0009: Filtered Search
 
 **Date:** 2026-10-07
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#15)
 
 ## Context
 

@@ -1,7 +1,7 @@
 # ADR-0018: Half Precision for the Vectors, on Request
 
 **Date:** 2026-10-09
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#39)
 
 ## Context
 

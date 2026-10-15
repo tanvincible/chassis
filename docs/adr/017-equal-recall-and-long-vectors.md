@@ -1,7 +1,7 @@
 # ADR-0017: Compare at Equal Recall; Long Vectors Out of Cache Are Bound by Memory
 
 **Date:** 2026-10-09
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#32)
 
 ## Context
 

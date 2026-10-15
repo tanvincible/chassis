@@ -1,7 +1,7 @@
 # ADR-0013: Prefetching into L2, a Leaner Search Loop, and a Smaller Fill
 
 **Date:** 2026-10-08
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#25)
 
 ## Context
 

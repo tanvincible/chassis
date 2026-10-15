@@ -1,7 +1,7 @@
 # ADR-0014: Packed Heap Entries, Squared Distances, and a Search Loop That Inlines
 
 **Date:** 2026-10-09
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#27)
 
 ## Context
 

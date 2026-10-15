@@ -1,7 +1,7 @@
 # ADR-0021: Distances Computed in Groups
 
 **Date:** 2026-10-10
-**Status:** Proposed
+**Status:** Accepted; shipped in v0.7.0 (#42)
 
 ## Context
 
