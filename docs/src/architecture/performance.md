@@ -33,6 +33,13 @@ a third of its speed from Rust, 15 to 38 µs a query; in one call it is within 5
 | 1,536 dims × 99k | Zen 4 1.26×, Xeon 1.05×, N2 2.92× | Zen 4 0.78×, Xeon 0.95×, N2 1.09× |
 | 1,536 dims × 99k, half | Zen 4 1.91×, Xeon 1.55×, N2 2.92× | Zen 4 1.19×, Xeon 1.40×, N2 1.09× |
 
+The same run on the Xeon, across search settings:
+
+![Recall@10 against queries a second on one thread, for Chassis in full and half precision, FAISS's HNSW, hnswlib and usearch, on SIFT and dbpedia](recall-qps.svg)
+
+[Comparison](./comparison.md) has Annoy, sqlite-vec and LanceDB too, with build times, file sizes
+and cold starts.
+
 **From a cold start**
 ([ADR-0019](https://github.com/tanvincible/chassis/blob/main/docs/adr/019-warm.md), Apple M5, 99,000
 × 1,536 dims, the file not in memory): the first result came 0.11 s after the process started.

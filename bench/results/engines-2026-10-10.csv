@@ -1,0 +1,1039 @@
+run,cpu,dataset,engine,n,what,setting,recall,value
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,build_s,0,0.0000,53.241
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,size_mb,0,0.0000,820.642
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,open_ms,0,0.0000,0.254
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,search,32,0.9377,2729.359
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,search,64,0.9788,1654.487
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,search,128,0.9930,974.112
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,search,256,0.9983,556.660
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,cold_open_ms,64,0.0000,5.515
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,cold_first_ms,64,0.0000,242.315
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py,99000,cold_100_ms,64,0.0000,1584.606
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,size_mb,0,0.0000,820.642
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,open_ms,0,0.0000,4.639
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,search,32,0.9377,3112.390
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,search,64,0.9788,1800.195
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,search,128,0.9930,1028.040
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,search,256,0.9983,576.768
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,cold_open_ms,64,0.0000,5.638
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,cold_first_ms,64,0.0000,243.748
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-batch,99000,cold_100_ms,64,0.0000,1553.075
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,build_s,0,0.0000,64.249
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,size_mb,0,0.0000,421.134
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,open_ms,0,0.0000,0.233
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,search,32,0.9375,2990.187
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,search,64,0.9797,1836.677
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,search,128,0.9927,1078.282
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,search,256,0.9982,617.632
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,cold_open_ms,64,0.0000,5.365
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,cold_first_ms,64,0.0000,215.871
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half,99000,cold_100_ms,64,0.0000,861.362
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,size_mb,0,0.0000,421.134
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,open_ms,0,0.0000,4.562
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,search,32,0.9375,2989.986
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,search,64,0.9797,1983.896
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,search,128,0.9927,1129.746
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,search,256,0.9982,623.135
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,cold_open_ms,64,0.0000,5.675
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,cold_first_ms,64,0.0000,219.290
+2026-10-10b,Neoverse-N2,dbpedia-1536,chassis-py-half-batch,99000,cold_100_ms,64,0.0000,835.452
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,build_s,0,0.0000,92.164
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,size_mb,0,0.0000,622.958
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,open_ms,0,0.0000,210.762
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,search,32,0.9248,1237.604
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,search,64,0.9673,730.965
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,search,128,0.9875,424.411
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,search,256,0.9961,239.360
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,cold_open_ms,64,0.0000,1288.289
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,cold_first_ms,64,0.0000,1289.621
+2026-10-10b,Neoverse-N2,dbpedia-1536,hnswlib,99000,cold_100_ms,64,0.0000,1419.714
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,build_s,0,0.0000,92.271
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,size_mb,0,0.0000,622.956
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,open_ms,0,0.0000,261.931
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,search,32,0.9232,1207.945
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,search,64,0.9663,751.560
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,search,128,0.9855,418.776
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,search,256,0.9954,242.613
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,cold_open_ms,64,0.0000,1294.228
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,cold_first_ms,64,0.0000,1295.843
+2026-10-10b,Neoverse-N2,dbpedia-1536,usearch,99000,cold_100_ms,64,0.0000,1434.287
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,build_s,0,0.0000,47.040
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,size_mb,0,0.0000,622.545
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,open_ms,0,0.0000,202.528
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,search,32,0.9310,3055.589
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,search,64,0.9753,1791.872
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,search,128,0.9913,988.196
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,search,256,0.9969,542.111
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,cold_open_ms,64,0.0000,1359.270
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,cold_first_ms,64,0.0000,1359.975
+2026-10-10b,Neoverse-N2,dbpedia-1536,faiss,99000,cold_100_ms,64,0.0000,1417.171
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,build_s,0,0.0000,84.366
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,size_mb,0,0.0000,820.642
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,open_ms,0,0.0000,0.224
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,search,32,0.9389,2236.653
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,search,64,0.9792,1343.042
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,search,128,0.9934,776.964
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,search,256,0.9981,451.918
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,cold_open_ms,64,0.0000,6.608
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,cold_first_ms,64,0.0000,259.845
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py,99000,cold_100_ms,64,0.0000,1910.209
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,size_mb,0,0.0000,820.642
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,open_ms,0,0.0000,5.424
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,search,32,0.9389,2467.740
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,search,64,0.9792,1451.741
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,search,128,0.9934,804.181
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,search,256,0.9981,454.769
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,cold_open_ms,64,0.0000,6.573
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,cold_first_ms,64,0.0000,267.995
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-batch,99000,cold_100_ms,64,0.0000,1918.279
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,build_s,0,0.0000,54.186
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,size_mb,0,0.0000,421.134
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,open_ms,0,0.0000,0.230
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,search,32,0.9374,3169.649
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,search,64,0.9792,1972.173
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,search,128,0.9932,1208.224
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,search,256,0.9983,701.776
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,cold_open_ms,64,0.0000,6.719
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,cold_first_ms,64,0.0000,258.012
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half,99000,cold_100_ms,64,0.0000,1013.459
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,size_mb,0,0.0000,421.134
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,open_ms,0,0.0000,5.358
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,search,32,0.9374,3654.536
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,search,64,0.9792,2230.058
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,search,128,0.9932,1308.737
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,search,256,0.9983,732.370
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,cold_open_ms,64,0.0000,7.051
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,cold_first_ms,64,0.0000,244.610
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,chassis-py-half-batch,99000,cold_100_ms,64,0.0000,972.140
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,build_s,0,0.0000,63.972
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,size_mb,0,0.0000,622.958
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,open_ms,0,0.0000,202.483
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,search,32,0.9248,2773.259
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,search,64,0.9673,1635.578
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,search,128,0.9875,924.290
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,search,256,0.9961,509.814
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,cold_open_ms,64,0.0000,1287.983
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,cold_first_ms,64,0.0000,1288.892
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,hnswlib,99000,cold_100_ms,64,0.0000,1355.187
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,build_s,0,0.0000,81.195
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,size_mb,0,0.0000,622.956
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,open_ms,0,0.0000,222.227
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,search,32,0.9246,1717.204
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,search,64,0.9664,1022.992
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,search,128,0.9863,581.490
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,search,256,0.9959,328.232
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,cold_open_ms,64,0.0000,1289.770
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,cold_first_ms,64,0.0000,1291.113
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,usearch,99000,cold_100_ms,64,0.0000,1391.821
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,build_s,0,0.0000,71.788
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,size_mb,0,0.0000,622.545
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,open_ms,0,0.0000,188.249
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,search,32,0.9310,2840.976
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,search,64,0.9753,1659.215
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,search,128,0.9913,916.679
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,search,256,0.9969,507.526
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,cold_open_ms,64,0.0000,1368.466
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,cold_first_ms,64,0.0000,1369.196
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,dbpedia-1536,faiss,99000,cold_100_ms,64,0.0000,1431.230
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,build_s,0,0.0000,86.218
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,size_mb,0,0.0000,820.642
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,open_ms,0,0.0000,0.303
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,32,0.9395,2356.891
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,64,0.9784,1449.588
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,128,0.9927,853.925
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,256,0.9980,485.857
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,cold_open_ms,64,0.0000,7.903
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,cold_first_ms,64,0.0000,231.773
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,cold_100_ms,64,0.0000,1533.830
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,size_mb,0,0.0000,820.642
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,open_ms,0,0.0000,6.827
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,search,32,0.9395,2692.084
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,search,64,0.9784,1587.377
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,search,128,0.9927,881.873
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,search,256,0.9980,494.523
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,cold_open_ms,64,0.0000,7.741
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,cold_first_ms,64,0.0000,232.926
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-batch,99000,cold_100_ms,64,0.0000,1590.447
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,build_s,0,0.0000,58.498
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,size_mb,0,0.0000,421.134
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,open_ms,0,0.0000,0.282
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,32,0.9364,3722.192
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,64,0.9786,2264.059
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,128,0.9932,1328.132
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,256,0.9981,750.873
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_open_ms,64,0.0000,7.451
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_first_ms,64,0.0000,204.027
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_100_ms,64,0.0000,794.185
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,size_mb,0,0.0000,421.134
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,open_ms,0,0.0000,6.985
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,search,32,0.9364,4219.737
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,search,64,0.9786,2434.458
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,search,128,0.9932,1393.659
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,search,256,0.9981,784.123
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,cold_open_ms,64,0.0000,7.542
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,cold_first_ms,64,0.0000,204.490
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-batch,99000,cold_100_ms,64,0.0000,774.786
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,build_s,0,0.0000,65.469
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,size_mb,0,0.0000,622.958
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,open_ms,0,0.0000,197.291
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,32,0.9248,2527.254
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,64,0.9674,1493.522
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,128,0.9876,855.444
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,256,0.9961,476.402
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,cold_open_ms,64,0.0000,1387.958
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,cold_first_ms,64,0.0000,1388.936
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,cold_100_ms,64,0.0000,1455.024
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,build_s,0,0.0000,82.672
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,size_mb,0,0.0000,622.956
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,open_ms,0,0.0000,244.689
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,32,0.9245,1521.322
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,64,0.9669,903.779
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,128,0.9857,519.222
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,256,0.9959,298.029
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,cold_open_ms,64,0.0000,1289.143
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,cold_first_ms,64,0.0000,1290.493
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,cold_100_ms,64,0.0000,1395.066
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,build_s,0,0.0000,73.862
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,size_mb,0,0.0000,622.545
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,open_ms,0,0.0000,90.997
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,32,0.9310,3774.268
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,64,0.9753,2174.215
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,128,0.9913,1189.000
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,256,0.9969,652.787
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,cold_open_ms,64,0.0000,1363.365
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,cold_first_ms,64,0.0000,1364.042
+2026-10-10b,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,cold_100_ms,64,0.0000,1411.023
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,build_s,0,0.0000,79.897
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,size_mb,0,0.0000,712.638
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,open_ms,0,0.0000,0.258
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,search,32,0.9070,10876.642
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,search,64,0.9665,7542.221
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,search,128,0.9924,4886.465
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,search,256,0.9976,2934.089
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,cold_open_ms,64,0.0000,6.120
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,cold_first_ms,64,0.0000,341.124
+2026-10-10b,Neoverse-N2,sift-128,chassis-py,1000000,cold_100_ms,64,0.0000,1778.848
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,size_mb,0,0.0000,712.638
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,open_ms,0,0.0000,4.889
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,search,32,0.9070,17286.622
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,search,64,0.9665,10248.095
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,search,128,0.9924,5774.316
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,search,256,0.9976,3201.044
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,cold_open_ms,64,0.0000,6.220
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,cold_first_ms,64,0.0000,357.417
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-batch,1000000,cold_100_ms,64,0.0000,1838.819
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,build_s,0,0.0000,77.910
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,size_mb,0,0.0000,444.465
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,open_ms,0,0.0000,0.247
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,search,32,0.9059,11683.295
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,search,64,0.9662,7721.525
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,search,128,0.9917,4854.299
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,search,256,0.9976,2942.944
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,cold_open_ms,64,0.0000,6.097
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,cold_first_ms,64,0.0000,272.913
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half,1000000,cold_100_ms,64,0.0000,1043.902
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,size_mb,0,0.0000,444.465
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,open_ms,0,0.0000,5.006
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,search,32,0.9059,18052.423
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,search,64,0.9662,10824.796
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,search,128,0.9917,6104.614
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,search,256,0.9976,3390.259
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,cold_open_ms,64,0.0000,5.774
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,cold_first_ms,64,0.0000,277.678
+2026-10-10b,Neoverse-N2,sift-128,chassis-py-half-batch,1000000,cold_100_ms,64,0.0000,1046.309
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,build_s,0,0.0000,185.413
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,size_mb,0,0.0000,660.519
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,open_ms,0,0.0000,814.736
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,search,32,0.8907,5361.219
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,search,64,0.9584,3209.255
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,search,128,0.9887,1799.649
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,search,256,0.9973,1004.950
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,cold_open_ms,64,0.0000,1924.858
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,cold_first_ms,64,0.0000,1926.028
+2026-10-10b,Neoverse-N2,sift-128,hnswlib,1000000,cold_100_ms,64,0.0000,1956.512
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,build_s,0,0.0000,262.481
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,size_mb,0,0.0000,660.518
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,open_ms,0,0.0000,436.176
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,search,32,0.8858,3641.881
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,search,64,0.9560,2070.274
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,search,128,0.9864,1081.552
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,search,256,0.9969,625.718
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,cold_open_ms,64,0.0000,1428.261
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,cold_first_ms,64,0.0000,1429.451
+2026-10-10b,Neoverse-N2,sift-128,usearch,1000000,cold_100_ms,64,0.0000,1480.459
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,build_s,0,0.0000,111.300
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,size_mb,0,0.0000,656.258
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,open_ms,0,0.0000,256.522
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,search,32,0.9010,10859.878
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,search,64,0.9638,6198.806
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,search,128,0.9908,3329.203
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,search,256,0.9977,1710.331
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,cold_open_ms,64,0.0000,1358.769
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,cold_first_ms,64,0.0000,1359.435
+2026-10-10b,Neoverse-N2,sift-128,faiss,1000000,cold_100_ms,64,0.0000,1375.865
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,build_s,0,0.0000,103.536
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,size_mb,0,0.0000,712.638
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,open_ms,0,0.0000,0.240
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,search,32,0.9064,12738.053
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,search,64,0.9664,7880.366
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,search,128,0.9922,4488.866
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,search,256,0.9975,2535.552
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,cold_open_ms,64,0.0000,6.346
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,cold_first_ms,64,0.0000,404.136
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py,1000000,cold_100_ms,64,0.0000,2028.181
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,size_mb,0,0.0000,712.638
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,open_ms,0,0.0000,5.049
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,search,32,0.9064,15324.346
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,search,64,0.9664,9481.236
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,search,128,0.9922,5041.894
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,search,256,0.9975,2882.867
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,cold_open_ms,64,0.0000,6.497
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,cold_first_ms,64,0.0000,429.061
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-batch,1000000,cold_100_ms,64,0.0000,2136.667
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,build_s,0,0.0000,75.345
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,size_mb,0,0.0000,444.465
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,open_ms,0,0.0000,0.230
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,search,32,0.9063,16229.863
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,search,64,0.9659,11172.162
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,search,128,0.9918,6727.615
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,search,256,0.9976,3744.094
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,cold_open_ms,64,0.0000,5.983
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,cold_first_ms,64,0.0000,295.467
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half,1000000,cold_100_ms,64,0.0000,1217.350
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,size_mb,0,0.0000,444.465
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,open_ms,0,0.0000,4.750
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,search,32,0.9063,23938.521
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,search,64,0.9659,14245.406
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,search,128,0.9918,7780.113
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,search,256,0.9976,4236.606
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,cold_open_ms,64,0.0000,5.985
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,cold_first_ms,64,0.0000,292.309
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,chassis-py-half-batch,1000000,cold_100_ms,64,0.0000,1189.825
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,build_s,0,0.0000,132.312
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,size_mb,0,0.0000,660.518
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,open_ms,0,0.0000,657.593
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,search,32,0.8907,13158.593
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,search,64,0.9595,7532.629
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,search,128,0.9887,4148.449
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,search,256,0.9972,2335.033
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,cold_open_ms,64,0.0000,1802.422
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,cold_first_ms,64,0.0000,1804.020
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,hnswlib,1000000,cold_100_ms,64,0.0000,1817.527
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,build_s,0,0.0000,205.208
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,size_mb,0,0.0000,660.518
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,open_ms,0,0.0000,333.214
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,search,32,0.8849,7063.298
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,search,64,0.9554,4068.916
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,search,128,0.9863,2288.802
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,search,256,0.9973,1233.954
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,cold_open_ms,64,0.0000,1425.490
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,cold_first_ms,64,0.0000,1426.253
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,usearch,1000000,cold_100_ms,64,0.0000,1451.692
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,build_s,0,0.0000,122.328
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,size_mb,0,0.0000,656.258
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,open_ms,0,0.0000,221.158
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,search,32,0.9010,14336.430
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,search,64,0.9638,7718.164
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,search,128,0.9908,4261.799
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,search,256,0.9977,2219.127
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,cold_open_ms,64,0.0000,1377.633
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,cold_first_ms,64,0.0000,1378.385
+2026-10-10b,Intel(R) Xeon(R) 6973P-C,sift-128,faiss,1000000,cold_100_ms,64,0.0000,1391.701
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,build_s,0,0.0000,118.143
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,size_mb,0,0.0000,712.638
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,open_ms,0,0.0000,0.263
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,32,0.9073,9563.183
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,64,0.9669,6294.559
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,128,0.9922,4056.242
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,256,0.9977,2383.384
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_open_ms,64,0.0000,8.497
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_first_ms,64,0.0000,375.364
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_100_ms,64,0.0000,1889.525
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,size_mb,0,0.0000,712.638
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,open_ms,0,0.0000,7.769
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,search,32,0.9073,13294.117
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,search,64,0.9669,7746.542
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,search,128,0.9922,4593.953
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,search,256,0.9977,2537.501
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,cold_open_ms,64,0.0000,8.149
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,cold_first_ms,64,0.0000,332.576
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-batch,1000000,cold_100_ms,64,0.0000,1706.987
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,build_s,0,0.0000,92.493
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,size_mb,0,0.0000,444.465
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,open_ms,0,0.0000,0.274
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,32,0.9062,11840.345
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,64,0.9673,8177.750
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,128,0.9922,5109.629
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,256,0.9976,3090.472
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_open_ms,64,0.0000,8.442
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_first_ms,64,0.0000,284.481
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_100_ms,64,0.0000,1053.203
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,size_mb,0,0.0000,444.465
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,open_ms,0,0.0000,7.115
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,search,32,0.9062,18330.175
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,search,64,0.9673,11199.222
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,search,128,0.9922,6410.256
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,search,256,0.9976,3538.374
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,cold_open_ms,64,0.0000,8.382
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,cold_first_ms,64,0.0000,281.867
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-batch,1000000,cold_100_ms,64,0.0000,1059.871
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,build_s,0,0.0000,148.824
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,size_mb,0,0.0000,660.519
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,open_ms,0,0.0000,935.586
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,32,0.8922,12625.980
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,64,0.9596,7412.409
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,128,0.9887,4130.611
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,256,0.9968,2241.950
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_open_ms,64,0.0000,2144.163
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_first_ms,64,0.0000,2145.532
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_100_ms,64,0.0000,2158.423
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,build_s,0,0.0000,222.054
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,size_mb,0,0.0000,660.518
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,open_ms,0,0.0000,314.308
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,32,0.8841,5504.671
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,64,0.9556,3143.564
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,128,0.9861,1766.458
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,256,0.9972,930.257
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_open_ms,64,0.0000,1418.754
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_first_ms,64,0.0000,1419.555
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_100_ms,64,0.0000,1449.791
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,build_s,0,0.0000,149.933
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,size_mb,0,0.0000,656.258
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,open_ms,0,0.0000,125.235
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,32,0.9010,14227.291
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,64,0.9638,8162.813
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,128,0.9908,4495.845
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,256,0.9977,2348.312
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_open_ms,64,0.0000,1452.589
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_first_ms,64,0.0000,1453.396
+2026-10-10b,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_100_ms,64,0.0000,1465.574
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,build_s,0,0.0000,65.411
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,size_mb,0,0.0000,820.642
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,open_ms,0,0.0000,0.166
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,search,32,0.9369,2034.526
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,search,64,0.9785,1210.645
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,search,128,0.9927,688.742
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,search,256,0.9980,388.786
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,cold_open_ms,64,0.0000,3.358
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,cold_first_ms,64,0.0000,195.036
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py,99000,cold_100_ms,64,0.0000,1396.915
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,build_s,0,0.0000,74.674
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,size_mb,0,0.0000,421.134
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,open_ms,0,0.0000,0.156
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,search,32,0.9371,2268.148
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,search,64,0.9783,1342.198
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,search,128,0.9928,750.765
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,search,256,0.9980,435.548
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,cold_open_ms,64,0.0000,3.183
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,cold_first_ms,64,0.0000,172.652
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half,99000,cold_100_ms,64,0.0000,698.841
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,size_mb,0,0.0000,820.642
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,open_ms,0,0.0000,2.536
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,search,32,0.9369,2028.149
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,search,64,0.9785,1249.301
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,search,128,0.9927,700.777
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,search,256,0.9980,401.996
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,cold_open_ms,64,0.0000,3.250
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,cold_first_ms,64,0.0000,325.027
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-warm,99000,cold_100_ms,64,0.0000,1309.557
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,size_mb,0,0.0000,421.134
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,open_ms,0,0.0000,3.323
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,search,32,0.9371,2243.017
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,search,64,0.9783,1318.429
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,search,128,0.9928,761.647
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,search,256,0.9980,431.786
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,cold_open_ms,64,0.0000,3.276
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,cold_first_ms,64,0.0000,248.313
+2026-10-10a,Neoverse-V3,dbpedia-1536,chassis-py-half-warm,99000,cold_100_ms,64,0.0000,568.375
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,build_s,0,0.0000,92.936
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,size_mb,0,0.0000,622.958
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,open_ms,0,0.0000,205.949
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,search,32,0.9248,1190.995
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,search,64,0.9674,737.020
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,search,128,0.9875,422.265
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,search,256,0.9961,241.006
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,cold_open_ms,64,0.0000,1270.070
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,cold_first_ms,64,0.0000,1271.340
+2026-10-10a,Neoverse-V3,dbpedia-1536,hnswlib,99000,cold_100_ms,64,0.0000,1405.130
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,build_s,0,0.0000,91.601
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,size_mb,0,0.0000,622.956
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,open_ms,0,0.0000,229.080
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,search,32,0.9231,1196.254
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,search,64,0.9664,721.820
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,search,128,0.9857,413.954
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,search,256,0.9963,230.755
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,cold_open_ms,64,0.0000,1296.204
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,cold_first_ms,64,0.0000,1297.755
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch,99000,cold_100_ms,64,0.0000,1436.268
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,size_mb,0,0.0000,622.956
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,open_ms,0,0.0000,32.091
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,search,32,0.9231,1205.505
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,search,64,0.9664,716.773
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,search,128,0.9857,412.326
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,search,256,0.9963,232.071
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,cold_open_ms,64,0.0000,46.383
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,cold_first_ms,64,0.0000,221.265
+2026-10-10a,Neoverse-V3,dbpedia-1536,usearch-view,99000,cold_100_ms,64,0.0000,1445.773
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,build_s,0,0.0000,47.823
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,size_mb,0,0.0000,622.545
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,open_ms,0,0.0000,171.195
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,search,32,0.9310,2916.392
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,search,64,0.9753,1702.821
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,search,128,0.9913,963.993
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,search,256,0.9969,508.685
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,cold_open_ms,64,0.0000,1364.770
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,cold_first_ms,64,0.0000,1365.408
+2026-10-10a,Neoverse-V3,dbpedia-1536,faiss,99000,cold_100_ms,64,0.0000,1425.319
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,build_s,0,0.0000,14.776
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,size_mb,0,0.0000,647.317
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,open_ms,0,0.0000,0.034
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,search,2000,0.7122,342.128
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,search,8000,0.8764,138.803
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,search,32000,0.9603,52.313
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,search,128000,0.9897,19.465
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,cold_open_ms,8000,0.0000,0.945
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,cold_first_ms,8000,0.0000,704.235
+2026-10-10a,Neoverse-V3,dbpedia-1536,annoy,99000,cold_100_ms,8000,0.0000,2124.846
+2026-10-10a,Neoverse-V3,dbpedia-1536,sqlitevec,99000,build_s,0,0.0000,20.275
+2026-10-10a,Neoverse-V3,dbpedia-1536,sqlitevec,99000,size_mb,0,0.0000,613.306
+2026-10-10a,Neoverse-V3,dbpedia-1536,sqlitevec,99000,open_ms,0,0.0000,0.255
+2026-10-10a,Neoverse-V3,dbpedia-1536,sqlitevec,99000,search,exact,1.0000,5.569
+2026-10-10a,Neoverse-V3,dbpedia-1536,sqlitevec,99000,cold_open_ms,exact,0.0000,25.487
+2026-10-10a,Neoverse-V3,dbpedia-1536,sqlitevec,99000,cold_first_ms,exact,0.0000,1232.715
+2026-10-10a,Neoverse-V3,dbpedia-1536,sqlitevec,99000,cold_100_ms,exact,0.0000,19170.730
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,build_s,0,0.0000,38.084
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,size_mb,0,0.0000,777.316
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,open_ms,0,0.0000,0.784
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,search,32,0.9250,491.604
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,search,64,0.9625,445.269
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,search,128,0.9820,369.959
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,search,256,0.9875,292.955
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,search,256r,0.9975,222.191
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,cold_open_ms,64,0.0000,555.907
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,cold_first_ms,64,0.0000,875.970
+2026-10-10a,Neoverse-V3,dbpedia-1536,lancedb,99000,cold_100_ms,64,0.0000,1132.003
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,build_s,0,0.0000,91.859
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,size_mb,0,0.0000,820.642
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,open_ms,0,0.0000,0.189
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,32,0.9373,2066.295
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,64,0.9788,1214.174
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,128,0.9931,692.833
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,search,256,0.9982,394.273
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,cold_open_ms,64,0.0000,4.966
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,cold_first_ms,64,0.0000,511.567
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py,99000,cold_100_ms,64,0.0000,2778.116
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,build_s,0,0.0000,60.680
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,size_mb,0,0.0000,421.134
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,open_ms,0,0.0000,0.185
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,32,0.9356,3260.418
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,64,0.9791,1929.458
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,128,0.9930,1124.400
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,search,256,0.9982,629.800
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_open_ms,64,0.0000,4.873
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_first_ms,64,0.0000,251.595
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_100_ms,64,0.0000,1454.480
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,size_mb,0,0.0000,820.642
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,open_ms,0,0.0000,4.127
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,32,0.9373,2086.852
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,64,0.9788,1231.910
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,128,0.9931,694.187
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,256,0.9982,393.792
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,cold_open_ms,64,0.0000,249.282
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,cold_first_ms,64,0.0000,1186.237
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-warm,99000,cold_100_ms,64,0.0000,3160.245
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,size_mb,0,0.0000,421.134
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,open_ms,0,0.0000,4.042
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,32,0.9356,3290.106
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,64,0.9791,1981.440
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,128,0.9930,1120.395
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,256,0.9982,645.464
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,cold_open_ms,64,0.0000,4.988
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,cold_first_ms,64,0.0000,1551.100
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,cold_100_ms,64,0.0000,2111.102
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,build_s,0,0.0000,58.164
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,size_mb,0,0.0000,622.958
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,open_ms,0,0.0000,155.765
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,32,0.9255,3301.910
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,64,0.9674,1926.044
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,128,0.9868,1093.757
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,search,256,0.9960,614.294
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,cold_open_ms,64,0.0000,2066.115
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,cold_first_ms,64,0.0000,2066.922
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,hnswlib,99000,cold_100_ms,64,0.0000,2118.430
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,build_s,0,0.0000,72.384
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,size_mb,0,0.0000,622.956
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,open_ms,0,0.0000,196.016
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,32,0.9246,2023.934
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,64,0.9666,1223.544
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,128,0.9858,689.036
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,search,256,0.9961,384.155
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,cold_open_ms,64,0.0000,1311.048
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,cold_first_ms,64,0.0000,1312.164
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch,99000,cold_100_ms,64,0.0000,1395.857
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,size_mb,0,0.0000,622.956
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,open_ms,0,0.0000,51.280
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,search,32,0.9246,1566.387
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,search,64,0.9666,922.689
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,search,128,0.9858,525.588
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,search,256,0.9961,296.870
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,cold_open_ms,64,0.0000,81.491
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,cold_first_ms,64,0.0000,360.625
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,usearch-view,99000,cold_100_ms,64,0.0000,2648.616
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,build_s,0,0.0000,69.808
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,size_mb,0,0.0000,622.545
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,open_ms,0,0.0000,76.136
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,32,0.9310,4477.076
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,64,0.9753,2564.753
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,128,0.9913,1415.012
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,search,256,0.9969,784.476
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,cold_open_ms,64,0.0000,3307.108
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,cold_first_ms,64,0.0000,3307.665
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,faiss,99000,cold_100_ms,64,0.0000,3346.837
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,build_s,0,0.0000,14.488
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,size_mb,0,0.0000,647.391
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,open_ms,0,0.0000,0.056
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,search,2000,0.7122,881.103
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,search,8000,0.8799,372.719
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,search,32000,0.9621,141.678
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,search,128000,0.9899,52.126
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,cold_open_ms,8000,0.0000,1.637
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,cold_first_ms,8000,0.0000,1362.283
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,annoy,99000,cold_100_ms,8000,0.0000,3445.653
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,sqlitevec,99000,build_s,0,0.0000,36.724
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,sqlitevec,99000,size_mb,0,0.0000,613.306
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,sqlitevec,99000,open_ms,0,0.0000,0.271
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,sqlitevec,99000,search,exact,1.0000,4.047
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,sqlitevec,99000,cold_open_ms,exact,0.0000,2.995
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,sqlitevec,99000,cold_first_ms,exact,0.0000,2617.081
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,sqlitevec,99000,cold_100_ms,exact,0.0000,27145.625
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,build_s,0,0.0000,32.712
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,size_mb,0,0.0000,777.310
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,open_ms,0,0.0000,1.061
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,search,32,0.9240,407.598
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,search,64,0.9630,383.058
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,search,128,0.9785,347.217
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,search,256,0.9890,295.251
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,search,256r,0.9985,223.861
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,cold_open_ms,64,0.0000,801.448
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,cold_first_ms,64,0.0000,1139.356
+2026-10-10a,AMD EPYC 9V74 80-Core Processor,dbpedia-1536,lancedb,99000,cold_100_ms,64,0.0000,1449.258
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,build_s,0,0.0000,65.341
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,size_mb,0,0.0000,820.642
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,open_ms,0,0.0000,0.238
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,search,32,0.9369,3103.920
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,search,64,0.9789,1856.471
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,search,128,0.9930,1065.806
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,search,256,0.9980,607.555
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,cold_open_ms,64,0.0000,4.026
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,cold_first_ms,64,0.0000,203.487
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py,99000,cold_100_ms,64,0.0000,1462.238
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,build_s,0,0.0000,56.136
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,size_mb,0,0.0000,421.134
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,open_ms,0,0.0000,0.252
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,search,32,0.9380,3179.770
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,search,64,0.9787,1847.706
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,search,128,0.9927,1092.903
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,search,256,0.9978,627.554
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_open_ms,64,0.0000,4.544
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_first_ms,64,0.0000,188.747
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half,99000,cold_100_ms,64,0.0000,764.124
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,size_mb,0,0.0000,820.642
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,open_ms,0,0.0000,4.061
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,32,0.9369,3055.826
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,64,0.9789,1768.342
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,128,0.9930,1021.963
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,search,256,0.9980,575.083
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,cold_open_ms,64,0.0000,4.658
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,cold_first_ms,64,0.0000,395.253
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-warm,99000,cold_100_ms,64,0.0000,1297.218
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,size_mb,0,0.0000,421.134
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,open_ms,0,0.0000,3.575
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,32,0.9380,3076.124
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,64,0.9787,1860.708
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,128,0.9927,1088.683
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,search,256,0.9978,606.360
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,cold_open_ms,64,0.0000,4.303
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,cold_first_ms,64,0.0000,303.481
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,chassis-py-half-warm,99000,cold_100_ms,64,0.0000,613.230
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,build_s,0,0.0000,47.609
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,size_mb,0,0.0000,622.958
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,open_ms,0,0.0000,115.900
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,search,32,0.9258,4108.288
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,search,64,0.9686,2434.476
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,search,128,0.9870,1365.925
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,search,256,0.9961,765.573
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,cold_open_ms,64,0.0000,1329.393
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,cold_first_ms,64,0.0000,1330.121
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,hnswlib,99000,cold_100_ms,64,0.0000,1370.847
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,build_s,0,0.0000,58.829
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,size_mb,0,0.0000,622.956
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,open_ms,0,0.0000,148.915
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,search,32,0.9244,2397.328
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,search,64,0.9662,1525.459
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,search,128,0.9862,864.774
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,search,256,0.9961,463.642
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,cold_open_ms,64,0.0000,1274.535
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,cold_first_ms,64,0.0000,1275.574
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch,99000,cold_100_ms,64,0.0000,1345.810
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,size_mb,0,0.0000,622.956
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,open_ms,0,0.0000,40.354
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,search,32,0.9244,2247.325
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,search,64,0.9662,1162.840
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,search,128,0.9862,663.749
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,search,256,0.9961,360.965
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,cold_open_ms,64,0.0000,62.683
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,cold_first_ms,64,0.0000,258.122
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,usearch-view,99000,cold_100_ms,64,0.0000,1471.146
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,build_s,0,0.0000,45.600
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,size_mb,0,0.0000,622.545
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,open_ms,0,0.0000,71.912
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,search,32,0.9310,5928.033
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,search,64,0.9753,3413.406
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,search,128,0.9913,1891.373
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,search,256,0.9969,1041.332
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,cold_open_ms,64,0.0000,1276.407
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,cold_first_ms,64,0.0000,1276.895
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,faiss,99000,cold_100_ms,64,0.0000,1304.891
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,build_s,0,0.0000,9.311
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,size_mb,0,0.0000,647.391
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,open_ms,0,0.0000,0.058
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,search,2000,0.7122,1315.657
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,search,8000,0.8799,527.307
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,search,32000,0.9621,191.032
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,search,128000,0.9899,65.478
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,cold_open_ms,8000,0.0000,0.993
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,cold_first_ms,8000,0.0000,719.063
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,annoy,99000,cold_100_ms,8000,0.0000,1564.084
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,sqlitevec,99000,build_s,0,0.0000,25.968
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,sqlitevec,99000,size_mb,0,0.0000,613.306
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,sqlitevec,99000,open_ms,0,0.0000,0.296
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,sqlitevec,99000,search,exact,1.0000,6.883
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,sqlitevec,99000,cold_open_ms,exact,0.0000,2.101
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,sqlitevec,99000,cold_first_ms,exact,0.0000,1224.312
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,sqlitevec,99000,cold_100_ms,exact,0.0000,15743.083
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,build_s,0,0.0000,21.959
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,size_mb,0,0.0000,777.310
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,open_ms,0,0.0000,0.933
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,search,32,0.9225,552.925
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,search,64,0.9625,524.946
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,search,128,0.9785,480.969
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,search,256,0.9885,413.885
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,search,256r,0.9980,308.960
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,cold_open_ms,64,0.0000,652.194
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,cold_first_ms,64,0.0000,968.595
+2026-10-10a,AMD EPYC 9V45 96-Core Processor,dbpedia-1536,lancedb,99000,cold_100_ms,64,0.0000,1189.436
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,build_s,0,0.0000,79.355
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,size_mb,0,0.0000,712.638
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,open_ms,0,0.0000,0.264
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,search,32,0.9061,11026.238
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,search,64,0.9664,7610.188
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,search,128,0.9922,4804.821
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,search,256,0.9977,2918.895
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,cold_open_ms,64,0.0000,5.703
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,cold_first_ms,64,0.0000,434.559
+2026-10-10a,Neoverse-N2,sift-128,chassis-py,1000000,cold_100_ms,64,0.0000,2326.395
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,build_s,0,0.0000,76.795
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,size_mb,0,0.0000,444.465
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,open_ms,0,0.0000,0.240
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,search,32,0.9067,12444.751
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,search,64,0.9668,8368.017
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,search,128,0.9922,5183.971
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,search,256,0.9976,3099.556
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,cold_open_ms,64,0.0000,5.458
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,cold_first_ms,64,0.0000,355.639
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half,1000000,cold_100_ms,64,0.0000,1411.635
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,size_mb,0,0.0000,712.638
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,open_ms,0,0.0000,3.657
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,search,32,0.9061,10794.680
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,search,64,0.9664,7436.534
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,search,128,0.9922,4722.706
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,search,256,0.9977,2853.725
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,cold_open_ms,64,0.0000,5.566
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,cold_first_ms,64,0.0000,452.840
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-warm,1000000,cold_100_ms,64,0.0000,1407.099
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,size_mb,0,0.0000,444.465
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,open_ms,0,0.0000,3.701
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,search,32,0.9067,12631.296
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,search,64,0.9668,8414.907
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,search,128,0.9922,5238.840
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,search,256,0.9976,3126.580
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,cold_open_ms,64,0.0000,5.617
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,cold_first_ms,64,0.0000,365.556
+2026-10-10a,Neoverse-N2,sift-128,chassis-py-half-warm,1000000,cold_100_ms,64,0.0000,767.961
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,build_s,0,0.0000,183.958
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,open_ms,0,0.0000,812.046
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,search,32,0.8926,5657.055
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,search,64,0.9592,3179.319
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,search,128,0.9883,1842.068
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,search,256,0.9970,1017.923
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,cold_open_ms,64,0.0000,1978.960
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,cold_first_ms,64,0.0000,1980.115
+2026-10-10a,Neoverse-N2,sift-128,hnswlib,1000000,cold_100_ms,64,0.0000,2009.856
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,build_s,0,0.0000,255.098
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,open_ms,0,0.0000,434.612
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,search,32,0.8874,3303.125
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,search,64,0.9574,2055.016
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,search,128,0.9867,1121.783
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,search,256,0.9972,641.014
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,cold_open_ms,64,0.0000,1481.879
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,cold_first_ms,64,0.0000,1483.048
+2026-10-10a,Neoverse-N2,sift-128,usearch,1000000,cold_100_ms,64,0.0000,1533.943
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,open_ms,0,0.0000,108.155
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,search,32,0.8874,3281.227
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,search,64,0.9574,1922.739
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,search,128,0.9867,1052.948
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,search,256,0.9972,613.656
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,cold_open_ms,64,0.0000,433.133
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,cold_first_ms,64,0.0000,807.127
+2026-10-10a,Neoverse-N2,sift-128,usearch-view,1000000,cold_100_ms,64,0.0000,2222.118
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,build_s,0,0.0000,111.589
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,size_mb,0,0.0000,656.258
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,open_ms,0,0.0000,223.697
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,search,32,0.9010,11092.931
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,search,64,0.9638,6494.369
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,search,128,0.9908,3460.128
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,search,256,0.9977,1772.250
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,cold_open_ms,64,0.0000,1387.897
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,cold_first_ms,64,0.0000,1388.618
+2026-10-10a,Neoverse-N2,sift-128,faiss,1000000,cold_100_ms,64,0.0000,1405.210
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,build_s,0,0.0000,31.510
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,size_mb,0,0.0000,904.612
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,open_ms,0,0.0000,0.062
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,search,2000,0.7624,2134.799
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,search,8000,0.9269,684.701
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,search,32000,0.9881,209.852
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,search,128000,0.9983,65.553
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,cold_open_ms,8000,0.0000,0.956
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,cold_first_ms,8000,0.0000,1055.017
+2026-10-10a,Neoverse-N2,sift-128,annoy,1000000,cold_100_ms,8000,0.0000,2997.227
+2026-10-10a,Neoverse-N2,sift-128,sqlitevec,1000000,build_s,0,0.0000,9.402
+2026-10-10a,Neoverse-N2,sift-128,sqlitevec,1000000,size_mb,0,0.0000,536.170
+2026-10-10a,Neoverse-N2,sift-128,sqlitevec,1000000,open_ms,0,0.0000,0.292
+2026-10-10a,Neoverse-N2,sift-128,sqlitevec,1000000,search,exact,0.9990,5.942
+2026-10-10a,Neoverse-N2,sift-128,sqlitevec,1000000,cold_open_ms,exact,0.0000,2.564
+2026-10-10a,Neoverse-N2,sift-128,sqlitevec,1000000,cold_first_ms,exact,0.0000,1248.803
+2026-10-10a,Neoverse-N2,sift-128,sqlitevec,1000000,cold_100_ms,exact,0.0000,18137.954
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,build_s,0,0.0000,169.984
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,size_mb,0,0.0000,827.537
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,open_ms,0,0.0000,1.338
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,search,32,0.9130,297.986
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,search,64,0.9555,288.263
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,search,128,0.9725,264.491
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,search,256,0.9800,238.799
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,search,256r,0.9965,187.509
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,cold_open_ms,64,0.0000,866.375
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,cold_first_ms,64,0.0000,1399.210
+2026-10-10a,Neoverse-N2,sift-128,lancedb,1000000,cold_100_ms,64,0.0000,1818.057
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,build_s,0,0.0000,130.383
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,size_mb,0,0.0000,712.638
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,open_ms,0,0.0000,0.234
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,32,0.9076,9553.868
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,64,0.9672,5931.930
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,128,0.9919,3619.162
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,256,0.9977,2135.849
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_open_ms,64,0.0000,6.839
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_first_ms,64,0.0000,294.448
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_100_ms,64,0.0000,1667.306
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,build_s,0,0.0000,94.009
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,size_mb,0,0.0000,444.465
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,open_ms,0,0.0000,0.253
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,32,0.9068,11798.154
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,64,0.9665,8264.510
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,128,0.9921,5107.898
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,256,0.9977,3045.701
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_open_ms,64,0.0000,6.613
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_first_ms,64,0.0000,239.388
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_100_ms,64,0.0000,987.207
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,size_mb,0,0.0000,712.638
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,open_ms,0,0.0000,5.913
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,32,0.9076,8953.804
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,64,0.9672,6091.336
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,128,0.9919,3507.299
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,256,0.9977,2057.965
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,cold_open_ms,64,0.0000,6.990
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,cold_first_ms,64,0.0000,423.617
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,cold_100_ms,64,0.0000,1374.645
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,size_mb,0,0.0000,444.465
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,open_ms,0,0.0000,5.849
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,32,0.9068,12019.815
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,64,0.9665,7924.245
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,128,0.9921,4989.760
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,256,0.9977,3031.618
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,cold_open_ms,64,0.0000,6.828
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,cold_first_ms,64,0.0000,265.582
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,cold_100_ms,64,0.0000,760.054
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,build_s,0,0.0000,152.294
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,open_ms,0,0.0000,937.597
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,32,0.8916,12625.242
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,64,0.9598,7338.057
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,128,0.9884,4056.761
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,256,0.9972,2157.102
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_open_ms,64,0.0000,2142.885
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_first_ms,64,0.0000,2144.191
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_100_ms,64,0.0000,2158.123
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,build_s,0,0.0000,229.416
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,open_ms,0,0.0000,316.931
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,32,0.8881,5166.641
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,64,0.9565,3058.147
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,128,0.9864,1707.074
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,256,0.9971,896.211
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_open_ms,64,0.0000,1403.132
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_first_ms,64,0.0000,1403.904
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_100_ms,64,0.0000,1430.732
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,open_ms,0,0.0000,120.425
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,32,0.8881,4950.681
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,64,0.9565,2938.163
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,128,0.9864,1624.290
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,256,0.9971,822.704
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,cold_open_ms,64,0.0000,253.141
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,cold_first_ms,64,0.0000,522.129
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,cold_100_ms,64,0.0000,1647.717
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,build_s,0,0.0000,154.597
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,size_mb,0,0.0000,656.258
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,open_ms,0,0.0000,130.291
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,32,0.9010,13865.338
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,64,0.9638,7940.545
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,128,0.9908,4270.032
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,256,0.9977,2202.687
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_open_ms,64,0.0000,1458.669
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_first_ms,64,0.0000,1459.439
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_100_ms,64,0.0000,1471.629
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,build_s,0,0.0000,23.985
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,size_mb,0,0.0000,904.025
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,open_ms,0,0.0000,0.063
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,2000,0.7616,3541.452
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,8000,0.9273,1148.231
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,32000,0.9876,331.232
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,128000,0.9985,91.573
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,cold_open_ms,8000,0.0000,0.955
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,cold_first_ms,8000,0.0000,793.961
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,cold_100_ms,8000,0.0000,2240.439
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,build_s,0,0.0000,9.541
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,size_mb,0,0.0000,536.170
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,open_ms,0,0.0000,0.315
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,search,exact,0.9990,4.658
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,cold_open_ms,exact,0.0000,3.459
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,cold_first_ms,exact,0.0000,1015.638
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,cold_100_ms,exact,0.0000,22938.084
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,build_s,0,0.0000,121.891
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,size_mb,0,0.0000,827.386
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,open_ms,0,0.0000,1.270
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,32,0.9105,333.954
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,64,0.9570,322.784
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,128,0.9735,310.040
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,256,0.9810,292.237
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,256r,0.9985,219.797
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,cold_open_ms,64,0.0000,1196.817
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,cold_first_ms,64,0.0000,1425.939
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,cold_100_ms,64,0.0000,1775.593
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,build_s,0,0.0000,119.019
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,size_mb,0,0.0000,712.638
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,open_ms,0,0.0000,0.221
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,32,0.9057,10533.256
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,64,0.9667,6959.337
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,128,0.9919,4196.853
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,search,256,0.9976,2454.220
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_open_ms,64,0.0000,6.281
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_first_ms,64,0.0000,317.327
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py,1000000,cold_100_ms,64,0.0000,1443.260
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,build_s,0,0.0000,89.327
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,size_mb,0,0.0000,444.465
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,open_ms,0,0.0000,0.205
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,32,0.9067,13834.416
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,64,0.9679,9428.065
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,128,0.9918,5834.740
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,search,256,0.9976,3423.845
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_open_ms,64,0.0000,6.265
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_first_ms,64,0.0000,272.773
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half,1000000,cold_100_ms,64,0.0000,923.448
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,size_mb,0,0.0000,712.638
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,open_ms,0,0.0000,5.319
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,32,0.9057,10668.616
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,64,0.9667,7049.471
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,128,0.9919,4309.401
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,search,256,0.9976,2496.513
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,cold_open_ms,64,0.0000,6.394
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,cold_first_ms,64,0.0000,422.144
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-warm,1000000,cold_100_ms,64,0.0000,1392.609
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,size_mb,0,0.0000,444.465
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,open_ms,0,0.0000,5.346
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,32,0.9067,13678.578
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,64,0.9679,9324.674
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,128,0.9918,5827.801
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,search,256,0.9976,3417.529
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,cold_open_ms,64,0.0000,6.300
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,cold_first_ms,64,0.0000,241.543
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,chassis-py-half-warm,1000000,cold_100_ms,64,0.0000,737.382
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,build_s,0,0.0000,136.463
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,size_mb,0,0.0000,660.519
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,open_ms,0,0.0000,928.387
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,32,0.8927,13648.030
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,64,0.9600,7865.742
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,128,0.9876,4402.110
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,search,256,0.9970,2385.079
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_open_ms,64,0.0000,2158.116
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_first_ms,64,0.0000,2159.382
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,hnswlib,1000000,cold_100_ms,64,0.0000,2171.568
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,build_s,0,0.0000,201.224
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,open_ms,0,0.0000,302.035
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,32,0.8843,6518.379
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,64,0.9560,3816.956
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,128,0.9861,2124.987
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,search,256,0.9972,1167.571
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_open_ms,64,0.0000,1416.255
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_first_ms,64,0.0000,1416.974
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch,1000000,cold_100_ms,64,0.0000,1441.642
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,size_mb,0,0.0000,660.518
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,open_ms,0,0.0000,113.675
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,32,0.8843,5871.438
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,64,0.9560,3384.124
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,128,0.9861,1900.723
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,search,256,0.9972,1054.828
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,cold_open_ms,64,0.0000,217.563
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,cold_first_ms,64,0.0000,463.312
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,usearch-view,1000000,cold_100_ms,64,0.0000,1485.277
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,build_s,0,0.0000,137.080
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,size_mb,0,0.0000,656.258
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,open_ms,0,0.0000,118.817
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,32,0.9010,15353.427
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,64,0.9638,8732.003
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,128,0.9908,4729.385
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,search,256,0.9977,2492.412
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_open_ms,64,0.0000,1468.638
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_first_ms,64,0.0000,1469.345
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,faiss,1000000,cold_100_ms,64,0.0000,1480.409
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,build_s,0,0.0000,21.973
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,size_mb,0,0.0000,904.025
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,open_ms,0,0.0000,0.044
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,2000,0.7616,3891.088
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,8000,0.9273,1236.730
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,32000,0.9876,351.709
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,search,128000,0.9985,96.773
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,cold_open_ms,8000,0.0000,2.090
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,cold_first_ms,8000,0.0000,850.496
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,annoy,1000000,cold_100_ms,8000,0.0000,2189.598
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,build_s,0,0.0000,9.280
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,size_mb,0,0.0000,536.170
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,open_ms,0,0.0000,0.265
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,search,exact,0.9990,4.795
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,cold_open_ms,exact,0.0000,3.247
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,cold_first_ms,exact,0.0000,1003.030
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,sqlitevec,1000000,cold_100_ms,exact,0.0000,22761.029
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,build_s,0,0.0000,113.954
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,size_mb,0,0.0000,827.736
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,open_ms,0,0.0000,1.346
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,32,0.9135,340.362
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,64,0.9585,333.005
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,128,0.9780,322.216
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,256,0.9815,300.754
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,search,256r,0.9970,228.715
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,cold_open_ms,64,0.0000,1142.438
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,cold_first_ms,64,0.0000,1380.060
+2026-10-10a,AMD EPYC 7763 64-Core Processor,sift-128,lancedb,1000000,cold_100_ms,64,0.0000,1721.603
