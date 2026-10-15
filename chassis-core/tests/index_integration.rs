@@ -360,10 +360,11 @@ fn test_truncated_graph_is_an_error() {
         index.flush().unwrap();
     }
 
-    // Cut inside the last segment.
+    // Regions start every 64 KiB, so a shorter cut can remove only the padding after the last
+    // one, which nothing reads: such a file opens, as it should.
     let len = std::fs::metadata(temp_file.path()).unwrap().len();
     let file = std::fs::OpenOptions::new().write(true).open(temp_file.path()).unwrap();
-    file.set_len(len - 1000).unwrap();
+    file.set_len(len - 64 * 1024).unwrap();
     assert!(VectorIndex::open(temp_file.path(), 64, IndexOptions::default()).is_err());
 }
 
