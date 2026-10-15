@@ -568,6 +568,7 @@ fn test_user_version_is_committed_with_the_data() {
     index.flush().unwrap();
     let reader = IndexReader::open(&path, 4, IndexOptions::default()).unwrap();
     assert_eq!(reader.user_version(), 7);
+    drop(reader); // Windows can't replace a file another handle has open, as compact does below.
 
     index.add(&[0.0, 1.0, 0.0, 0.0]).unwrap();
     index.set_user_version(8);
