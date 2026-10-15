@@ -2,6 +2,8 @@
 
 This page shows how to run Chassis's tests, what each suite checks, and what CI runs, so you know
 which tests cover a change and where a new one belongs.
+[Verification](../architecture/verification.md) has what the tests show, and what none of them
+covers yet.
 
 ## Running
 
@@ -47,6 +49,8 @@ The Rust suites are in `chassis-core/tests`; each file says at its top what it c
 | `half_precision_tests` | Half precision finds what brute force over the rounded vectors finds |
 | `compaction_tests` | `compact()` keeps every vector under its id and drops the deleted ones |
 | `migration_tests` | Opening a format 1 or 2 file migrates it to format 3 |
+| `compat_tests` | Files written by earlier releases (`tests/compat`) open, search as they did, and take writes |
+| `duplicate_tests` | Many exact copies of a vector leave every other vector reachable |
 | `reader_tests` | Readers in other processes, while a writer changes the file |
 | `crash_tests` | A writer killed at random points: every reopen shows exactly the last flush |
 | `model_tests` | Random sequences of every write, checked against a model of what the index should hold |
@@ -66,9 +70,10 @@ which they run: the agent skill's Python blocks and the examples.
 
 | Workflow | What it runs |
 | --- | --- |
-| CI | `cargo test --all-features` on Linux, macOS and Windows, with stable Rust and 1.88; the Python tests on Python 3.11 with numpy 1.26 and on 3.14; the MCP and LangChain tests; `cargo fmt`, `cargo clippy -D warnings`, `cargo doc`; ruff, black and mypy |
+| CI | `cargo test --all-features` on Linux x86-64 and ARM64, macOS and Windows, with stable Rust and 1.88; the in-memory tests under Miri; the Python tests on Python 3.11 with numpy 1.26 and on 3.14; the MCP and LangChain tests; `cargo fmt`, `cargo clippy -D warnings`, `cargo doc`; ruff, black and mypy |
 | MSRV | `cargo check` and `cargo test` on Rust 1.88 |
 | Coverage | `cargo llvm-cov` on Linux |
+| Fuzz | Damaged files and any bytes, opened and changed: a minute per target on each pull request, half an hour each night |
 | Build | The C library and the Python wheels for Linux x86-64 and ARM64, macOS and Windows |
 | Benchmark | Each pull request against main, on Linux x86-64 and ARM64 ([Benchmarking](./benchmarking.md)) |
 

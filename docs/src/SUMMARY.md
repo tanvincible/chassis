@@ -16,8 +16,8 @@
 
 # Architecture
 
-- [Verification](./architecture/verification.md)
 - [Overview](./architecture/overview.md)
+- [Verification](./architecture/verification.md)
 - [Storage](./architecture/storage.md)
 - [Graph](./architecture/graph.md)
 - [File format](./architecture/file-format.md)

@@ -24,9 +24,9 @@ Adding a vector links it in three steps:
    `ef_construction` nearest vectors it finds.
 2. **Select.** When there are more candidates than the list holds, it keeps a set that point in
    different directions: heuristic 2 of the HNSW paper. Taking candidates nearest first, it keeps
-   one only if it is no nearer to a neighbor already kept than to the new vector. If that keeps fewer than a quarter
-   of the list, the nearest of the rest fill it up to a quarter, so vectors along a line stay
-   connected
+   one only if it is no nearer to a neighbor already kept than to the new vector. If that keeps
+   fewer than a quarter of the list, the nearest of the rest fill it up to a quarter, so vectors
+   along a line stay connected
    ([ADR-0013](https://github.com/tanvincible/chassis/blob/main/docs/adr/013-prefetching-and-a-leaner-search-loop.md)).
 3. **Link back.** It adds the new vector to each neighbor's list. When a list is full, it selects
    again among the old neighbors and the new vector the same way, and keeps the new vector if it
@@ -79,4 +79,5 @@ until the next `compact()`.
 | --- | --- |
 | A vector as its own neighbor | Never kept: the search for its neighbors leaves it out. |
 | A link a list already has | Skipped, so retrying a link writes nothing. |
+| Exact copies of a vector | A list keeps one, plus any the quarter floor adds: copies kept among themselves would fill every list and leave other vectors out of reach. |
 | A neighbor on fewer layers than the link | Skipped: the link names a slot that, after a power loss, a vector on fewer layers reused. |
