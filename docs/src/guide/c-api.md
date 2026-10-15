@@ -281,7 +281,9 @@ size_t chassis_search_filtered(
 ```
 Like `chassis_search`, returning only vectors whose id is in `allowed_ids`. Ids not in the index
 are ignored; an empty list matches nothing. When walking the graph would cost more, as when few
-vectors match, every vector is checked instead and the results are exact.
+vectors match, every vector is checked instead and the results are exact. Ids in ascending order
+are read where they lie; in any other order they are copied into a set first, a pass over all of
+them per call.
 
 #### `chassis_search_excluding`
 ```c

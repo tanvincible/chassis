@@ -57,7 +57,7 @@ def test_the_database_guide_survives_what_it_says_a_crash_leaves(tmp_path, monke
     index.add(page["embed"](["stray"])[0], id=99)
     db.execute("INSERT INTO notes (id, text) VALUES (50, 'unindexed')")
     index.flush()
-    assert len(page["search"]("fruit", k=10)) == 3  # The stray takes no place
+    assert len(page["search"]("fruit", k=10)) == 3  # The join drops the stray
     assert page["mend"]() == (1, 1)
     assert sorted(index.ids()) == sorted(r[0] for r in db.execute("SELECT id FROM notes"))
     page["delete_note"](ids[0])
