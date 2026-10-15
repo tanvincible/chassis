@@ -192,6 +192,22 @@ let precision = index.precision(); // Precision::Full or ::Half
 let empty = index.is_empty();    // True if count == 0
 ```
 
+#### User version
+
+```rust
+index.set_user_version(42); // Committed by the next flush, with the data
+index.flush()?;
+let version = index.user_version(); // 42; 0 until one is set
+```
+
+Like SQLite's `user_version`, a number for your application. The next `flush` commits it with the
+adds and deletes, so after a crash it says which flush the index holds. Keep the same number in your
+own store, in the transaction the flush sits in, and compare the two on open: they differ only
+after a crash between the flush and your commit
+([With a database](./with-a-database.md#opening),
+[ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)).
+`IndexReader::user_version` returns the number of the flush its last snapshot shows.
+
 ### `IndexReader`
 
 Searches an index while a `VectorIndex` writes it, in another process or this one. It takes no

@@ -741,6 +741,37 @@ class VectorIndex:
         self._check_closed()
         return int(_ffi._lib.chassis_deleted_count(self._ptr))
 
+    @property
+    def user_version(self) -> int:
+        """Your application's number for the index, 0 until you set one.
+
+        Like SQLite's user_version. The next flush() commits it with the
+        data, so after a crash it says which flush the index holds: keep
+        the same number in your own store, in the transaction the flush
+        sits in, and compare the two on open. Until that flush, a crash
+        leaves the number flushed before. A read_only index reports the one
+        in its newest snapshot.
+
+        Raises:
+            ReadOnlyError: On setting it in a read_only index
+            InvalidArgumentError: If set below 0 or to 2**64 or more
+            TypeError: If set to something other than an int
+        """
+        self._check_closed()
+        return int(_ffi._lib.chassis_user_version(self._ptr))
+
+    @user_version.setter
+    def user_version(self, version: int) -> None:
+        self._check_writable("set user_version")
+        version = _check_int("user_version", version)
+        if not 0 <= version < 2**64:
+            raise InvalidArgumentError(
+                f"user_version is {version}, but has to be from 0 to 2**64 - 1\nhelp: pass a "
+                "count that grows with each flush, such as 1, 2, 3"
+            )
+        if _ffi._lib.chassis_set_user_version(self._ptr, version) != 0:
+            raise _ffi.last_error("Setting user_version failed")
+
     def is_empty(self) -> bool:
         """Check if the index is empty.
 

@@ -28,6 +28,9 @@ These responsibilities are left to the host application, where they can be addre
 
 **Data created by Chassis today must remain accessible by Chassis in the future.**
 
+File formats 3 and 4 are frozen: every later release reads them. A later change either adds what
+older releases can ignore, or raises the version so they refuse the file instead of misreading it.
+
 Chassis is intended to be depended on. This places a higher value on correctness, clarity, and conservative change than on rapid feature expansion.
 
 The storage format and public interfaces are treated as long lived commitments. Evolution is expected, but it is approached cautiously and with attention to existing data.

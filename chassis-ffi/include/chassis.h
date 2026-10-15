@@ -768,6 +768,40 @@ uint64_t chassis_len(const struct ChassisIndex *ptr);
 uint64_t chassis_deleted_count(const struct ChassisIndex *ptr);
 
 /**
+ * Get the application's number for the index: 0 until one is set
+ *
+ * Like SQLite's `user_version`. `chassis_flush()` commits it with the data, so after a crash it
+ * says which flush the index holds: keep the same number in your own store, in the transaction
+ * the flush sits in, and compare the two on open. A reader handle returns the one in its newest
+ * snapshot.
+ *
+ * # Returns
+ *
+ * - The number, or 0 if `ptr` is NULL (check `chassis_last_error_code()`)
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+uint64_t chassis_user_version(const struct ChassisIndex *ptr);
+
+/**
+ * Set the application's number for the index, for the next `chassis_flush()` to commit
+ *
+ * Until that flush, a crash leaves the number flushed before; see `chassis_user_version()`.
+ *
+ * # Returns
+ *
+ * - 0 on success
+ * - -1 on failure, as for a reader handle (check `chassis_last_error_message()`)
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_set_user_version(struct ChassisIndex *ptr, uint64_t version);
+
+/**
  * Check if the index is empty
  *
  * # Arguments

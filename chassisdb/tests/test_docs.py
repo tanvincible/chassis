@@ -47,9 +47,13 @@ def test_the_database_guide_survives_what_it_says_a_crash_leaves(tmp_path, monke
     index, db = page["index"], page["db"]
 
     ids = page["add_notes"](["apples", "pears"])
-    # A crash after a flush whose commit never happened: a vector under the id that comes next.
+    assert page["check"]() == (0, 0)  # In step: nothing to mend
+    # A crash after a flush whose commit never happened: a vector under the id that comes next,
+    # and the index one write ahead of the database.
     index.add(page["embed"](["lost"])[0], id=ids[-1] + 1)
+    index.user_version += 1
     index.flush()
+    assert page["check"]() == (1, 0)  # The next start mends it
     assert page["add_notes"](["plums"]) == [ids[-1] + 1]
     assert {text for _, text in page["search"]("fruit", k=10)} == {"apples", "pears", "plums"}
 

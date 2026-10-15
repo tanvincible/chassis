@@ -9,6 +9,7 @@ from chassisdb import IndexOptions, SearchResult, VectorIndex
 from chassisdb.exceptions import (
     ChassisError,
     DimensionMismatchError,
+    InvalidArgumentError,
     OptionsMismatchError,
     ReadOnlyError,
 )
@@ -721,3 +722,47 @@ class TestCompact:
         assert index.search(vectors[1], k=1)[0].id != 1
         assert index.add(vectors[1]) == 3000
         index.close()
+
+
+class TestUserVersion:
+    """The application's number, committed with the data (ADR-0023)."""
+
+    def test_a_flush_commits_it_and_closing_without_one_rolls_it_back(self, tmp_path):
+        path = tmp_path / "versioned.chassis"
+        with VectorIndex(path, dimensions=3) as index:
+            assert index.user_version == 0
+            index.add([1.0, 0.0, 0.0])
+            index.user_version = 5
+        index = VectorIndex(path, dimensions=3)
+        assert index.user_version == 5
+        index.add([0.0, 1.0, 0.0])
+        index.user_version = 6
+        index.close()
+        with VectorIndex(path, dimensions=3) as index:
+            assert (index.user_version, len(index)) == (5, 1)
+
+    def test_a_read_only_index_sees_each_flush_and_cannot_set_it(self, tmp_path):
+        path = tmp_path / "versioned.chassis"
+        with VectorIndex(path, dimensions=3) as writer:
+            writer.user_version = 1
+            writer.flush()
+            reader = VectorIndex(path, dimensions=3, read_only=True)
+            assert reader.user_version == 1
+            writer.user_version = 2
+            writer.flush()
+            assert reader.user_version == 2
+            with pytest.raises(ReadOnlyError, match="user_version"):
+                reader.user_version = 3
+            reader.close()
+
+    @pytest.mark.parametrize("bad", [-1, 2**64])
+    def test_out_of_range_is_refused(self, tmp_path, bad):
+        with VectorIndex(tmp_path / "v.chassis", dimensions=3) as index:
+            with pytest.raises(InvalidArgumentError, match="help: "):
+                index.user_version = bad
+
+    @pytest.mark.parametrize("bad", [1.5, True, "1"])
+    def test_not_an_int_is_refused(self, tmp_path, bad):
+        with VectorIndex(tmp_path / "v.chassis", dimensions=3) as index:
+            with pytest.raises(TypeError, match="help: "):
+                index.user_version = bad

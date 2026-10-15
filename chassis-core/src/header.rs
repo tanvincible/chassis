@@ -88,13 +88,15 @@ pub(crate) struct FileHeader {
     /// One past the largest id used before the last compaction, which removed the deleted slots
     /// that showed it; 0 if never compacted. Stored after the tables.
     pub next_id: u64,
+    /// The application's own number, committed with the data (ADR-0023). 0 if never set.
+    pub user_version: u64,
 }
 
 impl FileHeader {
     /// Encodes this copy, checksum included.
     pub fn to_bytes(&self) -> Vec<u8> {
         let tables = FIXED_LEN + 8 * (self.segment_table.len() + self.heap_table.len());
-        let mut b = vec![0u8; tables + 8];
+        let mut b = vec![0u8; tables + 16];
         let version = version_of(self.precision);
         b[0..8].copy_from_slice(MAGIC);
         b[8..12].copy_from_slice(&version.to_le_bytes()); // read version
@@ -129,7 +131,8 @@ impl FileHeader {
         for (i, offset) in self.segment_table.iter().chain(&self.heap_table).enumerate() {
             b[FIXED_LEN + 8 * i..FIXED_LEN + 8 * (i + 1)].copy_from_slice(&offset.to_le_bytes());
         }
-        b[tables..].copy_from_slice(&self.next_id.to_le_bytes());
+        b[tables..tables + 8].copy_from_slice(&self.next_id.to_le_bytes());
+        b[tables + 8..].copy_from_slice(&self.user_version.to_le_bytes());
         let checksum = xxh3_64(&b);
         b[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
         b
@@ -168,8 +171,9 @@ impl FileHeader {
         }
 
         let (segment_pages, heap_pages) = (u32_at(128) as usize, u32_at(132) as usize);
-        // After the tables comes `next_id`, absent from files written before it existed; bytes
-        // after that belong to a later write version, and this release ignores them.
+        // After the tables come `next_id` and `user_version`, each absent from files written
+        // before it existed; bytes after them belong to a later write version, and this release
+        // ignores them.
         let tables =
             FIXED_LEN + 8 * (segment_pages.min(MAX_TABLE_PAGES) + heap_pages.min(MAX_TABLE_PAGES));
         if segment_pages > MAX_TABLE_PAGES || heap_pages > MAX_TABLE_PAGES || len < tables {
@@ -224,6 +228,7 @@ impl FileHeader {
             segment_table: table(FIXED_LEN, segment_pages),
             heap_table: table(FIXED_LEN + 8 * segment_pages, heap_pages),
             next_id: if len >= tables + 8 { u64_at(tables) } else { 0 },
+            user_version: if len >= tables + 16 { u64_at(tables + 8) } else { 0 },
         }))
     }
 
@@ -302,7 +307,20 @@ mod tests {
             segment_table: vec![196_608],
             heap_table: vec![262_144],
             next_id: 9_000,
+            user_version: 77,
         }
+    }
+
+    /// `sample()` as a release from before its last `cut` bytes of fields would have written it.
+    fn older(cut: usize) -> Vec<u8> {
+        let mut bytes = sample().to_bytes();
+        bytes.truncate(bytes.len() - cut);
+        let len = bytes.len() as u32;
+        bytes[32..36].copy_from_slice(&len.to_le_bytes());
+        bytes[CHECKSUM].fill(0);
+        let checksum = xxh3_64(&bytes);
+        bytes[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
+        bytes
     }
 
     #[test]
@@ -323,15 +341,14 @@ mod tests {
 
     #[test]
     fn test_a_header_from_before_next_id_reads_as_never_compacted() {
-        let mut bytes = sample().to_bytes();
-        bytes.truncate(bytes.len() - 8);
-        let len = bytes.len() as u32;
-        bytes[32..36].copy_from_slice(&len.to_le_bytes());
-        bytes[CHECKSUM].fill(0);
-        let checksum = xxh3_64(&bytes);
-        bytes[CHECKSUM].copy_from_slice(&checksum.to_le_bytes());
-        let header = FileHeader::from_bytes(&bytes).unwrap().unwrap();
-        assert_eq!(header, FileHeader { next_id: 0, ..sample() });
+        let header = FileHeader::from_bytes(&older(16)).unwrap().unwrap();
+        assert_eq!(header, FileHeader { next_id: 0, user_version: 0, ..sample() });
+    }
+
+    #[test]
+    fn test_a_header_from_before_user_version_reads_as_never_set() {
+        let header = FileHeader::from_bytes(&older(8)).unwrap().unwrap();
+        assert_eq!(header, FileHeader { user_version: 0, ..sample() });
     }
 
     #[test]

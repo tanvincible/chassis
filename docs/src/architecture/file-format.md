@@ -25,7 +25,7 @@ can be mapped on its own. The file only grows by appending a region, and never s
 
 ## Header
 
-Each copy is a header of `144 + 8 × (segment table pages + heap table pages)` bytes, little-endian.
+Each copy is a header of `152 + 8 × (segment table pages + heap table pages)` bytes, little-endian.
 A later write version may add fields after these; the length covers them.
 The valid copy with the higher sequence number is current.
 
@@ -63,10 +63,11 @@ The valid copy with the higher sequence number is current.
 | 132 | 4 | Heap table pages | Number of heap table pages |
 | 136 | 8 each | Table page offsets | Segment table pages, then heap table pages |
 | after the tables | 8 | Next id | One past the largest id used before the last compaction, which removed the deleted slots that showed it; `0` if never compacted. Absent from headers written before it existed, which read as `0` |
+| after next id | 8 | User version | The application's number, committed with the data ([ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)); `0` if never set. Absent from headers written before it existed, which read as `0`; a release from before it ignores it, and drops it if it writes the file |
 
 A release checks the read version before the checksum, so a newer layout is reported as too new,
 not as corrupt. A newer write version only stops writers: `IndexReader` reads the file and ignores
-the bytes after the next id. Releases up to 0.6.3 read bytes 8–11 as their version and refuse
+the bytes after the fields it knows. Releases up to 0.6.3 read bytes 8–11 as their version and refuse
 anything above 2.
 
 A file in half precision is version 4 to readers and writers alike, so that a release from before
@@ -187,5 +188,13 @@ A failed check returns an error and never modifies the file.
 
 ## Stability
 
-Format version 3 is the format ADR-0008 proposes to freeze. Until that ADR is accepted, it may
-still change.
+Format 3, and format 4, which is format 3 with half-precision vectors, are frozen: every later
+release reads every file written in them
+([ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)). A
+change gets in one of two ways:
+
+- **A field older releases can ignore** goes after the last field they know, as the next id and
+  the user version did. If an older writer dropping it would be unsafe, the change also raises the
+  write version, so older releases open the file only to read it.
+- **Anything older releases would misread**, such as another way of storing vectors, raises the
+  read version, so they refuse the file before reading it. 8-bit vectors will be read version 5.

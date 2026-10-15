@@ -178,6 +178,7 @@ impl Geometry {
             segment_table: Vec::new(),
             heap_table: Vec::new(),
             next_id: 0,
+            user_version: 0,
         };
         let entry = (usize::from(params.max_layers) - 1) * 4 * usize::from(params.m);
         header.heap_base_log2 =
@@ -1075,9 +1076,21 @@ impl Storage {
 
     /// In a compacted copy, what its source showed only through its deleted slots: the id
     /// high-water mark, and a delete epoch past every snapshot of the source.
-    pub(crate) fn carry_over(&mut self, next_id: u64, epoch: u64) {
+    pub(crate) fn carry_over(&mut self, next_id: u64, epoch: u64, user_version: u64) {
         self.state.next_id = next_id;
         self.state.epoch = epoch;
+        self.state.user_version = user_version;
+    }
+
+    /// The application's number (ADR-0023): for a writer, what the next commit will write; for a
+    /// reader, what its last snapshot's header holds.
+    pub(crate) fn user_version(&self) -> u64 {
+        self.state.user_version
+    }
+
+    /// Sets the application's number, for the next commit to write with the data.
+    pub(crate) fn set_user_version(&mut self, version: u64) {
+        self.state.user_version = version;
     }
 
     /// Lets readers route through slots below `count`, once their nodes and backlinks are written.
