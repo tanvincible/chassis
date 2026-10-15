@@ -272,8 +272,22 @@ asked for is below, most asked first.
 
 * **Known**: the shop built its `allowed` ids per request, from SQLite through numpy: about 1.5 ms,
   ten times the filtered search it fed (0.13 to 0.23 ms).
-* **To validate**: where the time goes (the query, the array, the copy into the library, its hash
-  set) before a reusable set handle.
+* **Done in part** (ADR-0022, #87): sorted ids are read where they lie, others go into a
+  multiply-hash set, and the guide stops passing every id. A reusable set handle and a bitmap over
+  slots wait for callers that pass large unsorted filters in a loop.
+
+### A full disk as an error, not a SIGBUS
+
+* **Known** (2026-10-15): a region is added with `set_len`, which leaves the file sparse, so on
+  Linux and macOS a full disk shows when a write first touches a page of the new region: SIGBUS
+  ends the process instead of an error. ADR-0008 lists "allocating space before writing to it" as
+  not built.
+* **Options**: reserve each region whole when it is added (`posix_fallocate`, `F_PREALLOCATE`):
+  an error instead, but the file then takes its last segment's full size on disk, up to 256 MiB,
+  where today it stays sparse. Or reserve in steps a little ahead of the slots written: bounded
+  extra space, one call per step. Catching SIGBUS in a library would take over a process-wide
+  signal, which is no way to treat the app.
+* **To validate**: what a step costs an add and a flush, and how much ahead is enough.
 
 ### Smaller ones, asked once each
 
