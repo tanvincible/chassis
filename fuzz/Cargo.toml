@@ -1,0 +1,31 @@
+[package]
+name = "chassisdb-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+chassisdb = { path = "../chassis-core" }
+flate2 = "1.1.10"
+libfuzzer-sys = "0.4"
+tempfile = "3.24.0"
+
+# Its own workspace: built only by cargo-fuzz, on nightly.
+[workspace]
+
+[[bin]]
+name = "damaged"
+path = "fuzz_targets/damaged.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bytes"
+path = "fuzz_targets/bytes.rs"
+test = false
+doc = false
+bench = false
