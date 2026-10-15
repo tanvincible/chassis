@@ -2476,6 +2476,33 @@ mod tests {
         assert_eq!(ids, [5, 11, 9, EMPTY]);
     }
 
+    /// Readers walk a list while the writer rewrites it (ADR-0008, decision 5): an id in both the
+    /// old and the new list is seen by every walk. Run under Miri, it also finds any word touched
+    /// other than atomically, as plain stores raced in 4 of 10 runs before the lists were atomic.
+    #[test]
+    fn test_readers_walking_a_list_see_every_id_it_keeps() {
+        let rounds = if cfg!(miri) { 20 } else { 2_000 };
+        let list: Vec<AtomicU32> = [EMPTY; 8].map(AtomicU32::new).into();
+        store_list(&list, &[1, 2, 3, 4]);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for round in 0..rounds {
+                    let ids: &[u64] = if round % 2 == 0 { &[2, 5, 1, 6, 7] } else { &[1, 2, 3, 4] };
+                    store_list(&list, ids);
+                }
+            });
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    for _ in 0..rounds {
+                        let seen: Vec<u32> =
+                            list.iter().map(|e| e.load(Ordering::Relaxed)).collect();
+                        assert!(seen.contains(&1) && seen.contains(&2), "a kept id went missing");
+                    }
+                });
+            }
+        });
+    }
+
     #[test]
     fn test_reader_ignores_marks_of_an_uncommitted_delete() {
         use crate::hnsw::{HnswGraph, HnswParams};
