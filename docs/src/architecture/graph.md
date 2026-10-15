@@ -1,91 +1,82 @@
-# Graph Topology & Construction
+# Graph
 
-Chassis implements a persistent, single-file HNSW (Hierarchical Navigable Small World) graph. Unlike in-memory implementations, the Chassis graph is designed for **crash consistency**, **zero-copy access**, and **deterministic behavior**.
+Chassis searches a persistent HNSW graph (Hierarchical Navigable Small World): lists of near
+neighbors, kept in the index file next to the vectors. This page explains how a vector is linked
+into the graph, how batches link in parallel, and what a crash can leave in the lists. The
+[Overview](./overview.md) shows where the graph sits among the other parts.
 
-This document outlines the construction policies, persistence model, and neighbor selection algorithms.
+## Layers
 
-## 1. Construction Policy: Sequential Existence
+Every vector is on layer 0, where its list holds up to `2 × max_connections` neighbors. When a
+vector is added, it draws a top layer at random, as the HNSW paper describes. Most vectors stay on
+layer 0, and each layer up holds about one in `max_connections` of the layer below, up to 16 layers.
+On each upper layer a vector's list holds up to `max_connections` neighbors. The graph's entry point
+is a vector on its highest layer.
 
-Chassis enforces a **Strict Sequential Linking** policy to ensure the graph remains navigable and corruption-free without complex runtime checks.
+A search starts at the entry point, takes the nearest neighbor on each upper layer until it
+reaches layer 0, and then explores layer 0 keeping the `ef_search` nearest vectors it has seen.
 
-**Invariant:** A node with ID `N` may only link to neighbors with IDs `M < N`.
+## Linking
 
-### Implications
-* **Safety**: Forward links in a `NodeRecord` only reference existing nodes. We never store a pointer to uninitialized memory.
-* **Search Efficiency**: Search traversal does not need to check if a neighbor exists. If the ID is in the neighbor list, the data is guaranteed to be on disk.
-* **Crash Recovery**: There are no "orphaned" forward edges pointing to the future.
+Adding a vector links it in three steps:
 
-### Usage Pattern
-The graph must be built by inserting nodes in dense, monotonic order (0, 1, 2...).
+1. **Search.** From the entry point, Chassis searches each layer the new vector is on, keeping the
+   `ef_construction` nearest vectors it finds.
+2. **Select.** When there are more candidates than the list holds, it keeps a set that point in
+   different directions: heuristic 2 of the HNSW paper. Taking candidates nearest first, it keeps
+   one only if it is no nearer to a neighbor already kept than to the new vector. If that keeps fewer than a quarter
+   of the list, the nearest of the rest fill it up to a quarter, so vectors along a line stay
+   connected
+   ([ADR-0013](https://github.com/tanvincible/chassis/blob/main/docs/adr/013-prefetching-and-a-leaner-search-loop.md)).
+3. **Link back.** It adds the new vector to each neighbor's list. When a list is full, it selects
+   again among the old neighbors and the new vector the same way, and keeps the new vector if it
+   is among the nearest. Adding a link a list already has changes nothing.
 
-```rust
-// WRONG: Cannot link to non-existent nodes
-// Error: nodes 1, 2, 3 don't exist yet
-graph.link_node_bidirectional(0, 1, &[vec![1, 2, 3]])?;
+Every edge points at a vector whose data is already written: a vector's own lists can only name
+vectors that exist, and a backlink is added only after the new vector is written.
 
-// CORRECT: Sequential construction
-graph.link_node_bidirectional(0, 1, &[vec![]])?;        // Node 0: no neighbors yet
-graph.link_node_bidirectional(1, 1, &[vec![0]])?;       // Node 1: links to 0
-graph.link_node_bidirectional(2, 1, &[vec![0, 1]])?;    // Node 2: links to 0, 1
+## Batches
 
-```
+`add_batch` writes every vector of the batch and an empty list for each first. Then a thread per
+core takes the batch's vectors in order and links each one as above
+([ADR-0010](https://github.com/tanvincible/chassis/blob/main/docs/adr/010-parallel-batch-builds.md)).
 
-## 2. Crash Consistency Model
+- A thread holds a vector's lock while it changes that vector's lists. There are 4,096 locks,
+  shared by slot number, so threads seldom wait for each other.
+- No search reaches a batch vector before that vector has written its own lists.
+- A vector that raises the graph's top layer holds the entry point until it is linked, so the new
+  top connects to the old one. This is rare, and other threads wait meanwhile.
 
-After a crash, reopening keeps every add and delete up to the last `flush()`, drops later ones, and finds the graph as that flush left it; a power loss between flushes can still leave some neighbor lists changed, which can lower recall. Process kills are tested by
-`chassis-core/tests/crash_tests.rs`, and power loss is simulated by `chassis-core/src/power_loss.rs`
-(not on real hardware). The write order below protects against a process crash only, because the OS
-writes mmap pages back in any order; under power loss the fsyncs in `flush()` are what order writes. See the
-[ADR-0005 amendment](https://github.com/tanvincible/chassis/blob/main/docs/adr/005-crash-consistent-linking.md#amendment-2026-10-03).
+The graph then depends on the order in which threads finish, so two builds of the same batch
+differ, as two sequential builds already do through their random layers.
 
-### The Atomic Write Sequence
+## Deletes
 
-1. **Step A (Persist Node):** The new node `A` is written to disk with its forward links (`A` → `Neighbors`).
-2. **Step B (Update Neighbors):** We iterate through the neighbors (`B`, `C`...) and update their backward links (`B` → `A`).
-3. **Step C (Update Header):** The global node count and entry point are updated.
+A deleted vector stays in the graph. Searches still walk through it, so the graph stays connected,
+but never return it. It keeps its space until `compact()` builds a new graph without it.
 
-### Why This Ordering Matters
+## Crashes
 
-* **After Step A:** Node `A` exists on disk but has no incoming edges. It is technically "invisible" to search from the entry point, but the file is valid.
-* **During Step B:** Some neighbors point to `A`, others don't. This creates "one-way edges," which are valid in HNSW and do not break search.
-* **After a crash before `flush()`:** `node_count` rolls back but backlinks to `A` may survive. Search
-  skips them until the next insert reuses `A`'s slot; after that they are ordinary edges to the new
-  node. If the new node is on fewer layers than `A` was, a surviving link on a higher layer points at
-  a node not on that layer: search finds no neighbors there, and linking adds no backlink to it.
-  Edges pruned to make room for `A`'s backlinks stay lost.
+The write order of a link, the new vector's lists before any backlink and the header last, holds
+only against a process crash: the operating system writes changed pages back to disk in any
+order. Against power loss, the syncs in `flush()` are what order the writes
+([ADR-0005 amendment](https://github.com/tanvincible/chassis/blob/main/docs/adr/005-crash-consistent-linking.md#amendment-2026-10-03)).
 
-## 3. Neighbor Selection (Diversity Heuristic)
+After a process crash, reopening finds the graph as the last flush left it. Before a committed
+vector's lists first change after a flush, they are saved to an undo file, and reopening puts them
+back
+([ADR-0012](https://github.com/tanvincible/chassis/blob/main/docs/adr/012-rolling-back-lost-adds.md)).
 
-To prevent "cluster collapse" and ensure the graph maintains its Small World properties, Chassis implements a variant of **Heuristic 2** from the HNSW paper.
+A power loss between flushes can leave lists that name a vector the crash rolled back. Search
+skips such a neighbor, and linking drops it, until the next add reuses its slot; after that it is an
+ordinary edge to the new vector. A link on a layer the new vector isn't on finds no neighbors
+there. Edges that were pruned to make room for a lost vector stay lost, which can lower recall
+until the next `compact()`.
 
-### The Selection Algorithm
+## Edge cases
 
-When a neighbor list exceeds its capacity (`M` or `M0`), we prune it using **Diversity Selection**:
-
-1. **Candidate Set**: We gather the current neighbors plus the new node.
-2. **Diversity Check**: We keep a candidate `C` only if it is closer to the base node `B` than it is to any *already-selected* neighbor.
-* *Goal*: Prioritize neighbors in different directions rather than just the closest ones.
-
-
-3. **Starvation Fallback**: If diversity pruning is too aggressive and yields fewer than `M/2` neighbors, we fill the remaining slots with the nearest remaining candidates. This ensures robust connectivity even in highly clustered data.
-
-A new node chooses from all of its `ef_construction` search candidates. Each candidate is compared
-with each neighbor already kept at most once, so there is nothing to cache. An earlier lazy distance
-cache never got a hit and limited selection to 33 candidates; it was removed (see the
-[ADR-0004 amendment](https://github.com/tanvincible/chassis/blob/main/docs/adr/004-diversity-heuristic-with-lazy-cache.md#amendment-2026-10-04)).
-
-## 4. Idempotency & Retry Safety
-
-The `link_node_bidirectional` operation is **idempotent**. It is safe to retry the operation if a crash occurs mid-update.
-
-* **Duplicate Detection**: Before adding a backward link (`B` → `A`), the engine checks if `B` already links to `A`.
-* **No Side Effects**: Retrying a completed operation results in zero disk writes.
-
-## 5. Edge Case Policies
-
-| Case | Policy | Rationale |
-| --- | --- | --- |
-| **Self-Links** | **Filtered** | A node linking to itself wastes capacity and offers no search value. |
-| **Invalid IDs** | **Error** | Linking to an ID `>= node_count` returns an explicit error. |
-| **Layer Independence** | **Enforced** | Neighbor lists are processed independently per layer; candidates are not shared across layers. |
-| **Identical Vectors** | **Fallback** | If all vectors are identical, the diversity heuristic fails; the *Starvation Fallback* ensures connectivity. |
+| Case | What happens |
+| --- | --- |
+| A vector as its own neighbor | Never kept: the search for its neighbors leaves it out. |
+| A link a list already has | Skipped, so retrying a link writes nothing. |
+| A neighbor on fewer layers than the link | Skipped: the link names a slot that, after a power loss, a vector on fewer layers reused. |

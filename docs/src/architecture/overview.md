@@ -15,7 +15,7 @@ The file only grows. Slots fill fixed-size segments; when one is full, the next 
 and mapped. Nothing already mapped ever moves, so a reference into the file stays valid while the
 index grows, and a reader in another process never finds part of its mapping gone. A deleted
 vector keeps its space until `compact()` writes a new file without it.
-[Storage](./storage.md) and [File Format](./file-format.md) have the details.
+[Storage](./storage.md) and [File format](./file-format.md) have the details.
 
 ## Graph
 

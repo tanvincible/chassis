@@ -1,9 +1,9 @@
-# Storage Layer
+# Storage
 
 The storage layer (`storage.rs`) owns the index file: its lock, its regions, and the commit
-protocol. The byte layout is in [File Format](./file-format.md).
+protocol. The byte layout is in [File format](./file-format.md).
 
-## Opening a File
+## Opening
 
 `Storage::open` and `VectorIndex::open`:
 
@@ -38,9 +38,13 @@ One writer at a time: a second writer's `open` of a locked file returns an error
 does not block or retry. The lock is released when the `Storage` is dropped.
 
 Readers (`Storage::open_read_only`, behind `IndexReader`) take no lock and map the file read-only.
-Before every search a reader takes a snapshot: it copies both header copies a word at a time,
-keeps the newest valid one (never an older one than it already used), maps any region the header
-or the live page shows, and routes through slots up to the live page's routing count. Search
-returns only slots the header commits and no flush up to its epoch deleted. The writer stores
-neighbor lists, delete marks, headers and the live page as atomic words, and rewrites a neighbor
-list in place so that an entry in both the old and the new list keeps its slot.
+Before every search a reader takes a snapshot:
+
+1. It copies both header copies a word at a time, and keeps the newest valid one. It never goes
+   back to an older one than it already used.
+2. It maps any region the header or the live page shows.
+3. It routes through slots up to the live page's routing count.
+
+Search returns only slots the header commits and no flush up to its epoch deleted. The writer
+stores neighbor lists, delete marks, headers and the live page as atomic words, and rewrites a
+neighbor list in place so that an entry in both the old and the new list keeps its slot.

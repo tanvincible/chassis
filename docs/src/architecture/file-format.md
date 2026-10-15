@@ -1,4 +1,6 @@
-# File Format
+# File format
+
+This page describes the bytes of an index file, and how they change when a flush commits.
 
 A Chassis file is one file in format version 3 ([ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md)),
 or version 4 if it keeps its vectors in half precision ([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)).
@@ -8,7 +10,7 @@ mapped once, and committed bytes never move.
 
 Opening a version 1 or 2 file migrates it to version 3 (see [Migration](#migration)).
 
-## Top-Level Layout
+## Layout
 
 | Offset | Size | Contents |
 |--------|------|----------|
@@ -71,13 +73,13 @@ A file in half precision is version 4 to readers and writers alike, so that a re
 half precision refuses it and doesn't read its vectors as `f32`s. A file in full precision is
 written as version 3 by every release, with byte 52 zero as it always was.
 
-## Live Page
+## Live page
 
-What the writer has added since its last commit, so readers in other processes can route through
-it. Every field is a little-endian u64. The counts and the routing count are written with release
-ordering after the data, offsets and table entries they cover. It is not durable: a writer resets
-it to its committed state when it opens the file, and a reader that opens the file before any
-writer, after a crash, uses it as found, treating records it can't read past the committed count as
+What the writer has added since its last commit, so readers in other processes can route through it.
+Every field is a little-endian u64. The counts and the routing count are written with release
+ordering after the data, offsets and table entries they cover. It is not durable. A writer resets it
+to its committed state when it opens the file. A reader that opens the file after a crash, before
+any writer, uses it as found, and treats records past the committed count that it can't read as
 having no neighbors.
 
 | Offset in page | Field |
@@ -109,19 +111,19 @@ A record's head holds the node's layer count in bits 0–7 and, for a node above
 position of its upper-layer lists in bits 8–63. Empty neighbor entries are `0xFFFFFFFF`. A slot is
 deleted once its deleted epoch is nonzero; only a flush writes it.
 
-## Upper Heap
+## Upper heap
 
 Heap chunk `c` is `2^(heap base + min(c, doubling chunks))` bytes; a new file uses 64 KiB chunks
 that double up to 256 MiB. A node on `L` layers has one heap entry of `L − 1` lists of `M` neighbor
 slots (u32), for layers 1 to `L − 1`. An entry never straddles two chunks.
 
-## Table Pages
+## Table pages
 
 A table page holds `2^(table page log2)` file offsets (u64), 8,192 in a new file, so a page is
 64 KiB. Entry `i` of the segment table is in page `i >> log2`, at index `i & (2^log2 − 1)`; the heap
 table works the same way. The header lists up to 512 pages per table, enough for 2^32 slots.
 
-## Commits and Recovery
+## Commits
 
 A flush writes data in place, fsyncs, then writes the header copy that does not hold the newest
 header and fsyncs again. Slots, regions and table entries past the committed counts are leftovers
@@ -135,16 +137,16 @@ deleted epoch above the header's epoch in committed slots, then writes a clean h
 kills are tested in `chassis-core/tests/crash_tests.rs`; power loss is simulated in
 `chassis-core/src/power_loss.rs`, including crashes inside recovery.
 
-## Size Example
+## Size
 
 10,000 vectors with 768 dimensions and default parameters take 3,232 bytes per slot (24-byte slot
 header, 3,072-byte vector, 136-byte level-0 record) plus about 4 bytes of upper heap. The first four
 segments hold 1,024, 2,048, 4,096 and 8,192 slots, so the file is about 50 MB, of which 32 MB is
 written. The unused end of the last segment is never written, but whether the file system keeps it
-sparse varies: on APFS, a real build of this example allocated 33.6 MB, while unused ranges of
-16 MiB or less next to written data were sometimes allocated in full. ext4 is untested.
+sparse varies. On APFS, a real build of this example allocated 33.6 MB, and unused ranges of 16 MiB
+or less next to written data were sometimes allocated in full. ext4 is untested.
 
-## The undo file
+## Undo file
 
 Adds change the neighbor lists of committed nodes in place before they are committed themselves.
 Before a committed node's lists first change after a flush, they are appended to `<name>.undo`,
@@ -152,9 +154,13 @@ and a writer that opens the index after a crash writes them back (ADR-0012). The
 only between a flush and the next one that follows adds, or after a crash; a flush removes it.
 An index moved or copied while the file exists has to take it along.
 
-After the 8 bytes `CHSUNDO1`, each entry is the slot (u32), its layer count (u8), then per layer
-a count (u16) and that many neighbor ids (u32), then an xxh3-64 of the entry, seeded with a hash
-of the committed vector count, entry point, top layer, delete epoch, deleted count and id mark.
+After the 8 bytes `CHSUNDO1`, each entry is:
+
+- the slot (u32) and its layer count (u8);
+- per layer, a count (u16) and that many neighbor ids (u32);
+- an xxh3-64 of the entry, seeded with a hash of the committed vector count, entry point, top
+  layer, delete epoch, deleted count and id mark.
+
 Entries saved from another commit fail the checksum and are ignored.
 
 ## Migration
