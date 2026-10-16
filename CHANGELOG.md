@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Fixed
 
+- `langchain-chassisdb`: a crash or a failed commit during a `delete` or a replacement left the
+  document stored but never found by a search, for good, and after a failed `add_texts` the next
+  one raised `IdInUseError`. The store now mends its vectors when it opens and before each write,
+  and on its first open with this release, what an earlier one left.
 - A file cut off after its header, as a partial copy leaves it, ended the process with SIGBUS on
   a reader's first search. Readers and writers now refuse it with an error that gives the file's
   length and the length its header needs.

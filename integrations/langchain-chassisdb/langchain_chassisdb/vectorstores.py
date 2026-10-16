@@ -5,7 +5,8 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -104,7 +105,54 @@ class ChassisVectorStore(VectorStore):
                 self._index = VectorIndex(self.path, dimensions=dimensions, read_only=True)
             else:
                 self._index = VectorIndex(self.path, dimensions=dimensions, options=self._options)
+                self._mend()
         return self._index
+
+    def _version(self) -> int | None:
+        """The number of the last committed write; None in a store written before it was kept."""
+        row = self._db.execute("SELECT value FROM meta WHERE name = 'version'").fetchone()
+        return int(row[0]) if row else None
+
+    def _mend(self) -> None:
+        """Brings the index level with the documents after a write that flushed the index but
+        never committed, by a crash or a failed commit: its vectors without a document go, and
+        documents without a vector are embedded again. Each text has its own key, so comparing
+        keys finds every difference."""
+        index, version = self._index, self._version()
+        assert index is not None
+        if index.user_version == version:
+            return
+        texts = dict(self._db.execute("SELECT key, text FROM documents"))
+        held = set(index.ids())
+        for key in held - texts.keys():
+            index.delete(key)
+        missing = sorted(texts.keys() - held)
+        if missing:
+            vectors = self._embedding.embed_documents([texts[key] for key in missing])
+            index.add_batch(np.asarray(vectors, dtype=np.float32), ids=missing)
+        if version is None:
+            version = index.user_version
+            self._db.execute("INSERT INTO meta VALUES ('version', ?)", (str(version),))
+        index.user_version = version
+        index.flush()
+
+    @contextmanager
+    def _writing(self, index: VectorIndex) -> Iterator[None]:
+        """A write: the documents and the index change together, or neither does. The index is
+        flushed before the commit, with the write's number, so a write that never commits shows
+        as an index one ahead, which the next write or the next open mends."""
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self._mend()
+            yield
+            version = (self._version() or 0) + 1
+            self._db.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)", (str(version),))
+            index.user_version = version
+            index.flush()
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+        self._db.execute("COMMIT")
 
     def close(self) -> None:
         """Close the files. Everything added or deleted was saved already."""
@@ -144,8 +192,7 @@ class ChassisVectorStore(VectorStore):
                 "INSERT OR IGNORE INTO meta VALUES ('dimensions', ?)", (str(vectors.shape[1]),)
             )
             index = self._open(vectors.shape[1])
-            self._db.execute("BEGIN")
-            try:
+            with self._writing(index):
                 replaced = self._keys(ids)
                 self._db.executemany("DELETE FROM documents WHERE id = ?", [(id,) for id in ids])
                 keys = [
@@ -158,11 +205,6 @@ class ChassisVectorStore(VectorStore):
                 index.add_batch(vectors, ids=keys)
                 for key in replaced:
                     index.delete(key)
-                index.flush()
-            except BaseException:
-                self._db.execute("ROLLBACK")
-                raise
-            self._db.execute("COMMIT")
         return ids
 
     def delete(self, ids: list[str] | None = None, **kwargs: Any) -> bool | None:
@@ -170,14 +212,16 @@ class ChassisVectorStore(VectorStore):
         delete every document."""
         with self._lock:
             self._writable("delete")
-            if ids is None:
-                ids = [row[0] for row in self._db.execute("SELECT id FROM documents")]
-            keys = self._keys(ids)
-            if self._index is not None:
+            index = self._current()
+            if index is None:  # Nothing was ever added
+                return True
+            with self._writing(index):
+                if ids is None:
+                    ids = [row[0] for row in self._db.execute("SELECT id FROM documents")]
+                keys = self._keys(ids)
+                self._db.executemany("DELETE FROM documents WHERE id = ?", [(id,) for id in ids])
                 for key in keys:
-                    self._index.delete(key)
-                self._index.flush()
-            self._db.executemany("DELETE FROM documents WHERE id = ?", [(id,) for id in ids])
+                    index.delete(key)
         return True
 
     def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
