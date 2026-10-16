@@ -173,6 +173,22 @@ vector, the more each distance skipped saves. M=12 did the same.
 * **To validate**: full precision, 768 and 3,072 dimensions and another dataset; if it holds, a
   default M that depends on the dimensions.
 
+## Vectors out of reach
+
+`check()` (#102) lists live vectors no path through the graph reaches. On uniform random data in
+384 dimensions it found 0.3 to 0.4% of 20,000 and 1.4% of 50,000, by `add` and `add_batch` alike,
+and as many after `compact()`; none of them is found by a search for itself. On clustered data in
+384 dimensions, and on uniform data in 64, it found none (2026-10-16, Apple M5). Many exact copies
+of one vector leave some copies out of reach too: 323 of 800 with 40 copies each of 20 vectors.
+
+* **Known**: the cause is the graph's rule, not a fault: a vector nobody keeps as a neighbor,
+  through later prunes, has no way in.
+* **Options**: after a build and in `compact()`, give each vector out of reach a way in, a link
+  from its nearest vector within reach in place of that list's farthest; or keep, when pruning a
+  list, any neighbor that would lose its last way in.
+* **To validate**: how many the lab's real datasets have (SIFT, dbpedia), and recall and build
+  time with a repair, before changing how the graph links.
+
 ## Builds of long vectors on x86
 
 A batch build of 1,536-dimension vectors in full precision takes 1.4 to 1.7 times as long as
