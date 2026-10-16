@@ -7,20 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Breaking
 
-- The Rust crate exports what an app uses: `VectorIndex`, `IndexReader`, `IndexOptions`,
-  `SearchResult`, `Error`, `ErrorKind`, `Result`, `DistanceMetric`, `Precision`, and the
-  `cosine_distance` and `euclidean_distance` functions. `Storage`, `HnswGraph`, `HnswParams`,
-  `NodeRecordParams`, `MAGIC` and `VERSION` are behind the `internals` feature, for Chassis's own
-  tests and benchmarks; `HnswBuilder`, which nothing used, is gone. C and Python don't change.
-- `SearchResult`s are equal only when their ids and distances both are, and results with the same
-  distance order by id. Before, results with the same distance were equal whatever their ids.
+- Rust: `Storage`, `HnswGraph` and other internals need the `internals` feature (#88).
+- Rust: `SearchResult`s at the same distance order by id, and are equal only if ids are (#88).
 
 ### Added
 
-- `user_version`, like SQLite's: a number for your application that each flush commits with the
-  data, in Rust, C and Python, so an app can tell on open whether its own store and the index
-  agree and mend only when they don't. Files from older releases read it as 0, and older releases
-  ignore it.
+- `user_version`: a number of yours that each flush commits with the data (#89).
+- `check()`: lists vectors no search can reach, and vectors damaged into NaN.
 
 ### Fixed
 

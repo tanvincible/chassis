@@ -212,6 +212,24 @@ after a crash between the flush and your commit
 [ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)).
 `IndexReader::user_version` returns the number of the flush its last snapshot shows.
 
+#### Check
+
+```rust
+let check = index.check()?; // Reads the whole graph and every vector
+assert!(check.is_ok());     // Nothing out of reach, nothing that isn't a finite number
+```
+
+Checks what opening can't; opening checks the header and that the file holds every region it
+names. A check of 200,000 vectors of 384 dimensions takes about 0.1 s.
+
+- `check.unreachable`: live vectors that no path through the graph reaches, so no search returns
+  them. Damage leaves them, and `compact()` builds the graph again. A sound graph can have a few
+  too. On uniform random numbers in 384 dimensions, 0.3% to 1.4% of them, rebuilt or not; on
+  clustered data, as embeddings are, none. Among many exact copies of one vector, some, and a
+  search for that vector finds the others.
+- `check.not_finite`: vectors with a component that isn't a finite number, which only damage to
+  the file leaves, since `add` refuses them. Delete them and add them again from your own data.
+
 ### `IndexReader`
 
 Searches an index while a `VectorIndex` writes it, in another process or this one. It takes no
@@ -229,8 +247,9 @@ let results = reader.search(&query, 10)?;
 Every search first takes a new snapshot: it returns what the writer's newest `flush()` committed,
 and nothing that flush deleted, while routing through vectors added since, so a long unflushed batch
 costs readers little recall. A flush becomes visible just before its final fsync, so one that then
-fails, or is lost to power loss, may already have been seen. `get`, `contains` and `ids` take a new
-snapshot too. `len()` and `deleted_count()` report the last snapshot; `refresh()` takes a new one
+fails, or is lost to power loss, may already have been seen. `get`, `contains`, `ids` and `check`
+take a new snapshot too; while the writer is linking a vector, `check` can find it out of reach for
+a moment. `len()` and `deleted_count()` report the last snapshot; `refresh()` takes a new one
 without searching, and `snapshot()` identifies it, for keying a cache.
 `search` takes `&mut self`: open one reader per thread. The file must exist in the current format;
 open it once with `VectorIndex::open` to create or migrate it.

@@ -382,6 +382,24 @@ do {
 } while (count > cap && (cap = count));
 ```
 
+#### `chassis_check`
+```c
+size_t chassis_check(const ChassisIndex* index, uint64_t* out, size_t cap, size_t* unreachable);
+```
+Check what opening can't, reading the whole graph and every vector, and return how many ids it
+found; `0` means the index is in good order. The ids go into `out`, the first `cap` of them, as
+with `chassis_ids`: first the live vectors that no path through the graph reaches, so no search
+returns them, and `*unreachable` says how many those are; then the vectors with a component that
+isn't a finite number, which only damage leaves. Damage can leave vectors out of reach, and
+`chassis_compact` builds the graph again; so can data with no structure, or many exact copies of
+one vector, rebuilt or not ([Rust API](./api-reference.md#check)). Returns `0` on error too;
+check `chassis_last_error_code()`.
+
+```c
+size_t unreachable;
+size_t found = chassis_check(index, NULL, 0, &unreachable);  // Then again with space for found
+```
+
 #### `chassis_deleted_count`
 ```c
 uint64_t chassis_deleted_count(const ChassisIndex* index);

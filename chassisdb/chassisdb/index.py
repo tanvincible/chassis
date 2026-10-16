@@ -165,6 +165,28 @@ class SearchResult:
         return f"SearchResult(id={self.id}, distance={self.distance:.6f})"
 
 
+@dataclass(frozen=True)
+class Check:
+    """What `VectorIndex.check()` found: in an index in good order, both lists are empty.
+
+    Attributes:
+        unreachable: Ids of live vectors that no path through the graph reaches, so no search
+            returns them. Damage leaves them, and `compact()` builds the graph again. A sound
+            graph can have a few too: on data with no structure, such as uniform random numbers
+            in hundreds of dimensions, and among many exact copies of one vector.
+        not_finite: Ids of vectors with a component that isn't a finite number, which only
+            damage to the file leaves. Delete them and add them again from your own data.
+    """
+
+    unreachable: list[int]
+    not_finite: list[int]
+
+    @property
+    def ok(self) -> bool:
+        """Whether the check found nothing wrong."""
+        return not self.unreachable and not self.not_finite
+
+
 class VectorIndex:
     """High-level interface to Chassis vector index.
 
@@ -527,6 +549,29 @@ class VectorIndex:
             if count <= len(out):
                 return out[:count]
             # A writer in another process may flush more before the next call.
+            out = np.empty(count, dtype=np.uint64)
+
+    def check(self) -> Check:
+        """Checks what opening can't: that every live vector is within a search's reach, and
+        that every vector is made of finite numbers. It reads the whole graph and every vector.
+
+        Thread Safety:
+            Safe from any thread. A read-only index checks the writer's last flush; while the
+            writer changes the file, a vector it is linking can show as unreachable for a moment.
+        """
+        self._check_closed()
+        out = np.empty(len(self), dtype=np.uint64)
+        unreachable = ctypes.c_size_t()
+        while True:
+            out_ptr = out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            count = _ffi._lib.chassis_check(self._ptr, out_ptr, len(out), ctypes.byref(unreachable))
+            if count == 0 and _ffi._lib.chassis_last_error_code() != 0:
+                raise _ffi.last_error("The index couldn't be checked")
+            if count <= len(out):
+                ids = [int(id) for id in out[:count]]
+                return Check(
+                    unreachable=ids[: unreachable.value], not_finite=ids[unreachable.value :]
+                )
             out = np.empty(count, dtype=np.uint64)
 
     def search(

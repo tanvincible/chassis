@@ -3,6 +3,7 @@
 //! vectors out of reach.
 
 use chassisdb::{IndexOptions, VectorIndex};
+use std::collections::HashSet;
 
 const DIMS: usize = 32;
 
@@ -28,7 +29,7 @@ fn test_copies_leave_every_other_vector_within_reach() {
             IndexOptions::default(),
         )
         .unwrap();
-        let mut distinct = Vec::new();
+        let (mut distinct, mut copies) = (Vec::new(), HashSet::new());
         let add = |index: &mut VectorIndex, vectors: &[Vec<f32>]| -> Vec<u64> {
             if batch {
                 index.add_batch(&vectors.concat()).unwrap()
@@ -40,9 +41,12 @@ fn test_copies_leave_every_other_vector_within_reach() {
             // Some distinct vectors, then 40 copies of another one.
             let fresh: Vec<Vec<f32>> = (0..20).map(|i| vector(round * 100 + i)).collect();
             distinct.extend(add(&mut index, &fresh).into_iter().zip(fresh));
-            add(&mut index, &vec![vector(1_000_000 + round); 40]);
+            copies.extend(add(&mut index, &vec![vector(1_000_000 + round); 40]));
         }
         let lost = distinct.iter().filter(|(id, v)| index.search(v, 1).unwrap()[0].id != *id);
         assert_eq!(lost.count(), 0, "batch {batch}: distinct vectors out of reach");
+        // Only copies may be left without a link: a search for them finds one of the others.
+        let unreachable = index.check().unwrap().unreachable;
+        assert!(unreachable.iter().all(|id| copies.contains(id)), "batch {batch}: {unreachable:?}");
     }
 }

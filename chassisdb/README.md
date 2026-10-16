@@ -229,6 +229,15 @@ to match); any number can search while one writer writes, in this process or oth
   compare the two on open. A `read_only=True` index reports its newest snapshot's; setting it
   there raises `ReadOnlyError`.
 
+- **`check() -> Check`**  
+  Checks what opening can't, reading the whole graph and every vector. `check().unreachable`
+  lists the ids of live vectors that no path through the graph reaches, so no search returns
+  them. Damage leaves them, and `compact()` builds the graph again; a sound graph can have a few
+  too, on data with no structure or among many exact copies of one vector. `check().not_finite`
+  lists vectors with a component that isn't a finite number, which only damage to the file
+  leaves: delete them and add them again from your own data. `check().ok` is true when both are
+  empty. A `read_only=True` index checks the writer's last flush.
+
 - **`is_empty() -> bool`**  
   Whether the index has no live vectors.
 

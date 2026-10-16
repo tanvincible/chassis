@@ -732,6 +732,31 @@ int chassis_contains(const struct ChassisIndex *ptr, uint64_t id);
 size_t chassis_ids(const struct ChassisIndex *ptr, uint64_t *out, size_t cap);
 
 /**
+ * Checks what opening can't, reading the whole graph and every vector: live vectors that no
+ * path through the graph reaches, so no search returns them (`chassis_compact` builds the graph
+ * again), and vectors with a component that isn't a finite number, which only damage leaves.
+ *
+ * # Returns
+ *
+ * - How many ids the check found, the unreachable ones first. Only the first `cap` are written
+ *   to `out`, so if this is more than `cap`, call again with more space. `*unreachable` is set
+ *   to how many of them are unreachable; the rest aren't finite.
+ * - 0 when the index is in good order, and on failure (check `chassis_last_error_code()`)
+ *
+ * # Thread Safety
+ *
+ * Safe from any thread. A reader checks the writer's last flush; while the writer changes the
+ * file, a vector it is linking can show as unreachable for a moment.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ * - `out` must have space for `cap` u64 values
+ * - `unreachable` must be non-NULL
+ */
+size_t chassis_check(const struct ChassisIndex *ptr, uint64_t *out, size_t cap, size_t *unreachable);
+
+/**
  * Get the number of vectors in the index
  *
  * # Arguments

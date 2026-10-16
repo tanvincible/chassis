@@ -264,6 +264,15 @@ _lib.chassis_contains.restype = ctypes.c_int
 _lib.chassis_ids.argtypes = [ChassisIndexPtr, ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t]
 _lib.chassis_ids.restype = ctypes.c_size_t
 
+# chassis_check
+_lib.chassis_check.argtypes = [
+    ChassisIndexPtr,
+    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_size_t),
+]
+_lib.chassis_check.restype = ctypes.c_size_t
+
 # chassis_deleted_count
 _lib.chassis_deleted_count.argtypes = [ChassisIndexPtr]
 _lib.chassis_deleted_count.restype = ctypes.c_uint64

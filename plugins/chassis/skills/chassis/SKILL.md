@@ -80,6 +80,7 @@ with VectorIndex("notes.chassis", dimensions=DIMENSIONS, options=OPTIONS) as ind
     if 42 in index:
         index.delete(42)                                    # Replace = delete, then add again
     ids = index.ids()                                       # Every live id, in add order
+    assert index.check().ok  # Every vector within reach, none damaged; index.check() says which
     index.compact()  # Drops deleted vectors (index.deleted_count()); as slow as a full build
 
 # Another process or thread that only searches; it sees the writer's last flush.

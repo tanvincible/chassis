@@ -30,7 +30,8 @@
 //! - Each thread has its own error message storage
 
 use chassisdb::{
-    DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, SearchResult, VectorIndex,
+    Check, DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, SearchResult,
+    VectorIndex,
 };
 use libc::{c_char, c_float, c_int, size_t};
 use std::cell::RefCell;
@@ -129,6 +130,7 @@ trait Readable {
     fn get(&mut self, id: u64) -> chassisdb::Result<Option<Vec<f32>>>;
     fn contains(&mut self, id: u64) -> chassisdb::Result<bool>;
     fn ids(&mut self) -> chassisdb::Result<Vec<u64>>;
+    fn check(&mut self) -> chassisdb::Result<Check>;
     fn len(&mut self) -> u64;
     fn deleted_count(&mut self) -> u64;
     fn user_version(&mut self) -> u64;
@@ -157,6 +159,9 @@ impl Readable for &VectorIndex {
     }
     fn ids(&mut self) -> chassisdb::Result<Vec<u64>> {
         VectorIndex::ids(self)
+    }
+    fn check(&mut self) -> chassisdb::Result<Check> {
+        VectorIndex::check(self)
     }
     fn len(&mut self) -> u64 {
         VectorIndex::len(self)
@@ -198,6 +203,9 @@ impl Readable for IndexReader {
     }
     fn ids(&mut self) -> chassisdb::Result<Vec<u64>> {
         IndexReader::ids(self)
+    }
+    fn check(&mut self) -> chassisdb::Result<Check> {
+        IndexReader::check(self)
     }
     /// The writer's latest flush, not the last search's snapshot.
     fn len(&mut self) -> u64 {
@@ -1783,6 +1791,68 @@ pub unsafe extern "C" fn chassis_ids(
     .unwrap_or(0)
 }
 
+/// Checks what opening can't, reading the whole graph and every vector: live vectors that no
+/// path through the graph reaches, so no search returns them (`chassis_compact` builds the graph
+/// again), and vectors with a component that isn't a finite number, which only damage leaves.
+///
+/// # Returns
+///
+/// - How many ids the check found, the unreachable ones first. Only the first `cap` are written
+///   to `out`, so if this is more than `cap`, call again with more space. `*unreachable` is set
+///   to how many of them are unreachable; the rest aren't finite.
+/// - 0 when the index is in good order, and on failure (check `chassis_last_error_code()`)
+///
+/// # Thread Safety
+///
+/// Safe from any thread. A reader checks the writer's last flush; while the writer changes the
+/// file, a vector it is linking can show as unreachable for a moment.
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+/// - `out` must have space for `cap` u64 values
+/// - `unreachable` must be non-NULL
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_check(
+    ptr: *const ChassisIndex,
+    out: *mut u64,
+    cap: size_t,
+    unreachable: *mut size_t,
+) -> size_t {
+    let check = |index: &mut dyn Readable| match index.check() {
+        Ok(check) => {
+            clear_last_error();
+            // SAFETY: checked non-NULL below, before this runs
+            unsafe { *unreachable = check.unreachable.len() };
+            let ids: Vec<u64> = check.unreachable.into_iter().chain(check.not_finite).collect();
+            let written = ids.len().min(cap);
+            if written > 0 {
+                // SAFETY: caller guarantees out has space for cap u64 values
+                unsafe { ptr::copy_nonoverlapping(ids.as_ptr(), out, written) };
+            }
+            ids.len()
+        }
+        Err(e) => {
+            set_last_error(e);
+            0
+        }
+    };
+    ffi_guard(|| {
+        if unreachable.is_null() {
+            set_last_error("unreachable is NULL\nhelp: pass where to put how many are unreachable");
+            return 0;
+        }
+        // SAFETY: just checked non-NULL
+        unsafe { *unreachable = 0 };
+        if out.is_null() && cap > 0 {
+            set_last_error("out is NULL\nhelp: pass space for cap ids, or cap 0 to count them");
+            return 0;
+        }
+        unsafe { read(ptr, check) }.unwrap_or(0)
+    })
+    .unwrap_or(0)
+}
+
 /// Get the number of vectors in the index
 ///
 /// # Arguments
@@ -2454,6 +2524,12 @@ mod tests {
             assert_eq!(ids[..3], [100, 101, 0]);
             assert_eq!(unsafe { chassis_ids(handle, ids.as_mut_ptr(), 8) }, 4);
             assert_eq!(ids[..4], [100, 101, 103, 104]);
+
+            let mut unreachable = 9;
+            assert_eq!(unsafe { chassis_check(handle, ids.as_mut_ptr(), 8, &mut unreachable) }, 0);
+            assert_eq!((unreachable, chassis_last_error_code()), (0, CHASSIS_OK));
+            assert_eq!(unsafe { chassis_check(handle, ids.as_mut_ptr(), 8, ptr::null_mut()) }, 0);
+            assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_INVALID_ARGUMENT);
             assert_eq!(unsafe { chassis_get(handle, 101, out.as_mut_ptr(), 3) }, -1);
             assert_eq!(unsafe { chassis_deleted_count(handle) }, 1);
             assert_eq!(chassis_last_error_code(), CHASSIS_OK, "a success clears the last error");
