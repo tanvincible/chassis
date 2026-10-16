@@ -345,9 +345,11 @@ class Memory:
             return self._embedders[spec]
 
     @contextmanager
-    def _writing(self) -> Iterator[None]:
+    def _writing(self, mend: bool = True) -> Iterator[None]:
         """A write transaction on memory.db, which every write takes: sessions take turns, and a
-        memory's row and vector are saved, or not, together."""
+        memory's row and vector are saved, or not, together. The index is flushed before the
+        commit, with the write's number, so a write that never commits shows as an index one
+        ahead, which the next write mends first."""
         try:
             self.db.execute("BEGIN IMMEDIATE")
         except sqlite3.OperationalError as e:
@@ -357,11 +359,50 @@ class Memory:
                 "done"
             ) from e
         try:
+            if mend:
+                self._mend()
             yield
         except BaseException:
             self.db.execute("ROLLBACK")
             raise
         self.db.execute("COMMIT")
+
+    def _count_write(self, index: VectorIndex) -> None:
+        """Counts this write in its transaction; the index's flush commits the same number."""
+        number = int(self._meta("version") or 0) + 1
+        self._set_meta("version", number)
+        index.user_version = number
+
+    def _mend(self) -> None:
+        """Brings the index level with the memories after a write that flushed it and never
+        committed, by a crash or a failed commit, which leaves the two numbers different: vectors
+        without a memory go, and memories without a vector are embedded again with the folder's
+        model. A folder from before the number was kept is mended once."""
+        dimensions, number = self._meta("dimensions"), self._meta("version")
+        if dimensions is None or not self.path.exists():
+            return
+        index = self._open(int(dimensions))
+        try:  # Not `with`, which would flush: an index in step has nothing to save
+            if number is not None and index.user_version == int(number):
+                return
+            texts = dict(self.db.execute("SELECT id, text FROM memories"))
+            held = {int(id) for id in index.ids()}
+            for id in held - texts.keys():
+                index.delete(id)
+            missing = sorted(texts.keys() - held)
+            if missing:
+                spec = self._meta("embedder") or ""
+                if spec not in self._embedders:
+                    self._embedders[spec] = Embedder(spec)
+                vectors = self._embedders[spec]([texts[id] for id in missing])
+                index.add_batch(np.asarray(vectors, dtype=np.float32), ids=missing)
+            if number is None:
+                self._set_meta("version", index.user_version)
+            else:
+                index.user_version = int(number)
+            index.flush()
+        finally:
+            index.close()
 
     def _open(self, dimensions: int, read_only: bool = False) -> VectorIndex:
         deadline = time.monotonic() + WAIT_SECONDS
@@ -471,13 +512,11 @@ class Memory:
                 "INSERT INTO memories (text, tags) VALUES (?, ?)",
                 (text, json.dumps(tags)),
             ).lastrowid
+            # Leaving the block flushes the index, before _writing commits.
             with self._open(len(vector)) as index:
-                # A vector a crash left under this id has no row yet; _rows drops any other.
-                nearest = index.search(vector, k=3, excluded=[id]) if others else []
-                if id in index:  # A vector a crash left before its row was saved
-                    index.delete(id)
+                nearest = index.search(vector, k=3) if others else []
                 index.add(vector, id=id)
-                index.flush()
+                self._count_write(index)
             stored: Stored = {"id": id, "similar": self._rows(nearest)}
         if len(text) > LONG_TEXT:
             stored["warning"] = (
@@ -525,9 +564,9 @@ class Memory:
                 )
             dimensions = self._meta("dimensions")
             if dimensions is not None and self.path.exists():
-                with self._open(int(dimensions)) as index:
+                with self._open(int(dimensions)) as index:  # Leaving it flushes
                     index.delete(id)
-                    index.flush()
+                    self._count_write(index)
             self.db.execute("DELETE FROM memories WHERE id = ?", (id,))
             return {"forgotten": _memory(row)}
 
@@ -588,7 +627,8 @@ class Memory:
             )
         fresh = self.folder / "memory-reembed.chassis"
         try:
-            with self.lock, self._writing():
+            # No mend first: the old model may be gone, and the new index is built from every row.
+            with self.lock, self._writing(mend=False):
                 rows = self.db.execute(
                     "SELECT id, text FROM memories ORDER BY id"
                 ).fetchall()
@@ -612,6 +652,9 @@ class Memory:
                         fresh, dimensions=matrix.shape[1], options=OPTIONS
                     ) as index:
                         index.add_batch(matrix, ids=ids)
+                        number = int(self._meta("version") or 0)
+                        self._set_meta("version", number)
+                        index.user_version = number
                         index.flush()
                     _replace(fresh, self.path)
                     self._set_meta("dimensions", matrix.shape[1])
@@ -680,8 +723,8 @@ def _show(value: object) -> None:
             print(
                 f"\n{_plural(value['unindexed'], 'memory')} without a vector and "
                 f"{_plural(value['stray'], 'vector')} without a memory, as a crash can leave\n"
-                f"help: rebuild the index from the memories' text: chassisdb-mcp --dir "
-                f"{value['folder']} reembed"
+                f"help: the next remember or forget mends them; or rebuild the index from the "
+                f"memories' text: chassisdb-mcp --dir {value['folder']} reembed"
             )
         if memories:
             print()

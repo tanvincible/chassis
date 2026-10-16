@@ -157,14 +157,16 @@ def test_a_reembed_of_nothing_frees_the_folder(tmp_path):
 def test_what_a_crash_leaves_is_found_and_mended(tmp_path):
     memory = Memory(tmp_path, "openai:64")
     a = memory.remember("apples are red")["id"]
-    # A vector whose row was never saved, under the id the next memory will get, and another.
+    # What a write whose commit never came leaves: vectors whose rows were never saved, one under
+    # the id the next memory will get, and the index one write ahead.
     with VectorIndex(tmp_path / "memory.chassis", 64, IndexOptions(metric="cosine")) as index:
         index.add(hashed(64)(["apples are red"])[0], id=a + 1)
         index.add(hashed(64)(["apples are red"])[0], id=99)
+        index.user_version += 1
     assert [h["id"] for h in memory.recall("apples red")] == [a]  # Strays take no place
     assert memory.overview()["stray"] == 2
-    b = memory.remember("apples are green")["id"]
-    assert b == a + 1 and memory.overview()["stray"] == 1
+    b = memory.remember("apples are green")["id"]  # Mends first
+    assert b == a + 1 and memory.overview()["stray"] == 0
 
     (tmp_path / "memory.chassis").unlink()
     with pytest.raises(
@@ -318,3 +320,76 @@ def test_fastembed_suggests_the_model_meant():
     pytest.importorskip("fastembed")
     with pytest.raises(Problem, match="did you mean BAAI/bge-small-en-v1.5"):
         Embedder("fastembed:BAAI/bge-smol-en-v1.5")(["a"])
+
+
+def lost_after_flush(m: pytest.MonkeyPatch) -> None:
+    """Each flush happens and the commit after it doesn't, as when the process dies there."""
+    flush = VectorIndex.flush
+
+    def flushed_then_lost(index):
+        flush(index)
+        raise OSError("the commit never happens")
+
+    m.setattr(VectorIndex, "flush", flushed_then_lost)
+
+
+def test_a_forget_a_crash_stopped_is_mended_by_the_next_write(tmp_path):
+    memory = Memory(tmp_path, "openai:64")
+    tea = memory.remember("The user drinks green tea, never coffee")["id"]
+    memory.remember("This project indents with tabs")
+    with pytest.MonkeyPatch.context() as m:
+        lost_after_flush(m)
+        with pytest.raises(OSError):
+            memory.forget(tea)
+    memory.close()
+    memory = Memory(tmp_path, "openai:64")
+    assert memory.overview()["unindexed"] == 1  # Kept, as the forget never committed
+    memory.remember("The user's cat is called Miso")
+    assert memory.overview()["unindexed"] == 0
+    assert tea in [h["id"] for h in memory.recall("what does the user drink, tea", 5)]
+
+
+def test_a_failed_remember_is_mended_by_the_next(tmp_path):
+    memory = Memory(tmp_path, "openai:64")
+    memory.remember("The user drinks green tea, never coffee")
+    with pytest.MonkeyPatch.context() as m:
+        lost_after_flush(m)
+        with pytest.raises(OSError):
+            memory.remember("This project indents with tabs")  # Its id goes to the next one
+    cat = memory.remember("The user's cat is called Miso")["id"]
+    rows = sorted(row[0] for row in memory.db.execute("SELECT id FROM memories"))
+    assert index_ids(tmp_path, 64) == rows
+    assert [h["id"] for h in memory.recall("the cat called Miso", 1)] == [cat]
+
+
+def test_a_folder_from_before_is_mended_by_its_first_write(tmp_path):
+    memory = Memory(tmp_path, "openai:64")
+    tea = memory.remember("The user drinks green tea, never coffee")["id"]
+    # What an earlier release left after a crash in forget: the memory without its vector, and no
+    # number for the last write.
+    with VectorIndex(tmp_path / "memory.chassis", dimensions=64, options=server.OPTIONS) as index:
+        index.delete(tea)
+        index.flush()
+    memory.db.execute("DELETE FROM meta WHERE key = 'version'")
+    memory.remember("This project indents with tabs")
+    assert memory.overview()["unindexed"] == 0
+    assert tea in [h["id"] for h in memory.recall("what does the user drink, tea", 5)]
+
+
+def test_a_reembed_leaves_the_index_level_with_the_memories(tmp_path):
+    Memory(tmp_path, "openai:64").remember("The user drinks green tea, never coffee")
+    memory = Memory(tmp_path, "openai:32")
+    memory.reembed()
+    with VectorIndex(tmp_path / "memory.chassis", dimensions=32, read_only=True) as reader:
+        assert reader.user_version == int(memory._meta("version") or -1)
+
+
+def test_a_write_flushes_once(tmp_path, monkeypatch):
+    memory = Memory(tmp_path, "openai:64")
+    memory.remember("The user drinks green tea, never coffee")
+    flushes = []
+    flush = VectorIndex.flush
+    monkeypatch.setattr(VectorIndex, "flush", lambda index: (flushes.append(1), flush(index)))
+    memory.remember("This project indents with tabs")
+    memory.forget(1)
+    assert len(flushes) == 2  # One a write: checking that the index is in step saves nothing

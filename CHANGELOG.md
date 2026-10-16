@@ -27,6 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 - A file cut off after its header, as a partial copy leaves it, ended the process with SIGBUS on
   a reader's first search. Readers and writers now refuse it with an error that gives the file's
   length and the length its header needs.
+- `chassisdb-mcp`: a crash or a failed commit during `forget` left the memory stored but never
+  recalled until someone ran `reembed`. The server now keeps the number of the last write with the
+  index and mends it before the next `remember` or `forget`, embedding again a memory that lost
+  its vector; a folder from an earlier release is mended by its first write. Each write also
+  flushes the index once instead of twice, which saves about 4 ms on a Mac.
 - Exact copies of a vector, such as the same text embedded twice, could fill each other's
   neighbor lists and leave other vectors unreachable: with 50 groups of 40 copies among 1,000
   vectors, a third to two thirds of those were never found. A list now keeps one copy, and graphs

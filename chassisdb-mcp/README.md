@@ -164,8 +164,9 @@ uvx --from 'chassisdb-mcp[fastembed]' chassisdb-mcp --embedder fastembed:BAAI/bg
 
 It embeds while sessions go on using the memory, then picks up what they wrote meanwhile as it
 swaps the new index in. Every session follows the folder to the new model; nothing in their setup
-needs changing. `status` also says when a crash left a memory without its vector, and `reembed`
-mends that too.
+needs changing. A crash in the middle of a `remember` or `forget` leaves the index a write ahead
+of the memories; `status` says so, and the next `remember` or `forget` mends it first, embedding
+again any memory that lost its vector.
 
 ## Errors
 
