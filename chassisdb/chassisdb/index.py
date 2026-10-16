@@ -793,9 +793,9 @@ class VectorIndex:
         Like SQLite's user_version. The next flush() commits it with the
         data, so after a crash it says which flush the index holds: keep
         the same number in your own store, in the transaction the flush
-        sits in, and compare the two on open. Until that flush, a crash
-        leaves the number flushed before. A read_only index reports the one
-        in its newest snapshot.
+        sits in, and compare the two on open and as each write begins.
+        Until that flush, a crash leaves the number flushed before. A
+        read_only index reports the one in its newest snapshot.
 
         Raises:
             ReadOnlyError: On setting it in a read_only index
