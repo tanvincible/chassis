@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 ### Added
 
 - `user_version`: a number of yours that each flush commits with the data (#89).
-- `check()`: lists vectors no search can reach, and vectors damaged into NaN.
+- `check()`: lists vectors no search can reach, and vectors damaged into NaN (#102).
 
 ### Fixed
 
