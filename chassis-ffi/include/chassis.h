@@ -797,8 +797,8 @@ uint64_t chassis_deleted_count(const struct ChassisIndex *ptr);
  *
  * Like SQLite's `user_version`. `chassis_flush()` commits it with the data, so after a crash it
  * says which flush the index holds: keep the same number in your own store, in the transaction
- * the flush sits in, and compare the two on open. A reader handle returns the one in its newest
- * snapshot.
+ * the flush sits in, and compare the two on open and as each write begins. A reader handle
+ * returns the one in its newest snapshot.
  *
  * # Returns
  *
