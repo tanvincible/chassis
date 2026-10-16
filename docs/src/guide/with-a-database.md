@@ -49,8 +49,8 @@ a write's own changes:
 def writing():
     """The rows and the index change together, or neither does."""
     db.execute("BEGIN IMMEDIATE")
-    check()  # A write whose commit failed left the index one ahead: mend that first
     try:
+        check()  # A write whose commit failed left the index one ahead: mend that first
         yield
         db.execute("UPDATE sync SET version = version + 1")
         index.user_version = db.execute("SELECT version FROM sync").fetchone()[0]
