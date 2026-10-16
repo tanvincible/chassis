@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
 import pytest
+from chassisdb import VectorIndex
 from langchain_core.vectorstores import VectorStore
 from langchain_tests.integration_tests.vectorstores import VectorStoreIntegrationTests
 
@@ -100,3 +101,67 @@ def test_scores_follow_the_files_metric(tmp_path, embeddings):
     )
     reader = ChassisVectorStore(tmp_path / "e.chassis", embeddings, read_only=True)
     assert reader._select_relevance_score_fn() == reader._euclidean_relevance_score_fn
+
+
+def _lost_after_flush(m: pytest.MonkeyPatch) -> None:
+    """Each flush happens and the commit after it doesn't, as when the process dies there."""
+    flush = VectorIndex.flush
+
+    def flushed_then_lost(index):
+        flush(index)
+        raise OSError("the commit never happens")
+
+    m.setattr(VectorIndex, "flush", flushed_then_lost)
+
+
+def _found(store: ChassisVectorStore) -> list[str]:
+    return sorted(doc.page_content for doc in store.similarity_search("x", k=10))
+
+
+@pytest.mark.parametrize("write", ["delete", "replace"])
+def test_a_crash_between_flush_and_commit_is_mended_on_open(tmp_path, embeddings, write):
+    path = tmp_path / "docs.chassis"
+    store = ChassisVectorStore(path, embeddings)
+    store.add_texts(["apples", "pears"], ids=["a", "p"])
+    with pytest.MonkeyPatch.context() as m:
+        _lost_after_flush(m)
+        with pytest.raises(OSError):
+            if write == "delete":
+                store.delete(["p"])
+            else:
+                store.add_texts(["apricots"], ids=["a"])
+    store.close()
+    again = ChassisVectorStore(path, embeddings)
+    assert _found(again) == ["apples", "pears"]
+    assert again.similarity_search("apples", k=1)[0].page_content == "apples"
+
+
+@pytest.mark.parametrize("write", ["add", "delete", "replace"])
+def test_a_failed_commit_is_mended_by_the_next_write(tmp_path, embeddings, write):
+    store = ChassisVectorStore(tmp_path / "docs.chassis", embeddings)
+    store.add_texts(["apples", "pears"], ids=["a", "p"])
+    with pytest.MonkeyPatch.context() as m:
+        _lost_after_flush(m)
+        with pytest.raises(OSError):
+            if write == "add":
+                store.add_texts(["plums"], ids=["q"])  # Its key goes back to the next insert
+            elif write == "delete":
+                store.delete(["p"])
+            else:
+                store.add_texts(["apricots"], ids=["a"])
+    store.add_texts(["cherries"], ids=["c"])
+    assert _found(store) == ["apples", "cherries", "pears"]
+
+
+def test_a_store_from_before_is_mended_on_its_first_open(tmp_path, embeddings):
+    path = tmp_path / "docs.chassis"
+    store = ChassisVectorStore(path, embeddings)
+    store.add_texts(["apples", "pears"], ids=["a", "p"])
+    # What an earlier release left after a crash in a delete: the document without its vector,
+    # and no number for the last write.
+    [key] = store._keys(["p"])
+    store._index.delete(key)
+    store._index.flush()
+    store._db.execute("DELETE FROM meta WHERE name = 'version'")
+    store.close()
+    assert _found(ChassisVectorStore(path, embeddings)) == ["apples", "pears"]

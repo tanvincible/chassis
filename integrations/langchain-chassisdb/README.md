@@ -24,7 +24,8 @@ retriever.invoke("how long does a refund take?")
 
 - **Files**: `docs.chassis` holds the vectors and `docs.db` the documents and metadata. Open the
   same path again, with the same embeddings, to pick up where you left off. Everything added or
-  deleted is saved when the call returns.
+  deleted is saved when the call returns. A call that a crash or an error stops changes neither
+  file: the store brings its vectors back in step when it is next opened or written.
 - **Ids**: give your own with `ids=`; adding a document with an id that is stored replaces it.
   `get_by_ids` and `delete` take them.
 - **Filters**: `filter={"key": value, ...}` keeps documents whose metadata has every key with that
