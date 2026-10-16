@@ -17,29 +17,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Fixed
 
-- `langchain-chassisdb`: a crash or a failed commit during a `delete` or a replacement left the
-  document stored but never found by a search, for good, and after a failed `add_texts` the next
-  one raised `IdInUseError`. The store now mends its vectors when it opens and before each write,
-  and on its first open with this release, what an earlier one left.
-- A file cut off after its header, as a partial copy leaves it, ended the process with SIGBUS on
-  a reader's first search. Readers and writers now refuse it with an error that gives the file's
-  length and the length its header needs.
-- `chassisdb-mcp`: a crash or a failed commit during `forget` left the memory stored but never
-  recalled until someone ran `reembed`. The server now keeps the number of the last write with the
-  index and mends it before the next `remember` or `forget`, embedding again a memory that lost
-  its vector; a folder from an earlier release is mended by its first write. Each write also
-  flushes the index once instead of twice, which saves about 4 ms on a Mac.
-- Exact copies of a vector, such as the same text embedded twice, could fill each other's
-  neighbor lists and leave other vectors unreachable: with 50 groups of 40 copies among 1,000
-  vectors, a third to two thirds of those were never found. A list now keeps one copy, and graphs
-  of data without copies are built as before.
-- The guide to keeping an index next to a database (and the agent skill) could leave the two out
-  of step for good. An edit kept its vector's id, so a crash between its flush and its commit left
-  the old text with the new vector, which mending, comparing ids, couldn't see. A commit that
-  failed without a crash was hidden by the next write, which brought the two numbers level again.
-  The guide now gives a row a new vector id whenever its text changes, and checks the numbers as
-  each write begins. If your app follows the old guide, do the same. An edit a crash has already
-  interrupted shows only when its row is embedded again.
+- A file cut short, as a partial copy leaves it, is an error, not a SIGBUS (#90).
+- Many exact copies of a vector no longer leave other vectors out of reach (#91).
+- Database guide and skill: edits take a new vector id, and each write mends first, so a crash or
+  a failed commit can't leave rows and vectors out of step for good (#99).
+- `langchain-chassisdb`: a crash or a failed commit could hide a document from search for good;
+  the store now mends itself (#100).
+- `chassisdb-mcp`: a crash or a failed commit in `forget` could hide a memory until `reembed`; the
+  server now mends itself, and each write flushes once, not twice (#101).
 
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 

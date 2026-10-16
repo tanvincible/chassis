@@ -206,8 +206,8 @@ let version = index.user_version(); // 42; 0 until one is set
 
 Like SQLite's `user_version`, a number for your application. The next `flush` commits it with the
 adds and deletes, so after a crash it says which flush the index holds. Keep the same number in your
-own store, in the transaction the flush sits in, and compare the two on open: they differ only
-after a crash between the flush and your commit
+own store, in the transaction the flush sits in, and compare the two on open and as each write
+begins: they differ only when a flush's commit never came, after a crash or a failed commit
 ([With a database](./with-a-database.md#opening),
 [ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)).
 `IndexReader::user_version` returns the number of the flush its last snapshot shows.

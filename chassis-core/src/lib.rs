@@ -802,7 +802,7 @@ impl VectorIndex {
     /// Your application's number for the index, as SQLite's `user_version` is for a database: 0
     /// until you set one. The next `flush` commits it with the data (ADR-0023), so after a crash
     /// it says which flush the index holds. Keep the same number in your own store, in the
-    /// transaction that `flush` sits in, and compare the two on open.
+    /// transaction that `flush` sits in, and compare the two on open and as each write begins.
     pub fn user_version(&self) -> u64 {
         self.graph.storage.user_version()
     }
