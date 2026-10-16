@@ -779,6 +779,16 @@ impl VectorIndex {
         live_ids(&self.graph)
     }
 
+    /// Checks what opening can't: that every live vector is within a search's reach, and that
+    /// every vector is made of finite numbers. It reads the whole graph and every vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index file cannot be read.
+    pub fn check(&self) -> Result<Check> {
+        Ok(Check { unreachable: unreachable(&self.graph)?, not_finite: not_finite(&self.graph)? })
+    }
+
     /// Get the number of live (not deleted) vectors in the index
     pub fn len(&self) -> u64 {
         self.graph.node_count() - self.graph.deleted_count
@@ -952,6 +962,61 @@ fn search_graph(
 }
 
 /// Ids of the vectors a search of `graph` can return, in slot order.
+/// What `check` found: in an index in good order, both lists are empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Check {
+    /// Live vectors that no path through the graph reaches from its entry point, so no search
+    /// returns them. Damage leaves them, and `compact` builds the graph again. A sound graph can
+    /// have a few too: on data with no structure, such as uniform random numbers in hundreds of
+    /// dimensions, and among many exact copies of one vector.
+    pub unreachable: Vec<u64>,
+    /// Vectors with a component that isn't a finite number, which only damage to the file leaves,
+    /// since `add` refuses them. Delete them and add them again from your own data.
+    pub not_finite: Vec<u64>,
+}
+
+impl Check {
+    /// Whether the check found nothing wrong.
+    pub fn is_ok(&self) -> bool {
+        self.unreachable.is_empty() && self.not_finite.is_empty()
+    }
+}
+
+/// The ids of live vectors that no path from the entry point reaches. Search descends through the
+/// upper layers before it searches layer 0, so the walk follows every layer's links.
+fn unreachable(graph: &HnswGraph) -> Result<Vec<u64>> {
+    let count = graph.node_count();
+    let mut reached = vec![false; count as usize];
+    let mut next: Vec<u64> = graph.entry_point.into_iter().collect();
+    while let Some(slot) = next.pop() {
+        // A link past the count is one a crash left; search passes it by as well.
+        if slot >= count || std::mem::replace(&mut reached[slot as usize], true) {
+            continue;
+        }
+        for layer in 0..graph.storage.layer_count(slot)? {
+            next.extend(graph.neighbors_iter_from_mmap(slot, layer)?);
+        }
+    }
+    let mut ids = Vec::new();
+    for slot in 0..count {
+        if !reached[slot as usize] && !graph.is_deleted(slot)? {
+            ids.push(graph.id_of(slot)?);
+        }
+    }
+    Ok(ids)
+}
+
+/// The ids of live vectors with a component that isn't a finite number.
+fn not_finite(graph: &HnswGraph) -> Result<Vec<u64>> {
+    let mut ids = Vec::new();
+    for slot in 0..graph.node_count() {
+        if !graph.is_deleted(slot)? && graph.storage.vector(slot)?.iter().any(|x| !x.is_finite()) {
+            ids.push(graph.id_of(slot)?);
+        }
+    }
+    Ok(ids)
+}
+
 fn live_ids(graph: &HnswGraph) -> Result<Vec<u64>> {
     let mut ids = Vec::new();
     for slot in 0..graph.node_count() {
@@ -1156,6 +1221,17 @@ impl IndexReader {
     pub fn ids(&mut self) -> Result<Vec<u64>> {
         self.sync()?;
         live_ids(&self.graph)
+    }
+
+    /// `VectorIndex::check` on a new snapshot. While a writer changes the file, a vector it is
+    /// linking can show as unreachable for a moment; check again to be sure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is corrupt.
+    pub fn check(&mut self) -> Result<Check> {
+        self.sync()?;
+        Ok(Check { unreachable: unreachable(&self.graph)?, not_finite: not_finite(&self.graph)? })
     }
 
     /// Slot of the vector with `id` in a new snapshot, if the snapshot has it.

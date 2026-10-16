@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from chassisdb import IndexOptions, SearchResult, VectorIndex
+from chassisdb import Check, IndexOptions, SearchResult, VectorIndex
 from chassisdb.exceptions import (
     ChassisError,
     DimensionMismatchError,
@@ -766,3 +766,38 @@ class TestUserVersion:
         with VectorIndex(tmp_path / "v.chassis", dimensions=3) as index:
             with pytest.raises(TypeError, match="help: "):
                 index.user_version = bad
+
+
+class TestCheck:
+    """What opening can't find: vectors no search reaches, and vectors that aren't finite."""
+
+    def test_an_index_in_good_order_checks_clean(self, tmp_path):
+        path = tmp_path / "checked.chassis"
+        rng = np.random.default_rng(0)
+        with VectorIndex(path, dimensions=8) as index:
+            assert index.check() == Check(unreachable=[], not_finite=[])
+            index.add_batch(rng.random((500, 8), dtype=np.float32))
+            index.delete(7)
+            assert index.check().ok
+        with VectorIndex(path, dimensions=8, read_only=True) as reader:
+            assert reader.check().ok
+
+    def test_a_vector_damaged_into_nan_is_reported(self, tmp_path):
+        path = tmp_path / "damaged.chassis"
+        marked = np.full(8, 1234.5678, dtype=np.float32)
+        with VectorIndex(path, dimensions=8) as index:
+            index.add_batch(np.random.default_rng(0).random((50, 8), dtype=np.float32))
+            assert index.add(marked) == 50
+        # Damage the file where it keeps the marked vector, as a bad disk could.
+        data = bytearray(path.read_bytes())
+        at = data.find(marked.tobytes())
+        data[at : at + 4] = np.float32(np.nan).tobytes()
+        path.write_bytes(bytes(data))
+        with VectorIndex(path, dimensions=8) as index:
+            check = index.check()
+        assert (check.unreachable, check.not_finite, check.ok) == ([], [50], False)
+
+    def test_a_closed_index_says_so(self, simple_index):
+        simple_index.close()
+        with pytest.raises(ChassisError, match="closed"):
+            simple_index.check()

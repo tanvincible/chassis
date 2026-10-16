@@ -28,12 +28,13 @@ from chassisdb.exceptions import (
     OptionsMismatchError,
     ReadOnlyError,
 )
-from chassisdb.index import IndexOptions, SearchResult, VectorIndex
+from chassisdb.index import Check, IndexOptions, SearchResult, VectorIndex
 
 __version__ = "0.8.0"
 __all__ = [
     "VectorIndex",
     "SearchResult",
+    "Check",
     "IndexOptions",
     "ChassisError",
     "CorruptIndexError",
