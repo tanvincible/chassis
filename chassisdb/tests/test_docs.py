@@ -1,11 +1,14 @@
 """The code agents copy: the skill's Python blocks and the examples run as written."""
 
+import hashlib
 import re
 import runpy
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+from chassisdb import VectorIndex
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "chassis" / "skills" / "chassis" / "SKILL.md"
@@ -39,34 +42,70 @@ def test_cursor_rule_says_what_the_skill_says():
     assert body(rule) == body(SKILL), f"copy {SKILL.name}'s text below the front matter into {rule}"
 
 
+def _embed(texts):
+    """A stand-in model that gives each text a vector of its own, every time."""
+    seeds = [int.from_bytes(hashlib.sha256(t.encode()).digest()[:8], "little") for t in texts]
+    return np.array([np.random.default_rng(s).random(384, dtype=np.float32) for s in seeds])
+
+
+def _guide(page=None):
+    """Runs the database guide's code; with `page`, only its first block, as a restart would."""
+    blocks = re.findall(r"```python\n(.*?)```", WITH_A_DATABASE.read_text(), re.S)
+    page = page if page is not None else {"embed": _embed}
+    for block in blocks[:1] if "check" in page else blocks:
+        exec(compile(block, str(WITH_A_DATABASE), "exec"), page)
+    return page
+
+
+def _in_step(page):
+    """Every row's vector is in the index, under the row's vector id, made from the row's text."""
+    index, db = page["index"], page["db"]
+    rows = dict(db.execute("SELECT vector, text FROM notes"))
+    assert sorted(index.ids()) == sorted(rows)
+    for id, text in rows.items():
+        held, made = index.get(id), _embed([text])[0]
+        assert np.allclose(held / np.linalg.norm(held), made / np.linalg.norm(made), atol=1e-5)
+
+
 def test_the_database_guide_survives_what_it_says_a_crash_leaves(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    rng = np.random.default_rng(0)
-    page = {"embed": lambda texts: rng.random((len(texts), 384), dtype=np.float32)}
-    for block in re.findall(r"```python\n(.*?)```", WITH_A_DATABASE.read_text(), re.S):
-        exec(compile(block, str(WITH_A_DATABASE), "exec"), page)
-    index, db = page["index"], page["db"]
-
-    ids = page["add_notes"](["apples", "pears"])
+    page = _guide()
+    apples, pears = page["add_notes"](["apples", "pears"])
     assert page["check"]() == (0, 0)  # In step: nothing to mend
-    # A crash after a flush whose commit never happened: a vector under the id that comes next,
-    # and the index one write ahead of the database.
-    index.add(page["embed"](["lost"])[0], id=ids[-1] + 1)
-    index.user_version += 1
-    index.flush()
-    assert page["check"]() == (1, 0)  # The next start mends it
-    assert page["add_notes"](["plums"]) == [ids[-1] + 1]
+    _in_step(page)
+
+    flush = VectorIndex.flush
+
+    def flushed_then_lost(index):  # The flush happens; the commit after it never does
+        flush(index)
+        raise OSError("the commit never happens")
+
+    # An edit, then a crash between its flush and its commit: the index holds the new text's
+    # vector, under a new id, and the row keeps the old text and id.
+    with monkeypatch.context() as m:
+        m.setattr(VectorIndex, "flush", flushed_then_lost)
+        with pytest.raises(OSError):
+            page["edit_note"](apples, "apricots")
+    page["index"].close()
+    page["db"].close()
+    _guide(page)  # The next start
+    assert page["check"]() == (1, 1)  # The new vector goes, the old one comes back
+    _in_step(page)
+
+    # A delete whose commit fails without a crash, then the app's next write.
+    with monkeypatch.context() as m:
+        m.setattr(VectorIndex, "flush", flushed_then_lost)
+        with pytest.raises(OSError):
+            page["delete_note"](pears)
+    page["add_notes"](["plums"])  # Mends first, then writes
+    _in_step(page)
     assert {text for _, text in page["search"]("fruit", k=10)} == {"apples", "pears", "plums"}
 
-    # A vector without a row, and a row without a vector.
-    index.add(page["embed"](["stray"])[0], id=99)
-    db.execute("INSERT INTO notes (id, text) VALUES (50, 'unindexed')")
-    index.flush()
-    assert len(page["search"]("fruit", k=10)) == 3  # The join drops the stray
-    assert page["mend"]() == (1, 1)
-    assert sorted(index.ids()) == sorted(r[0] for r in db.execute("SELECT id FROM notes"))
-    page["delete_note"](ids[0])
-    assert ids[0] not in index and "apples" not in {t for _, t in page["search"]("x", k=10)}
+    # Edits and deletes that commit.
+    page["edit_note"](apples, "apricots")
+    page["delete_note"](pears)
+    _in_step(page)
+    assert {text for _, text in page["search"]("fruit", k=10)} == {"apricots", "plums"}
 
 
 def test_recipes_run_one_after_another(tmp_path, monkeypatch):

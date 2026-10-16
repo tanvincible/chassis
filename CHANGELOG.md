@@ -31,6 +31,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
   neighbor lists and leave other vectors unreachable: with 50 groups of 40 copies among 1,000
   vectors, a third to two thirds of those were never found. A list now keeps one copy, and graphs
   of data without copies are built as before.
+- The guide to keeping an index next to a database (and the agent skill) could leave the two out
+  of step for good. An edit kept its vector's id, so a crash between its flush and its commit left
+  the old text with the new vector, which mending, comparing ids, couldn't see. A commit that
+  failed without a crash was hidden by the next write, which brought the two numbers level again.
+  The guide now gives a row a new vector id whenever its text changes, and checks the numbers as
+  each write begins. If your app follows the old guide, do the same. An edit a crash has already
+  interrupted shows only when its row is embedded again.
 
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 
