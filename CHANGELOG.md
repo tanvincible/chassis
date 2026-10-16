@@ -3,7 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.8.0...HEAD)
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.0...HEAD)
+
+## [v0.9.0](https://github.com/tanvincible/chassis/compare/v0.8.0...v0.9.0) - 17 October 2026
+
+Keep an index in step with a database, and check it.
+The file format doesn't change: v0.8.0 opens what v0.9.0 writes.
 
 ### Breaking
 
@@ -14,6 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - `user_version`: a number of yours that each flush commits with the data (#89).
 - `check()`: lists vectors no search can reach, and vectors damaged into NaN (#102).
+- Formats 3 and 4 are frozen: every later release reads them (#89).
+
+### Performance
+
+- A filtered search reads ids in ascending order in place, without copying them (#87).
+- The database guide, the skill and `chassisdb-mcp` no longer pass every id to each search (#87).
 
 ### Fixed
 
@@ -25,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
   the store now mends itself (#100).
 - `chassisdb-mcp`: a crash or a failed commit in `forget` could hide a memory until `reembed`; the
   server now mends itself, and each write flushes once, not twice (#101).
+- `chassisdb-mcp` and `langchain-chassisdb` 0.1.1 need `chassisdb` 0.9, for `user_version`.
 
 ## [v0.8.0](https://github.com/tanvincible/chassis/compare/v0.7.2...v0.8.0) - 14 October 2026
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chassisdb-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Long-term memory for coding agents on your machine, as an MCP server: text in SQLite, vectors in Chassis"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "chassisdb>=0.8",
+    "chassisdb>=0.9",
     "mcp>=2.3,<3",
     "typing_extensions>=4.12",
 ]

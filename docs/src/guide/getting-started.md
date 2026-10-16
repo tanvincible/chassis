@@ -32,7 +32,7 @@ Add Chassis to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chassisdb = "0.8"
+chassisdb = "0.9"
 ```
 
 ```rust

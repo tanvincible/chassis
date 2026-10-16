@@ -6,7 +6,7 @@ Your index is one file, and Chassis runs inside your process: no server to run, 
 
 ```toml
 [dependencies]
-chassisdb = "0.8"
+chassisdb = "0.9"
 ```
 
 ```rust,no_run
