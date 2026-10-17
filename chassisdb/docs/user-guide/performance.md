@@ -57,11 +57,11 @@ precision 7% smaller, and one of 1,536 dimensions 1%. Builds are 7 to 18% faster
 ## Many queries
 
 `search_batch(queries, k)` searches a `(count, dimensions)` array in one call and returns the ids
-and distances as two `(count, k)` arrays. `search` adds 15 to 38 µs a query on the server CPUs
-measured (checking the query, buffers, result objects), which `search_batch` pays once per batch. On
-GitHub's server runners, a batch made 1.20 to 1.42 times the queries a second of one call per query
-over a million vectors of 128 dimensions, and 1.10 to 1.13 times over 99,000 of 1,536. That is
-within 5% of the same searches from Rust (0.95 recall).
+and distances as two `(count, k)` arrays. `search` adds 13 to 26 µs a query on the server CPUs
+measured (checking the query, the call, the result objects), which `search_batch` pays once per
+batch. On GitHub's server runners on 2026-10-17, a batch made 1.12 to 1.16 times the queries a
+second of one call per query over a million vectors of 128 dimensions, and 1.00 to 1.09 times over
+99,000 of 1,536 (0.95 recall). On 2026-10-10 a batch was within 5% of the same searches from Rust.
 
 ## Batches
 
