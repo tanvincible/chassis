@@ -1,8 +1,4 @@
-"""Low-level FFI bindings to libchassis_ffi.
-
-This module provides direct ctypes bindings to the Chassis C library.
-Users should use the high-level VectorIndex class instead.
-"""
+"""ctypes bindings to the C library, under `VectorIndex`."""
 
 import ctypes
 import os
@@ -14,9 +10,7 @@ if TYPE_CHECKING:
     from chassisdb.exceptions import ChassisError
 
 
-# Determine library name based on platform
 def _get_library_name() -> str:
-    """Get the platform-specific library name."""
     system = platform.system()
     if system == "Linux":
         return "libchassis_ffi.so"
@@ -29,40 +23,24 @@ def _get_library_name() -> str:
 
 
 def _find_library() -> Path:
-    """Find the Chassis FFI library.
-
-    Search order:
-    1. CHASSIS_LIB_PATH environment variable
-    2. Next to this Python file (for development)
-    3. ../target/release (for development)
-    4. System library paths (TODO: for installed packages)
-
-    Returns:
-        Path to the library
-
-    Raises:
-        FileNotFoundError: If library cannot be found
-    """
+    """The C library: in CHASSIS_LIB_PATH, beside this file (as a wheel has it), in the
+    checkout's target/release, or on the system's library path."""
     lib_name = _get_library_name()
 
-    # 1. Environment variable
     if env_path := os.getenv("CHASSIS_LIB_PATH"):
         lib_path = Path(env_path) / lib_name
         if lib_path.exists():
             return lib_path
 
-    # 2. Next to this file
     this_dir = Path(__file__).parent
     lib_path = this_dir / lib_name
     if lib_path.exists():
         return lib_path
 
-    # 3. Development location (../../target/release from chassisdb/)
     dev_path = this_dir.parent.parent / "target" / "release" / lib_name
     if dev_path.exists():
         return dev_path
 
-    # 4. Try system paths (ctypes.util.find_library)
     from ctypes.util import find_library
 
     if lib_path_str := find_library("chassis_ffi"):
@@ -74,12 +52,10 @@ def _find_library() -> Path:
     )
 
 
-# Load the library
 _lib_path = _find_library()
 _lib = ctypes.CDLL(str(_lib_path))
 
 
-# Opaque pointer type
 class ChassisIndex(ctypes.Structure):
     """Opaque handle to a Chassis index (never accessed directly)."""
 
@@ -92,11 +68,9 @@ ChassisIndexPtr = ctypes.POINTER(ChassisIndex)
 # Function signatures. Arrays go as `array.ctypes.data`: a pointer from `data_as` costs over a
 # microsecond each, much of what a search spends outside the library.
 
-# chassis_open
 _lib.chassis_open.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
 _lib.chassis_open.restype = ChassisIndexPtr
 
-# chassis_open_with_options
 _lib.chassis_open_with_options.argtypes = [
     ctypes.c_char_p,  # path
     ctypes.c_uint32,  # dimensions
@@ -106,7 +80,6 @@ _lib.chassis_open_with_options.argtypes = [
 ]
 _lib.chassis_open_with_options.restype = ChassisIndexPtr
 
-# chassis_open_with_metric
 _lib.chassis_open_with_metric.argtypes = [
     ctypes.c_char_p,  # path
     ctypes.c_uint32,  # dimensions
@@ -117,7 +90,6 @@ _lib.chassis_open_with_metric.argtypes = [
 ]
 _lib.chassis_open_with_metric.restype = ChassisIndexPtr
 
-# chassis_open_with_precision
 _lib.chassis_open_with_precision.argtypes = [
     ctypes.c_char_p,  # path
     ctypes.c_uint32,  # dimensions
@@ -129,7 +101,6 @@ _lib.chassis_open_with_precision.argtypes = [
 ]
 _lib.chassis_open_with_precision.restype = ChassisIndexPtr
 
-# chassis_open_reader
 _lib.chassis_open_reader.argtypes = [
     ctypes.c_char_p,  # path
     ctypes.c_uint32,  # dimensions
@@ -138,11 +109,9 @@ _lib.chassis_open_reader.argtypes = [
 ]
 _lib.chassis_open_reader.restype = ChassisIndexPtr
 
-# chassis_free
 _lib.chassis_free.argtypes = [ChassisIndexPtr]
 _lib.chassis_free.restype = None
 
-# chassis_add
 _lib.chassis_add.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,
@@ -150,7 +119,6 @@ _lib.chassis_add.argtypes = [
 ]
 _lib.chassis_add.restype = ctypes.c_uint64
 
-# chassis_add_with_id
 _lib.chassis_add_with_id.argtypes = [
     ChassisIndexPtr,
     ctypes.c_uint64,
@@ -159,7 +127,6 @@ _lib.chassis_add_with_id.argtypes = [
 ]
 _lib.chassis_add_with_id.restype = ctypes.c_int
 
-# chassis_add_batch
 _lib.chassis_add_batch.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,  # vectors, count * dim, row-major
@@ -169,7 +136,6 @@ _lib.chassis_add_batch.argtypes = [
 ]
 _lib.chassis_add_batch.restype = ctypes.c_size_t
 
-# chassis_add_batch_with_ids
 _lib.chassis_add_batch_with_ids.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,  # ids
@@ -179,11 +145,9 @@ _lib.chassis_add_batch_with_ids.argtypes = [
 ]
 _lib.chassis_add_batch_with_ids.restype = ctypes.c_int
 
-# chassis_delete
 _lib.chassis_delete.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
 _lib.chassis_delete.restype = ctypes.c_int
 
-# chassis_search
 _lib.chassis_search.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,
@@ -194,7 +158,6 @@ _lib.chassis_search.argtypes = [
 ]
 _lib.chassis_search.restype = ctypes.c_size_t
 
-# chassis_search_filtered
 _lib.chassis_search_filtered.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,
@@ -207,7 +170,6 @@ _lib.chassis_search_filtered.argtypes = [
 ]
 _lib.chassis_search_filtered.restype = ctypes.c_size_t
 
-# chassis_search_excluding
 _lib.chassis_search_excluding.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,
@@ -220,7 +182,6 @@ _lib.chassis_search_excluding.argtypes = [
 ]
 _lib.chassis_search_excluding.restype = ctypes.c_size_t
 
-# chassis_search_batch
 _lib.chassis_search_batch.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,  # queries
@@ -232,27 +193,21 @@ _lib.chassis_search_batch.argtypes = [
 ]
 _lib.chassis_search_batch.restype = ctypes.c_size_t
 
-# chassis_flush
 _lib.chassis_flush.argtypes = [ChassisIndexPtr]
 _lib.chassis_flush.restype = ctypes.c_int
 
-# chassis_rollback
 _lib.chassis_rollback.argtypes = [ChassisIndexPtr]
 _lib.chassis_rollback.restype = ctypes.c_int
 
-# chassis_compact
 _lib.chassis_compact.argtypes = [ChassisIndexPtr]
 _lib.chassis_compact.restype = ctypes.c_int
 
-# chassis_use_huge_pages
 _lib.chassis_use_huge_pages.argtypes = [ChassisIndexPtr]
 _lib.chassis_use_huge_pages.restype = ctypes.c_int
 
-# chassis_warm
 _lib.chassis_warm.argtypes = [ChassisIndexPtr]
 _lib.chassis_warm.restype = ctypes.c_int
 
-# chassis_get
 _lib.chassis_get.argtypes = [
     ChassisIndexPtr,
     ctypes.c_uint64,
@@ -261,15 +216,12 @@ _lib.chassis_get.argtypes = [
 ]
 _lib.chassis_get.restype = ctypes.c_int
 
-# chassis_contains
 _lib.chassis_contains.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
 _lib.chassis_contains.restype = ctypes.c_int
 
-# chassis_ids
 _lib.chassis_ids.argtypes = [ChassisIndexPtr, ctypes.c_void_p, ctypes.c_size_t]
 _lib.chassis_ids.restype = ctypes.c_size_t
 
-# chassis_check
 _lib.chassis_check.argtypes = [
     ChassisIndexPtr,
     ctypes.c_void_p,
@@ -278,58 +230,41 @@ _lib.chassis_check.argtypes = [
 ]
 _lib.chassis_check.restype = ctypes.c_size_t
 
-# chassis_deleted_count
 _lib.chassis_deleted_count.argtypes = [ChassisIndexPtr]
 _lib.chassis_deleted_count.restype = ctypes.c_uint64
 
-# chassis_user_version, chassis_set_user_version
 _lib.chassis_user_version.argtypes = [ChassisIndexPtr]
 _lib.chassis_user_version.restype = ctypes.c_uint64
 _lib.chassis_set_user_version.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
 _lib.chassis_set_user_version.restype = ctypes.c_int
 
-# chassis_len
 _lib.chassis_len.argtypes = [ChassisIndexPtr]
 _lib.chassis_len.restype = ctypes.c_uint64
 
-# chassis_is_empty
 _lib.chassis_is_empty.argtypes = [ChassisIndexPtr]
 _lib.chassis_is_empty.restype = ctypes.c_int
 
-# chassis_dimensions
 _lib.chassis_dimensions.argtypes = [ChassisIndexPtr]
 _lib.chassis_dimensions.restype = ctypes.c_uint32
 
-# chassis_metric
 _lib.chassis_metric.argtypes = [ChassisIndexPtr]
 _lib.chassis_metric.restype = ctypes.c_int
 
-# chassis_precision
 _lib.chassis_precision.argtypes = [ChassisIndexPtr]
 _lib.chassis_precision.restype = ctypes.c_int
 
-# chassis_last_error_message
 _lib.chassis_last_error_message.argtypes = []
 _lib.chassis_last_error_message.restype = ctypes.c_char_p
 
-# chassis_last_error_code
 _lib.chassis_last_error_code.argtypes = []
 _lib.chassis_last_error_code.restype = ctypes.c_int
 
-# chassis_version
 _lib.chassis_version.argtypes = []
 _lib.chassis_version.restype = ctypes.c_char_p
 
 
-# Helper functions
-
-
 def get_last_error() -> str | None:
-    """Get the last error message from the Chassis library.
-
-    Returns:
-        Error message string, or None if no error
-    """
+    """The last error message on this thread, or None."""
     err_ptr: bytes | None = _lib.chassis_last_error_message()
     if err_ptr:
         return err_ptr.decode("utf-8")
@@ -344,16 +279,11 @@ def last_error(default: str) -> "ChassisError":
 
 
 def get_version() -> str:
-    """Get the Chassis library version.
-
-    Returns:
-        Version string (e.g., "0.1.0")
-    """
+    """The C library's version, such as "0.9.1"."""
     version_ptr: bytes = _lib.chassis_version()
     return version_ptr.decode("utf-8")
 
 
-# Export public interface
 __all__ = [
     "_lib",
     "ChassisIndex",
