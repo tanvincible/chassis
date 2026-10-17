@@ -202,6 +202,9 @@ _lib.chassis_rollback.restype = ctypes.c_int
 _lib.chassis_compact.argtypes = [ChassisIndexPtr]
 _lib.chassis_compact.restype = ctypes.c_int
 
+_lib.chassis_backup.argtypes = [ChassisIndexPtr, ctypes.c_char_p]
+_lib.chassis_backup.restype = ctypes.c_int
+
 _lib.chassis_use_huge_pages.argtypes = [ChassisIndexPtr]
 _lib.chassis_use_huge_pages.restype = ctypes.c_int
 

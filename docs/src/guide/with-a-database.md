@@ -161,6 +161,12 @@ def mend():
     return len(held - rows.keys()), len(missing)
 ```
 
+## Backups
+
+Back up each store with its own tool, SQLite's `.backup` and the index's `backup()`, at whatever
+moment suits: they needn't match. After restoring both, `check` finds the numbers differ and `mend`
+closes the gap, as after a crash.
+
 ## Other processes
 
 Processes that only search open the index with `read_only=True` (Python), `IndexReader` (Rust)

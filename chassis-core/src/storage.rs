@@ -1118,6 +1118,42 @@ impl Storage {
         self.state.user_version = version;
     }
 
+    /// The checksum and sequence words of both header copies, which every header written changes.
+    pub(crate) fn header_words(&self) -> [u64; 4] {
+        HEADER_WORDS.map(|at| self.headers.u64_at(at).load(Ordering::Acquire))
+    }
+
+    /// Copies the file, as it is now, into `out`.
+    pub(crate) fn copy_into(&self, out: &mut File) -> Result<()> {
+        let mut file = &self.file;
+        file.seek(SeekFrom::Start(0))?;
+        std::io::copy(&mut file, out)?;
+        Ok(())
+    }
+
+    /// Copies the file to `temp`, then its undo file, if there is one, to `<temp>.undo`, and says
+    /// whether the copies hold one commit (ADR-0024): no header was written meanwhile and the file
+    /// is still the one at `path`. If so, opening the copy as a writer recovers exactly that
+    /// commit. A writer saves a list to the undo file before it changes it, so the undo file,
+    /// copied second, holds every list the copy caught changed, and only a commit or a rollback,
+    /// which both write a header, takes the undo file away.
+    pub(crate) fn copy_commit(&self, path: &Path, temp: &Path) -> Result<bool> {
+        let before = self.header_words();
+        self.copy_into(&mut File::create(temp)?)?;
+        #[cfg(test)]
+        BETWEEN_COPIES.with(|hook| hook.borrow_mut().as_mut().map(|hook| hook()));
+        let undo = sibling(temp, "undo");
+        match File::open(sibling(path, "undo")) {
+            Ok(mut saved) => {
+                std::io::copy(&mut saved, &mut File::create(&undo)?)?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => remove_if_present(&undo)?,
+            Err(e) => return Err(e.into()),
+        }
+        fence(Ordering::SeqCst);
+        Ok(self.header_words() == before && self.is_at(path)?)
+    }
+
     /// Lets readers route through slots below `count`, once their nodes and backlinks are written.
     pub(crate) fn publish_routing(&self, count: u64) {
         self.headers.u64_at(LIVE_ROUTING).store(count, Ordering::Release);
@@ -1587,6 +1623,11 @@ impl Storage {
         }
         if !restored.is_empty() {
             // Before the file goes: a power loss must not take the saved lists and keep the links.
+            self.sync()?;
+            // The commit's header again, so a backup copying the file meanwhile sees a header
+            // change and starts over: its copy may hold lists from before, and no undo file.
+            let header = self.committed.clone();
+            self.write_header(&header);
             self.sync()?;
         }
         // If it can't be removed it is applied again, to no effect, or no longer matches.
@@ -2070,6 +2111,63 @@ pub(crate) fn sync_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Runs in `copy_commit` between its two copies, for tests to change the index there.
+    pub(crate) static BETWEEN_COPIES: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Puts a backup of the index at `index` at `dest`: `fill` writes it at `<dest>.partial`, which
+/// then replaces `dest`, so a crash never leaves half a backup under its name.
+pub(crate) fn write_backup(
+    index: &Path,
+    dest: &Path,
+    fill: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    if same_file(index, dest) || same_file(&sibling(index, "undo"), dest) {
+        fail!(
+            InvalidArgument,
+            "The backup's path, {}, is the index's own file\nhelp: pass another path for the backup",
+            dest.display()
+        );
+    }
+    let temp = sibling(dest, "partial");
+    let written = fill(&temp).and_then(|()| {
+        // Windows syncs only through a handle that may write.
+        OpenOptions::new().write(true).open(&temp)?.sync_all()?;
+        // A writer opening the backup would apply an undo file left beside it to it.
+        remove_if_present(&sibling(dest, "undo"))?;
+        rename_over(&temp, dest)
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+        let _ = std::fs::remove_file(sibling(&temp, "undo"));
+    }
+    written
+}
+
+/// Whether `a` and `b` are one file, or would be once `b` is created.
+fn same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+        use std::os::unix::fs::MetadataExt;
+        return (a.dev(), a.ino()) == (b.dev(), b.ino());
+    }
+    let full = |p: &Path| {
+        let dir = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        Some(std::fs::canonicalize(dir).ok()?.join(p.file_name()?))
+    };
+    full(a).is_some_and(|a| Some(a) == full(b))
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
 /// Renames `temp` over `path` and makes the rename durable. On Windows nothing may have `path`
 /// open, this process included.
 #[cfg(unix)]
@@ -2090,10 +2188,13 @@ pub(crate) fn rename_over(temp: &Path, path: &Path) -> Result<()> {
     let flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
     // SAFETY: both paths are NUL-terminated wide strings that outlive the call.
     if unsafe { MoveFileExW(wide(temp).as_ptr(), wide(path).as_ptr(), flags) } == 0 {
-        return Err(std::io::Error::last_os_error()).context(
-            "Another process has the index open, so Windows won't let its file be replaced\n\
-                 help: close the readers in other processes, then compact again",
-        );
+        return Err(std::io::Error::last_os_error()).with_context(|| {
+            format!(
+                "A process has {} open, so Windows won't let it be replaced\nhelp: close it \
+                 there, in this process or another, then try again",
+                path.display()
+            )
+        });
     }
     Ok(())
 }

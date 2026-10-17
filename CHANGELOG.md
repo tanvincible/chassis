@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.1...HEAD)
 
+### Added
+
+- `backup(path)`: a copy of the index, from its writer or, while it writes, from a reader (#116).
+
 ### Performance
 
 - Python `search` spends half as long outside the library, and `get` 30% less (#109).

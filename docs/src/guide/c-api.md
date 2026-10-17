@@ -341,6 +341,19 @@ that, later flushes fail too: close the index and open it again.
 
 **Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
 
+#### `chassis_backup`
+```c
+int chassis_backup(ChassisIndex* index, const char* path);
+```
+Write a copy of the index to `path`. From a writer's handle it flushes first, and the backup holds
+every add and delete so far. From a reader's handle it holds the writer's last flush, taken while
+the writer keeps writing: it starts over if a flush lands during the copy, and gives up after five
+tries. The copy is renamed into place once whole, replacing a file already at `path`. Returns `0`,
+or `-1` for a NULL or non-UTF-8 path, the index's own file, a copy that can't be written, or a
+reader whose writer flushed during every try.
+
+**Thread Safety**: Safe from any thread; from a writer's handle it runs as a write does
+
 #### `chassis_compact`
 ```c
 int chassis_compact(ChassisIndex* index);

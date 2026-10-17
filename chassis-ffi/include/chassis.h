@@ -606,6 +606,34 @@ int chassis_flush(struct ChassisIndex *ptr);
 int chassis_rollback(struct ChassisIndex *ptr);
 
 /**
+ * Write a copy of the index to `path` (ADR-0024)
+ *
+ * From a writer's handle it flushes first, and the backup holds every add and delete so far. From
+ * a reader's handle it holds the writer's last flush, taken while the writer keeps writing: it
+ * copies the file, then the undo file beside it, and starts over if a flush lands meanwhile, a few
+ * times before it gives up. The copy is written beside `path` and renamed over it once whole, so a
+ * crash never leaves half a backup there; a file already at `path` is replaced. Restore a backup
+ * by copying it into place while nothing has the index open.
+ *
+ * # Returns
+ *
+ * - 0 on success
+ * - -1 on failure (check `chassis_last_error_message()`): `path` is NULL, not UTF-8 or the
+ *   index's own file, the copy can't be written, or, from a reader, a flush landed during every
+ *   try
+ *
+ * # Thread Safety
+ *
+ * Safe from any thread. From a writer's handle it runs as a write does; searches wait for it.
+ *
+ * # Safety
+ *
+ * - `ptr` must be NULL or a live handle
+ * - `path` must be NULL or a NUL-terminated string
+ */
+int chassis_backup(struct ChassisIndex *ptr, const char *path);
+
+/**
  * Ask the operating system to keep the index's vectors on huge pages
  *
  * On an index too large for the CPU's caches, searches are up to a quarter faster and batch

@@ -673,6 +673,34 @@ class TestCompact:
         index.close()
 
 
+class TestBackup:
+    """A copy of the index, from its writer or from a reader beside it (ADR-0024)."""
+
+    def test_backup_from_the_writer_and_from_a_reader(self, tmp_path):
+        path = tmp_path / "i.chassis"
+        index = VectorIndex(path, dimensions=8)
+        vectors = np.random.default_rng(5).random((200, 8), dtype=np.float32)
+        index.add_batch(vectors[:150])
+        index.flush()
+        index.add_batch(vectors[150:])
+        reader = VectorIndex(path, dimensions=8, read_only=True)
+        reader.backup(tmp_path / "reader.chassis")
+        index.backup(str(tmp_path / "writer.chassis"))
+        # The reader's holds the last flush; the writer flushes first.
+        for name, count in [("reader.chassis", 150), ("writer.chassis", 200)]:
+            with VectorIndex(tmp_path / name, dimensions=8) as copy:
+                assert len(copy) == count
+                assert copy.search(vectors[count - 1], k=1)[0].id == count - 1
+        reader.close()
+        index.close()
+
+    def test_a_backup_onto_the_index_itself_is_refused(self, tmp_path):
+        path = tmp_path / "i.chassis"
+        with VectorIndex(path, dimensions=8) as index:
+            with pytest.raises(InvalidArgumentError, match="the index's own file"):
+                index.backup(path)
+
+
 class TestUserVersion:
     """The application's number, committed with the data (ADR-0023)."""
 
