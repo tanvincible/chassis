@@ -3,12 +3,13 @@
 import hashlib
 import re
 import runpy
+import sqlite3
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from chassisdb import VectorIndex
+from chassisdb import InvalidArgumentError, VectorIndex
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "chassis" / "skills" / "chassis" / "SKILL.md"
@@ -67,6 +68,23 @@ def _in_step(page):
         assert np.allclose(held / np.linalg.norm(held), made / np.linalg.norm(made), atol=1e-5)
 
 
+class _BusyCommit:
+    """A connection whose first COMMIT fails and leaves the transaction open, as SQLite's does
+    while a reader holds the database."""
+
+    def __init__(self, db):
+        self.db, self.busy = db, True
+
+    def execute(self, sql, *args):
+        if sql == "COMMIT" and self.busy:
+            self.busy = False
+            raise sqlite3.OperationalError("database is locked")
+        return self.db.execute(sql, *args)
+
+    def __getattr__(self, name):
+        return getattr(self.db, name)
+
+
 def test_the_database_guide_survives_what_it_says_a_crash_leaves(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     page = _guide()
@@ -101,11 +119,33 @@ def test_the_database_guide_survives_what_it_says_a_crash_leaves(tmp_path, monke
     _in_step(page)
     assert {text for _, text in page["search"]("fruit", k=10)} == {"apples", "pears", "plums"}
 
+    # An edit whose add the index refuses after its delete ran, then the app's next write: the
+    # rows roll back, and the index has to as well, or that write's flush commits the delete.
+    page["embed"] = lambda texts: np.zeros((len(texts), 384), np.float32)  # Cosine refuses these
+    with pytest.raises(InvalidArgumentError):
+        page["edit_note"](apples, "nothing")
+    page["embed"] = _embed
+    page["add_notes"](["figs"])
+    _in_step(page)
+
+    # A delete whose COMMIT fails and leaves its transaction open, as a busy reader can make it.
+    db = page["db"] = _BusyCommit(page["db"])
+    with pytest.raises(sqlite3.OperationalError):
+        page["delete_note"](pears)
+    page["db"] = db.db
+    page["add_notes"](["kiwis"])
+    _in_step(page)
+
     # Edits and deletes that commit.
     page["edit_note"](apples, "apricots")
     page["delete_note"](pears)
     _in_step(page)
-    assert {text for _, text in page["search"]("fruit", k=10)} == {"apricots", "plums"}
+    assert {text for _, text in page["search"]("fruit", k=10)} == {
+        "apricots",
+        "plums",
+        "figs",
+        "kiwis",
+    }
 
 
 def test_recipes_run_one_after_another(tmp_path, monkeypatch):

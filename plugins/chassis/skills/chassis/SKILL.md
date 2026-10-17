@@ -95,7 +95,8 @@ reader.close()
   `precision` and `max_connections`; a mismatch raises an error saying which to pass. A new
   embedding model means a new index file.
 - **Durability**: adds and deletes are saved by `flush()`. `close()`, garbage collection and a crash
-  discard what wasn't flushed; leaving a `with` block flushes unless an exception is leaving it.
+  discard what wasn't flushed, and so does `rollback()`, which keeps the index open; leaving a
+  `with` block flushes unless an exception is leaving it.
 - **One writer per file.** A second writer gets `IndexLockedError` at once. Readers
   (`read_only=True`) take no lock, in any number of processes.
 - **Ids** are ints from 0 to 2**64 - 2. `add` without an id takes one past the largest so far and
@@ -105,7 +106,8 @@ reader.close()
   largest, whenever its text changes: an id must never stand for two texts, or a crash during an
   edit leaves a stale vector nothing can find. Flush the index inside the database transaction,
   before committing, with `index.user_version` set to a write counter kept in the same
-  transaction. Compare the two numbers on open and as each write begins, and `mend()` (compare
+  transaction; if the transaction rolls back, call `index.rollback()` too, or the next flush
+  commits what the failed write did to the index. Compare the two numbers on open and as each write begins, and `mend()` (compare
   the two sets of ids) when they differ. Search, then join the hits to their rows by vector id,
   dropping any without a row. Pass `allowed=` only for a real filter, in id order, never every
   row's id. The guide, with what a crash leaves:

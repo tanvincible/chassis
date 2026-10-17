@@ -5,6 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.0...HEAD)
 
+### Added
+
+- `rollback()`: discards every add, delete and `user_version` since the last flush, and keeps the
+  lock (#107).
+
+### Fixed
+
+- Database guide, skill and `langchain-chassisdb`: a write that failed before its flush left its
+  changes in the index for the next flush, which could hide a row for good; they now roll back
+  (#107).
+- `langchain-chassisdb`: after such a failed add, every later add failed with `IdInUseError` (#107).
+- Database guide, `langchain-chassisdb` and `chassisdb-mcp`: a `COMMIT` that failed and stayed open
+  stopped every later write (#107).
+
 ## [v0.9.0](https://github.com/tanvincible/chassis/compare/v0.8.0...v0.9.0) - 17 October 2026
 
 Keep an index in step with a database, and check it.

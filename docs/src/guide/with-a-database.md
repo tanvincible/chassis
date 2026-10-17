@@ -41,8 +41,9 @@ def new_vector_ids(n):
 
 Each write changes the rows in a transaction, changes the index, `flush()`es it, and only then
 commits. It also counts itself in `sync` and gives the index the same number as its
-`user_version`, which the flush commits with the vectors. `writing()` does all of that around
-a write's own changes:
+`user_version`, which the flush commits with the vectors. If any of it fails, the commit too, it
+rolls back the transaction and then the index: what the write did to the index would otherwise
+wait there for the next write's flush. `writing()` does all of that around a write's own changes:
 
 ```python
 @contextmanager
@@ -55,10 +56,12 @@ def writing():
         db.execute("UPDATE sync SET version = version + 1")
         index.user_version = db.execute("SELECT version FROM sync").fetchone()[0]
         index.flush()
+        db.execute("COMMIT")
     except BaseException:
-        db.execute("ROLLBACK")
+        if db.in_transaction:  # A failed COMMIT, as a busy reader can cause, leaves it open
+            db.execute("ROLLBACK")
+        index.rollback()
         raise
-    db.execute("COMMIT")
 
 
 def add_notes(texts):

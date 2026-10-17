@@ -111,5 +111,5 @@ Compact it to drop deleted vectors, or split the vectors across indexes.
 ## Input or output
 
 The operating system refused: no permission, a read-only or full disk, a failed read or write.
-The message ends with the system's own words. An earlier flush that failed makes later ones
-refuse too, since what reached the disk is unknown: open the index again.
+The message ends with the system's own words. An earlier flush or rollback that failed makes later
+flushes refuse too, since what reached the disk is unknown: open the index again.

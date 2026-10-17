@@ -855,6 +855,26 @@ impl Storage {
         Ok(storage)
     }
 
+    /// The file as opening it again finds it (`VectorIndex::rollback`), through a second handle
+    /// to this one's file, so the lock is never let go. After an error, later commits fail: the
+    /// undo file's lists may be back already, and the file gone.
+    pub(crate) fn reopened(&mut self, path: &Path) -> Result<Self> {
+        let reopened = self.file.try_clone().map_err(Into::into).and_then(|file| {
+            let headers = Region::map(&file, 0, REGIONS_START as usize, true)?;
+            Self::load(file, headers, self.state.dims, path)
+        });
+        match reopened {
+            Ok(mut reopened) => {
+                reopened._replaced = self._replaced.take();
+                Ok(reopened)
+            }
+            Err(e) => {
+                self.poisoned = true;
+                Err(e)
+            }
+        }
+    }
+
     /// Maps every region the header counts, plus, in a reader, those the live page shows.
     fn map_regions(&mut self, live: Option<[u64; 4]>) -> Result<()> {
         let g = self.geometry;
@@ -1664,8 +1684,7 @@ impl Storage {
         self.commit_deleting(&[])
     }
 
-    /// Makes every later commit fail: this file is no longer the index.
-    #[cfg(windows)]
+    /// Makes every later commit fail: this file is no longer the index, or a rollback failed.
     pub(crate) fn poison(&mut self) {
         self.poisoned = true;
     }
@@ -1681,8 +1700,9 @@ impl Storage {
         if self.poisoned {
             fail!(
                 Io,
-                "An earlier flush failed, so what reached the disk is unknown and later flushes \
-                 are refused\nhelp: open the index again; it recovers to its last good flush"
+                "An earlier flush or rollback failed, so what reached the disk is unknown and \
+                 later flushes are refused\nhelp: open the index again; it recovers to its last \
+                 good flush"
             );
         }
         let result = self.commit_inner(deletes);

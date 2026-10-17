@@ -232,13 +232,18 @@ impl VectorIndex {
         let _ = std::fs::remove_file(storage::sibling(&path, "compacting"));
         let (ids, building) = (OnceLock::new(), Mutex::new(()));
         let mut index = Self { graph, ml: params.ml, options, ids, building, path };
-        if index.options.huge_pages {
-            index.use_huge_pages();
-        }
-        if index.options.warm {
-            index.warm();
-        }
+        index.apply_options();
         Ok(index)
+    }
+
+    /// What `huge_pages` and `warm` ask of a newly opened file.
+    fn apply_options(&mut self) {
+        if self.options.huge_pages {
+            self.use_huge_pages();
+        }
+        if self.options.warm {
+            self.warm();
+        }
     }
 
     /// Add a vector and return the id assigned to it: one past the largest id used so far.
@@ -632,6 +637,24 @@ impl VectorIndex {
         Ok(self.graph.commit()?)
     }
 
+    /// Discards every add, delete and `user_version` since the last flush, as closing the index
+    /// and opening it again would, without letting go of the writer's lock. Call it where a
+    /// write's transaction in your own store rolls back, before the next flush commits what that
+    /// write left.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file can't be read or synced. Later flushes then fail: close the
+    /// index and open it again, which recovers it to its last flush.
+    pub fn rollback(&mut self) -> Result<()> {
+        let storage = self.graph.storage.reopened(&self.path)?;
+        let graph = HnswGraph::open_no_reset(storage, hnsw_params(&self.options));
+        self.graph = graph.inspect_err(|_| self.graph.storage.poison())?;
+        self.ids = OnceLock::new();
+        self.apply_options();
+        Ok(())
+    }
+
     /// Rewrites the index without its deleted vectors and with a newly built graph, then replaces
     /// the file with the copy (ADR-0011). Ids don't change. Like `flush`, it makes every add and
     /// delete so far durable. It takes as long as building the index, on every core, and needs
@@ -803,6 +826,7 @@ impl VectorIndex {
     /// until you set one. The next `flush` commits it with the data (ADR-0023), so after a crash
     /// it says which flush the index holds. Keep the same number in your own store, in the
     /// transaction that `flush` sits in, and compare the two on open and as each write begins.
+    /// It is the number last set, flushed or not; `rollback` sets it back to the flushed one.
     pub fn user_version(&self) -> u64 {
         self.graph.storage.user_version()
     }
@@ -988,13 +1012,16 @@ fn unreachable(graph: &HnswGraph) -> Result<Vec<u64>> {
     let count = graph.node_count();
     let mut reached = vec![false; count as usize];
     let mut next: Vec<u64> = graph.entry_point.into_iter().collect();
+    next.iter().for_each(|&slot| reached[slot as usize] = true);
     while let Some(slot) = next.pop() {
-        // A link past the count is one a crash left; search passes it by as well.
-        if slot >= count || std::mem::replace(&mut reached[slot as usize], true) {
-            continue;
-        }
         for layer in 0..graph.storage.layer_count(slot)? {
-            next.extend(graph.neighbors_iter_from_mmap(slot, layer)?);
+            for neighbor in graph.neighbors_iter_from_mmap(slot, layer)? {
+                // A link past the count is one a crash left; search passes it by as well. Marked
+                // when found, so each slot waits in `next` once at most.
+                if neighbor < count && !std::mem::replace(&mut reached[neighbor as usize], true) {
+                    next.push(neighbor);
+                }
+            }
         }
     }
     let mut ids = Vec::new();
@@ -1452,6 +1479,151 @@ mod tests {
         drop(index);
         let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
         assert_eq!(lists(&index), flushed);
+    }
+
+    #[test]
+    fn test_a_rollback_leaves_what_a_reopen_would_and_keeps_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let (mut index, committed) = index_with_unflushed_adds(&path);
+        index.add_with_id(5000, &random_vector(5000)).unwrap();
+        assert!(index.delete(5).unwrap());
+        index.set_user_version(7);
+        index.rollback().unwrap();
+        assert_eq!(lists(&index), committed);
+        assert_eq!((index.len(), index.deleted_count(), index.user_version()), (300, 0, 0));
+        assert!(index.contains(5).unwrap() && !index.contains(5000).unwrap());
+        assert!(!storage::sibling(&path, "undo").exists());
+        let second = VectorIndex::open(&path, 16, IndexOptions::default());
+        assert_eq!(second.unwrap_err().kind(), ErrorKind::Locked);
+
+        // It writes on from the flush, as a reopened index would.
+        assert_eq!(index.add(&random_vector(300)).unwrap(), 300);
+        index.flush().unwrap();
+        let flushed = lists(&index);
+        drop(index);
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(lists(&index), flushed);
+        assert_eq!(index.len(), 301);
+        assert!(index.check().unwrap().is_ok());
+    }
+
+    #[test]
+    fn test_a_rollback_forgets_the_ids_given_since_the_flush() {
+        let file = NamedTempFile::new().unwrap();
+        let mut index = VectorIndex::open(file.path(), 16, IndexOptions::default()).unwrap();
+        index.add_with_id(10, &random_vector(10)).unwrap();
+        index.flush().unwrap();
+        index.add_with_id(20, &random_vector(20)).unwrap();
+        index.rollback().unwrap();
+        assert!(!index.contains(20).unwrap());
+        assert_eq!(index.add(&random_vector(11)).unwrap(), 11, "the next id is past 10, not 20");
+    }
+
+    /// Random writes, some flushed, then a rollback: it must find what opening a copy of the
+    /// file and its undo file, as a crash leaves them, finds.
+    #[test]
+    fn test_a_rollback_finds_what_opening_after_a_crash_finds() {
+        for seed in 1..=40u64 {
+            let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            let mut rng = move |n: u64| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x % n
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("a.chassis");
+            let mut options = IndexOptions::default();
+            if seed % 3 == 0 {
+                options.metric = DistanceMetric::Cosine;
+            }
+            if seed % 4 == 0 {
+                options.precision = Precision::Half;
+            }
+            let mut index = VectorIndex::open(&path, 16, options.clone()).unwrap();
+            let (custom, mut next) = (seed % 2 == 0, 0u64);
+            let mut write = |index: &mut VectorIndex, rng: &mut dyn FnMut(u64) -> u64| {
+                let vector = |id: u64| random_vector(id + seed * 7919);
+                match rng(10) {
+                    0..=3 => {
+                        let ids: Vec<u64> = (0..1 + rng(40)).map(|i| next + i * 3).collect();
+                        let flat: Vec<f32> = ids.iter().flat_map(|&id| vector(id)).collect();
+                        next = if custom {
+                            index.add_batch_with_ids(&ids, &flat).unwrap();
+                            ids[ids.len() - 1] + 3
+                        } else {
+                            index.add_batch(&flat).unwrap().last().unwrap() + 1
+                        };
+                    }
+                    4..=5 if custom => {
+                        index.add_with_id(next, &vector(next)).unwrap();
+                        next += 2;
+                    }
+                    4..=5 => next = index.add(&vector(next)).unwrap() + 1,
+                    6..=8 => {
+                        let ids = index.ids().unwrap();
+                        if !ids.is_empty() {
+                            index.delete(ids[rng(ids.len() as u64) as usize]).unwrap();
+                        }
+                    }
+                    _ => index.set_user_version(rng(1000)),
+                }
+            };
+            for _ in 0..rng(12) {
+                write(&mut index, &mut rng);
+            }
+            index.flush().unwrap();
+            if seed % 5 == 0 {
+                index.compact().unwrap();
+            }
+            for _ in 0..rng(20) {
+                write(&mut index, &mut rng);
+            }
+            if seed % 7 == 0 {
+                index.flush().unwrap();
+                for _ in 0..rng(10) {
+                    write(&mut index, &mut rng);
+                }
+            }
+            let crashed = dir.path().join("b.chassis");
+            std::fs::copy(&path, &crashed).unwrap();
+            let undo = storage::sibling(&path, "undo");
+            if undo.exists() {
+                std::fs::copy(&undo, storage::sibling(&crashed, "undo")).unwrap();
+            }
+            index.rollback().unwrap();
+            if seed % 6 == 0 {
+                index.rollback().unwrap();
+            }
+            let state = |index: &VectorIndex| {
+                let mut ids = index.ids().unwrap();
+                ids.sort_unstable();
+                let vectors: Vec<_> = ids.iter().map(|&id| index.get(id).unwrap()).collect();
+                let found: Vec<Vec<u64>> = (0..5u64)
+                    .map(|q| {
+                        let hits = index.search(&random_vector(q + 100_000), 10).unwrap();
+                        hits.iter().map(|hit| hit.id).collect()
+                    })
+                    .collect();
+                let graph = &index.graph;
+                let shape = (graph.entry_point, graph.max_layer, graph.custom_ids);
+                let counts = (index.len(), index.deleted_count(), index.user_version());
+                format!("{:?}", (lists(index), ids, vectors, found, shape, counts, index.check()))
+            };
+            let reopened = VectorIndex::open(&crashed, 16, options.clone()).unwrap();
+            assert_eq!(state(&index), state(&reopened), "seed {seed}");
+            drop(reopened);
+
+            // Writes go on from there, and a crash after more of them rolls back to the same.
+            let committed = lists(&index);
+            for _ in 0..1 + rng(15) {
+                write(&mut index, &mut rng);
+            }
+            drop(index);
+            let index = VectorIndex::open(&path, 16, options).unwrap();
+            assert_eq!(lists(&index), committed, "seed {seed}, after a crash");
+        }
     }
 
     #[test]

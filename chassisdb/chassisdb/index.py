@@ -732,6 +732,26 @@ class VectorIndex:
         if _ffi._lib.chassis_flush(self._ptr) != 0:
             raise _ffi.last_error("The flush failed")
 
+    def rollback(self) -> None:
+        """Discard every add, delete and user_version since the last flush.
+
+        As closing the index and opening it again would, without letting go
+        of the writer's lock. Call it where a write's transaction in your
+        own store rolls back, before the next flush commits what that write
+        left.
+
+        Raises:
+            ChassisError: If the file can't be read or synced. Later flushes
+                then fail too: close the index and open it again, which
+                recovers it to its last flush
+
+        Thread Safety:
+            Safe from any thread; writes run one at a time.
+        """
+        self._check_writable("roll back")
+        if _ffi._lib.chassis_rollback(self._ptr) != 0:
+            raise _ffi.last_error("The rollback failed")
+
     def warm(self) -> None:
         """Start reading the whole index into memory on another thread.
 
@@ -794,8 +814,10 @@ class VectorIndex:
         data, so after a crash it says which flush the index holds: keep
         the same number in your own store, in the transaction the flush
         sits in, and compare the two on open and as each write begins.
-        Until that flush, a crash leaves the number flushed before. A
-        read_only index reports the one in its newest snapshot.
+        The writer reports the number last set, flushed or not: until a
+        flush, a crash leaves the number flushed before, and rollback()
+        sets it back to that one. A read_only index reports the one in its
+        newest snapshot.
 
         Raises:
             ReadOnlyError: On setting it in a read_only index

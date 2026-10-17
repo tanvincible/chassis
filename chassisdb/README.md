@@ -200,6 +200,12 @@ to match); any number can search while one writer writes, in this process or oth
   Make every add and delete so far durable. It waits for the disk, so call it after a batch of
   changes, not after each one.
 
+- **`rollback() -> None`**  
+  Discard every add, delete and `user_version` since the last `flush()`, as closing the index and
+  opening it again would, without letting go of the writer's lock. Call it where a write's
+  transaction in your own store rolls back, or the next flush commits what that write did to the
+  index. If it raises, later flushes fail too: close the index and open it again.
+
 - **`warm() -> None`**  
   Read the index into memory on another thread, so that searches stop waiting for the disk while
   its file is not in memory yet, as after a reboot. Returns at once; searches go on meanwhile.
@@ -226,8 +232,9 @@ to match); any number can search while one writer writes, in this process or oth
   Your application's number for the index, 0 until you set one, like SQLite's `user_version`.
   The next `flush()` commits it with the data, so after a crash it says which flush the index
   holds: keep the same number in your own store, in the transaction the flush sits in, and
-  compare the two on open and as each write begins. A `read_only=True` index reports its newest
-  snapshot's; setting it there raises `ReadOnlyError`.
+  compare the two on open and as each write begins. The writer reports the number last set,
+  flushed or not, and `rollback()` sets it back to the flushed one. A `read_only=True` index
+  reports its newest snapshot's; setting it there raises `ReadOnlyError`.
 
 - **`check() -> Check`**  
   Checks what opening can't, reading the whole graph and every vector. `check().unreachable`

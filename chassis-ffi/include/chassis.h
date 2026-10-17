@@ -583,6 +583,29 @@ size_t chassis_search_batch(const struct ChassisIndex *ptr, const float *queries
 int chassis_flush(struct ChassisIndex *ptr);
 
 /**
+ * Discard every add, delete and user version since the last flush
+ *
+ * As closing the index and opening it again would, without letting go of the writer's lock.
+ * Call it where a write's transaction in your own store rolls back, before the next flush
+ * commits what that write left.
+ *
+ * # Returns
+ *
+ * - 0 on success
+ * - -1 on failure (check `chassis_last_error_message()`); later flushes then fail too: close the
+ *   index and open it again, which recovers it to its last flush
+ *
+ * # Thread Safety
+ *
+ * Safe from any thread. Writes run one at a time; searches wait for them.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-NULL and valid
+ */
+int chassis_rollback(struct ChassisIndex *ptr);
+
+/**
  * Ask the operating system to keep the index's vectors on huge pages
  *
  * On an index too large for the CPU's caches, searches are up to a quarter faster and batch
@@ -797,8 +820,9 @@ uint64_t chassis_deleted_count(const struct ChassisIndex *ptr);
  *
  * Like SQLite's `user_version`. `chassis_flush()` commits it with the data, so after a crash it
  * says which flush the index holds: keep the same number in your own store, in the transaction
- * the flush sits in, and compare the two on open and as each write begins. A reader handle
- * returns the one in its newest snapshot.
+ * the flush sits in, and compare the two on open and as each write begins. A writer handle
+ * returns the number last set, flushed or not, and `chassis_rollback()` sets it back to the
+ * flushed one; a reader handle returns the one in its newest snapshot.
  *
  * # Returns
  *

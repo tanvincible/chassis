@@ -235,6 +235,10 @@ _lib.chassis_search_batch.restype = ctypes.c_size_t
 _lib.chassis_flush.argtypes = [ChassisIndexPtr]
 _lib.chassis_flush.restype = ctypes.c_int
 
+# chassis_rollback
+_lib.chassis_rollback.argtypes = [ChassisIndexPtr]
+_lib.chassis_rollback.restype = ctypes.c_int
+
 # chassis_compact
 _lib.chassis_compact.argtypes = [ChassisIndexPtr]
 _lib.chassis_compact.restype = ctypes.c_int

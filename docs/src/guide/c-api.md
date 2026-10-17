@@ -329,6 +329,18 @@ Flush changes to disk. Returns `0` on success, `-1` on error.
 
 **Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
 
+#### `chassis_rollback`
+```c
+int chassis_rollback(ChassisIndex* index);
+```
+Discard every add, delete and user version since the last flush, as closing the index and opening
+it again would, without letting go of the writer's lock. Call it where a write's transaction in
+your own store rolls back, or the next `chassis_flush` commits what that write did to the index.
+Returns `0`, or `-1` for a reader handle, a NULL one, or a file that can't be read or synced; after
+that, later flushes fail too: close the index and open it again.
+
+**Thread Safety**: Safe from any thread; writes run one at a time and searches wait for them
+
 #### `chassis_compact`
 ```c
 int chassis_compact(ChassisIndex* index);
@@ -412,8 +424,10 @@ uint64_t chassis_user_version(const ChassisIndex* index);
 ```
 Your application's number for the index, 0 until one is set: like SQLite's `user_version`. Each
 `chassis_flush` commits the number set before it with the data, so after a crash it says which
-flush the index holds; compare it on open with the same number kept in your own store. A reader
-handle returns the number in its newest snapshot. Returns `0` for a NULL handle, with an error set.
+flush the index holds; compare it on open and as each write begins with the same number kept in
+your own store. A writer handle returns the number last set, flushed or not, and
+`chassis_rollback` sets it back to the flushed one; a reader handle returns the number in its
+newest snapshot. Returns `0` for a NULL handle, with an error set.
 
 #### `chassis_set_user_version`
 ```c
