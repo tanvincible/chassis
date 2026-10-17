@@ -22,10 +22,8 @@ impl Prefetch {
         *POLICY.get_or_init(Self::for_this_cpu)
     }
 
-    /// A node has up to 32 neighbors, so a search asks for up to 256 lines at once. Into L2 that
-    /// was the best of what was tried on Zen 4, Emerald Rapids and Neoverse-N2, and on Zen 3 as
-    /// good as anything. AMD cores before Zen 5 track only 24 misses to L1 at a time and drop the
-    /// hints past that. Zen 5 tracks 124, and is a tenth faster or more with L1 (ADR-0013).
+    /// Into L2: a search asks for up to 256 lines at once, and AMD cores before Zen 5 track only
+    /// 24 misses to L1 and drop the hints past that. Zen 5 is faster with L1 (ADR-0013).
     #[cfg(target_arch = "x86_64")]
     fn for_this_cpu() -> Self {
         Self::for_x86(amd())
@@ -43,9 +41,8 @@ impl Prefetch {
         }
     }
 
-    /// Apple's cores do far better with the whole vector on its way: 60% faster at 1,536
-    /// dimensions than with eight lines, and 10 to 20% faster than with two thirds of it. The
-    /// bound is 4,096 dimensions' worth (ADR-0015).
+    /// Apple's cores do far better with the whole vector on its way, up to 4,096 dimensions' worth
+    /// (ADR-0015).
     #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
     fn for_this_cpu() -> Self {
         Self { near: 0, lines: 256 }

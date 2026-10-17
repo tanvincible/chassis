@@ -1,18 +1,5 @@
-//! HNSW search over the memory-mapped graph.
-//!
-//! # Performance Optimizations
-//!
-//! - Dense visited filter (no HashSet in hot path)
-//! - Zero-allocation neighbor iteration via `neighbors_iter_from_mmap()`
-//! - Zero-copy distance computation via `compute_distance_zero_copy()`
-//! - NaN-safe ordering: a NaN distance sorts past every other
-//!
-//! # Safety Guarantees
-//!
-//! - No panics on NaN distances
-//! - No hash table overhead in search loop
-//! - Concurrent searches from many threads (`&self`)
-//! - Deterministic performance
+//! HNSW search over the memory-mapped graph, from many threads at once (`&self`). A NaN distance
+//! sorts past every other.
 
 use crate::distance::{Element, Kernel, Portable};
 use crate::half::Precision;
@@ -64,23 +51,12 @@ impl Ord for SearchResult {
     }
 }
 
-/// Dense visited filter using a BitSet for maximum cache locality.
-///
-/// # Design
-///
-/// Uses a packed bit array (1 bit per node) to fit more status flags into
-/// CPU cache lines.
-///
-/// # Performance
-///
-/// - Memory: 125KB for 1M nodes (vs 1MB for Vec<bool>)
-/// - Cache Density: 512 nodes per cache line (vs 64)
-/// - Reuse: searches share one per thread and clear only the words they set
+/// The nodes a search has visited, one bit each. Searches share one per thread and clear only the
+/// words they set.
 #[derive(Default)]
 pub struct VisitedFilter {
-    /// Dense bit array: 1 bit per node. Stores 64 nodes per u64.
     data: Vec<u64>,
-    /// Capacity track to avoid checking len() bounds repeatedly
+    /// Nodes it has bits for.
     capacity: usize,
     /// The words with a bit set are `touched[..used]`, so `reuse` clears only those. One longer
     /// than `data`: `visit` writes at `used` whether or not the word is new.
@@ -115,10 +91,8 @@ impl Drop for Visited {
 }
 
 impl VisitedFilter {
-    /// Create a new visited filter for a graph with `node_count` nodes
     #[inline]
     pub fn new(node_count: usize) -> Self {
-        // Calculate number of u64s needed: ceil(N / 64)
         let num_u64s = node_count.div_ceil(64);
         Self {
             data: vec![0; num_u64s],
@@ -144,11 +118,7 @@ impl VisitedFilter {
         self.capacity = node_count;
     }
 
-    /// Mark a node as visited.
-    ///
-    /// Returns:
-    /// - `true` if the node was NOT visited before (we just marked it).
-    /// - `false` if it was ALREADY visited.
+    /// Marks the node visited, and says whether it wasn't before. Past the capacity, false.
     #[inline]
     pub fn visit(&mut self, node_id: u64) -> bool {
         let idx = node_id as usize;
@@ -172,7 +142,6 @@ impl VisitedFilter {
         self.used += usize::from(before == 0);
         before & mask == 0
     }
-    /// Check if a node is visited without modifying state.
     #[inline]
     fn is_visited(&self, node_id: u64) -> bool {
         let idx = node_id as usize;
@@ -191,48 +160,25 @@ impl VisitedFilter {
 }
 
 impl HnswGraph {
-    /// Search for k nearest neighbors.
-    ///
-    /// # Arguments
-    ///
-    /// * `query` - Query vector (must match index dimensions)
-    /// * `k` - Number of nearest neighbors to return
-    /// * `ef` - Search quality parameter (higher = better quality, slower)
-    ///
-    /// # Guarantees
-    ///
-    /// - Returns ≤ k results (never more)
-    /// - If ef < k, silently corrects to ef = k
-    /// - No panics on NaN distances
-    /// - Deterministic ordering
-    ///
-    /// # Performance
-    ///
-    /// - O(ef × log(ef)) time complexity
-    /// - O(node_count) space for the visited filter, kept per thread and reused
-    /// - Allocates two heaps on layer 0
+    /// The `k` nearest live nodes to `query`, searching `ef` wide, or `k` if that is wider.
     pub fn search(&self, query: &[f32], k: usize, ef: usize) -> Result<Vec<SearchResult>> {
         if self.entry_point.is_none() {
             return Ok(Vec::new());
         }
 
-        // Enforce ef >= k silently (no error, no surprise)
         let ef = ef.max(k);
 
         let entry = self.entry_point.unwrap();
         let mut current_layer = self.max_layer;
 
-        // Greedy search from top layer to layer 1
         let mut current = entry;
         while current_layer > 0 {
             current = self.search_layer_greedy(query, current, current_layer)?;
             current_layer -= 1;
         }
 
-        // Search base layer with ef candidates
         let mut candidates = self.search_layer_filtered(query, current, ef, 0, self.skips())?;
 
-        // Return top k
         candidates.truncate(k);
         Ok(candidates)
     }
@@ -313,13 +259,7 @@ impl HnswGraph {
         Ok(!(self.skips() && self.is_deleted(slot)?))
     }
 
-    /// Greedy search for a single best node (used for layer descent).
-    ///
-    /// This avoids allocating a Vec just to read the single best candidate during upper-layer descent.
-    ///
-    /// # Returns
-    ///
-    /// The closest node to the query at this layer.
+    /// The node nearest `query` that a greedy walk on `layer` from `entry` finds.
     pub fn search_layer_greedy(
         &self,
         query: &[f32],
@@ -415,33 +355,7 @@ impl HnswGraph {
         Ok(best_id)
     }
 
-    /// Search within a single layer.
-    ///
-    /// # Optimizations Applied
-    ///
-    /// 1. **Dense visited filter**: O(1) array access instead of HashSet hashing
-    ///    - Check: ~1ns vs ~100ns
-    ///    - No cache misses from pointer chasing
-    ///
-    /// 2. **Zero-allocation neighbor iteration**: `neighbors_iter_from_mmap()`
-    ///    - No `Vec<NodeId>` allocation per node
-    ///    - ~100ns vs ~400ns per node
-    ///
-    /// 3. **Zero-copy distance computation**: `compute_distance_zero_copy()`
-    ///    - No `Vec<f32>` allocation per distance calculation
-    ///    - Direct mmap reads
-    ///
-    /// 4. **NaN-safe ordering**: nodes packed into integers that order by distance, then slot
-    ///    - No panics on NaN, which sorts past every distance
-    ///    - Deterministic behavior
-    ///
-    /// # Hot Path Analysis
-    ///
-    /// No allocations:
-    /// - ✓ No `Node::from_record()` calls
-    /// - ✓ No `Vec<NodeId>` for neighbors
-    /// - ✓ No `Vec<f32>` for vectors
-    /// - ✓ No HashSet operations
+    /// The `ef` nodes nearest `query` on `layer`, searching from `entry`.
     pub fn search_layer_optimized(
         &self,
         query: &[f32],
@@ -627,7 +541,6 @@ impl HnswGraph {
         let ef = ef.max(1);
         let prefetch = Prefetch::detect().for_dims::<E>(query.len());
 
-        // Dense visited filter: O(n) space, O(1) time per check, reused across searches
         let mut visited = Visited::take(self.node_count as usize);
         // Both heaps hold packed nodes: `candidates` nearest first, `results` farthest first.
         let mut candidates = BinaryHeap::new();
@@ -803,16 +716,14 @@ mod tests {
 
     #[test]
     fn test_nan_safe_ordering() {
-        // Test that NaN doesn't cause panics
         let r1 = SearchResult { id: 1, distance: 0.5 };
         let r2 = SearchResult { id: 2, distance: f32::NAN };
         let r3 = SearchResult { id: 3, distance: 1.0 };
 
-        // Should not panic
         let mut results = [r1.clone(), r2.clone(), r3.clone()];
         results.sort();
 
-        // NaN should be ordered deterministically (typically at the end)
+        // NaN sorts last.
         assert!(!results[0].distance.is_nan());
         assert!(!results[1].distance.is_nan());
     }
@@ -839,17 +750,14 @@ mod tests {
     fn test_visited_filter() {
         let mut filter = VisitedFilter::new(10);
 
-        // First visit returns true (was not visited)
         assert!(filter.visit(0));
         assert!(filter.visit(5));
         assert!(filter.visit(9));
 
-        // Second visit returns false (already visited)
         assert!(!filter.visit(0));
         assert!(!filter.visit(5));
         assert!(!filter.visit(9));
 
-        // Check visited status
         assert!(filter.is_visited(0));
         assert!(filter.is_visited(5));
         assert!(filter.is_visited(9));
@@ -884,7 +792,6 @@ mod tests {
     fn test_visited_filter_out_of_bounds() {
         let mut filter = VisitedFilter::new(10);
 
-        // Out of bounds returns false (not visited, can't visit)
         assert!(!filter.visit(100));
         assert!(!filter.visit(100));
     }
@@ -904,17 +811,14 @@ mod tests {
 
     #[test]
     fn test_total_cmp_properties() {
-        // Verify total_cmp provides total ordering
         let values = vec![0.0, -0.0, 1.0, -1.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN];
 
-        // All comparisons should be deterministic and not panic
         for &a in &values {
             for &b in &values {
-                let _cmp = a.total_cmp(&b); // Should not panic
+                let _cmp = a.total_cmp(&b);
             }
         }
 
-        // NaN should have consistent ordering
         assert_eq!(f32::NAN.total_cmp(&f32::NAN), std::cmp::Ordering::Equal);
         assert_eq!(f32::NAN.total_cmp(&0.0), std::cmp::Ordering::Greater);
         assert_eq!(f32::NAN.total_cmp(&f32::INFINITY), std::cmp::Ordering::Greater);

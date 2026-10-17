@@ -560,14 +560,6 @@ pub struct Storage {
 
 impl Storage {
     /// Opens or creates a Chassis index file with the default graph parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The file cannot be opened or created
-    /// - The file is already locked by another process
-    /// - The file exists but has different dimensions
-    /// - The file is corrupted
     #[cfg(any(test, feature = "internals"))]
     pub fn open<P: AsRef<Path>>(path: P, dimensions: u32) -> Result<Self> {
         Self::open_with(path, dimensions, NodeRecordParams::default(), DistanceMetric::Euclidean)
@@ -575,10 +567,6 @@ impl Storage {
 
     /// Opens a Chassis index file, creating it with `params` and `metric` if it is new. A v1 or v2
     /// file is migrated to v3 first.
-    ///
-    /// # Errors
-    ///
-    /// As for `open`.
     #[cfg(any(test, feature = "internals"))]
     pub fn open_with<P: AsRef<Path>>(
         path: P,
@@ -591,10 +579,6 @@ impl Storage {
 
     /// `open_with`, creating a new file with vectors in `precision` (ADR-0018). An existing file
     /// keeps the precision it was created with, which `precision()` reports.
-    ///
-    /// # Errors
-    ///
-    /// As for `open`.
     pub fn open_with_precision<P: AsRef<Path>>(
         path: P,
         dimensions: u32,
@@ -1168,21 +1152,8 @@ impl Storage {
         Ok(storage)
     }
 
-    /// Inserts a vector into the next slot, with the slot number as its id.
-    ///
-    /// # Returns
-    ///
-    /// Returns the slot of the inserted vector
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the vector has the wrong dimensions, the file cannot grow, or the
-    /// storage was opened read-only.
-    ///
-    /// # Note
-    ///
-    /// This method does NOT guarantee durability. Call `commit()` to ensure
-    /// data is written to disk.
+    /// Inserts a vector into the next slot, with the slot number as its id, and returns the slot.
+    /// Durable only once `commit` returns.
     #[cfg(any(test, feature = "internals"))]
     pub fn insert(&mut self, vector: &[f32]) -> Result<u64> {
         match self.metric() {
@@ -1342,12 +1313,7 @@ impl Storage {
         anyhow::anyhow!("Invalid graph record for slot {slot}: {layers} layers")
     }
 
-    /// Retrieves a zero-copy view of the vector in `index`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `index` is past the last written slot, or if the file keeps its
-    /// vectors in half precision, which `get_vector` widens.
+    /// The vector in `index`, in place. A file in half precision refuses: `get_vector` widens.
     #[inline]
     #[cfg(any(test, feature = "internals"))]
     pub fn get_vector_slice(&self, index: u64) -> Result<&[f32]> {
@@ -1373,10 +1339,6 @@ impl Storage {
     }
 
     /// The vector in `index` as f32s: in place, or widened from half precision.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `index` is past the last written slot.
     pub(crate) fn vector(&self, index: u64) -> Result<Cow<'_, [f32]>> {
         Ok(match self.geometry.precision {
             Precision::Full => Cow::Borrowed(self.stored(index)?),
@@ -1399,11 +1361,7 @@ impl Storage {
         }
     }
 
-    /// Retrieves an owned copy of the vector in `index`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `index` is past the last written slot.
+    /// An owned copy of the vector in `index`.
     pub fn get_vector(&self, index: u64) -> Result<Vec<f32>> {
         Ok(self.vector(index)?.into_owned())
     }
@@ -1673,11 +1631,8 @@ impl Storage {
         }
     }
 
-    /// Commits all written slots (the graph's own commit counts only the slots it linked).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if writing or syncing fails; after that, every later commit fails too.
+    /// Commits all written slots (the graph's own commit counts only the slots it linked). After
+    /// an error, every later commit fails too.
     #[cfg(any(test, feature = "internals"))]
     pub fn commit(&mut self) -> Result<()> {
         self.state.count = self.count;
@@ -1790,7 +1745,6 @@ impl Storage {
         self.count
     }
 
-    /// Returns the vector dimensions
     pub fn dimensions(&self) -> u32 {
         self.geometry.dims as u32
     }
@@ -1991,7 +1945,6 @@ fn open_locked(path: &Path) -> Result<File> {
             .open(path)
             .map_err(|e| open_failed(path, e, true))?;
 
-        // CRITICAL: Exclusive file locking prevents concurrent access corruption
         if lock_writer(&file).is_err() {
             fail!(
                 Locked,
@@ -2502,7 +2455,7 @@ mod tests {
 
     /// Readers walk a list while the writer rewrites it (ADR-0008, decision 5): an id in both the
     /// old and the new list is seen by every walk. Run under Miri, it also finds any word touched
-    /// other than atomically, as plain stores raced in 4 of 10 runs before the lists were atomic.
+    /// other than atomically.
     #[test]
     fn test_readers_walking_a_list_see_every_id_it_keeps() {
         let rounds = if cfg!(miri) { 20 } else { 2_000 };
