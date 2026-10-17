@@ -24,7 +24,9 @@ which made searches over vectors of a kilobyte or more another 11 to 60% faster 
 **Through Python**: each engine through its Python package on one thread, every query in one call
 (Chassis's `search_batch`), queries a second for 0.95 recall, Chassis over the other engine
 (2026-10-10, one run, one machine per CPU). With one call per query instead, Chassis lost a fifth to
-a third of its speed from Rust, 15 to 38 µs a query; in one call it is within 5% of it.
+a third of its speed from Rust, 15 to 38 µs a query; in one call it is within 5% of it. Since #109
+`search` spends half as long outside the library: on 2026-10-17, against one call for all, it took
+13 to 26 µs a query where the package before took 30 to 61.
 
 | Vectors | Over hnswlib | Over FAISS's HNSW |
 | --- | --- | --- |

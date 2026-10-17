@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Performance
 
-- Python `search` spends half as long outside the library, and `get` a third less (#109).
+- Python `search` spends half as long outside the library, and `get` 30% less (#109).
 
 ## [v0.9.1](https://github.com/tanvincible/chassis/compare/v0.9.0...v0.9.1) - 17 October 2026
 

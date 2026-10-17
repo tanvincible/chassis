@@ -334,7 +334,7 @@ with ThreadPoolExecutor() as pool:
 1. Add many vectors with `add_batch`, which links them on every core, and flush once after a batch:
    a flush waits for the disk.
 2. Search many queries with `search_batch`. Measured on 2026-10-10, one call for every query was
-   within 5% of Rust's speed, while a call per query cost 15 to 38 µs more each
+   within 5% of Rust's speed; on 2026-10-17, a call per query cost 13 to 26 µs more each
    ([Performance](https://tanvincible.github.io/chassis/architecture/performance.html)).
 3. Pass 32-bit float NumPy arrays: lists and other types are converted first.
 4. Tune `ef_search`, `ef_construction` and `max_connections` as
