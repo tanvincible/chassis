@@ -9,15 +9,12 @@ use tempfile::NamedTempFile;
 fn test_index_lifecycle_basic() {
     let temp_file = NamedTempFile::new().unwrap();
 
-    // Create index
     let mut index = VectorIndex::open(temp_file.path(), 128, IndexOptions::default()).unwrap();
 
-    // Verify initial state
     assert_eq!(index.len(), 0);
     assert!(index.is_empty());
     assert_eq!(index.dimensions(), 128);
 
-    // Add vectors
     let id1 = index.add(&vec![0.1; 128]).unwrap();
     let id2 = index.add(&vec![0.2; 128]).unwrap();
     let id3 = index.add(&vec![0.3; 128]).unwrap();
@@ -27,14 +24,12 @@ fn test_index_lifecycle_basic() {
     assert_eq!(id3, 2);
     assert_eq!(index.len(), 3);
 
-    // Search
     let query = vec![0.15; 128];
     let results = index.search(&query, 2).unwrap();
 
     assert_eq!(results.len(), 2);
     assert!(results[0].distance <= results[1].distance);
 
-    // Flush
     index.flush().unwrap();
 }
 
@@ -43,7 +38,6 @@ fn test_index_persistence() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path().to_owned();
 
-    // Create and populate
     {
         let mut index = VectorIndex::open(&path, 256, IndexOptions::default()).unwrap();
 
@@ -58,14 +52,12 @@ fn test_index_persistence() {
         index.flush().unwrap();
     }
 
-    // Reopen and verify
     {
         let index = VectorIndex::open(&path, 256, IndexOptions::default()).unwrap();
 
         assert_eq!(index.len(), 20);
         assert_eq!(index.dimensions(), 256);
 
-        // Search should work
         let query = vec![0.5; 256];
         let results = index.search(&query, 5).unwrap();
 
@@ -111,7 +103,7 @@ fn test_search_single_vector() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, 0);
-    assert!(results[0].distance < 0.001); // Should be very close
+    assert!(results[0].distance < 0.001);
 }
 
 #[test]
@@ -136,7 +128,6 @@ fn test_search_quality() {
 
     assert_eq!(results.len(), 3);
 
-    // The two nearest should be id 4 and id 5
     let top_two_ids: Vec<u64> = results.iter().take(2).map(|r| r.id).collect();
     assert!(top_two_ids.contains(&4));
     assert!(top_two_ids.contains(&5));
@@ -147,7 +138,6 @@ fn test_large_batch_insert() {
     let temp_file = NamedTempFile::new().unwrap();
     let mut index = VectorIndex::open(temp_file.path(), 128, IndexOptions::default()).unwrap();
 
-    // Insert 100 vectors
     for i in 0..100 {
         let mut vec = vec![0.0; 128];
         vec[0] = (i as f32) / 100.0;
@@ -159,13 +149,11 @@ fn test_large_batch_insert() {
 
     assert_eq!(index.len(), 100);
 
-    // Search should work
     let query = vec![0.5; 128];
     let results = index.search(&query, 10).unwrap();
 
     assert_eq!(results.len(), 10);
 
-    // Verify sorted by distance
     for i in 1..results.len() {
         assert!(results[i - 1].distance <= results[i].distance);
     }
@@ -184,7 +172,6 @@ fn test_custom_options() {
 
     let mut index = VectorIndex::open(temp_file.path(), 128, options).unwrap();
 
-    // Should work with custom options
     for i in 0..20 {
         let vec = vec![i as f32 / 20.0; 128];
         index.add(&vec).unwrap();
@@ -199,7 +186,6 @@ fn test_flush_durability() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path().to_owned();
 
-    // Add vectors and flush
     {
         let mut index = VectorIndex::open(&path, 128, IndexOptions::default()).unwrap();
 
@@ -210,7 +196,6 @@ fn test_flush_durability() {
         index.flush().unwrap();
     }
 
-    // Reopen - data should persist
     {
         let index = VectorIndex::open(&path, 128, IndexOptions::default()).unwrap();
         assert_eq!(index.len(), 10);
@@ -222,7 +207,6 @@ fn test_no_flush_loses_data() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path().to_owned();
 
-    // Add vectors without flush
     {
         let mut index = VectorIndex::open(&path, 128, IndexOptions::default()).unwrap();
 
@@ -230,15 +214,13 @@ fn test_no_flush_loses_data() {
             index.add(&vec![i as f32; 128]).unwrap();
         }
 
-        // Don't flush - drop index
+        // Dropped without a flush.
     }
 
-    // Reopen - some data might be lost
     {
         let index = VectorIndex::open(&path, 128, IndexOptions::default()).unwrap();
 
-        // Depending on OS buffering, we might have 0-5 vectors
-        // The important thing is no corruption
+        // The adds were never flushed, so they are rolled back.
         assert!(index.len() <= 5);
     }
 }
@@ -293,14 +275,12 @@ fn test_dimension_mismatch_on_reopen() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path().to_owned();
 
-    // Create with 128 dimensions
     {
         let mut index = VectorIndex::open(&path, 128, IndexOptions::default()).unwrap();
         index.add(&vec![1.0; 128]).unwrap();
         index.flush().unwrap();
     }
 
-    // Try to open with different dimensions
     {
         let error = VectorIndex::open(&path, 256, IndexOptions::default()).unwrap_err();
         assert_eq!(error.kind(), chassisdb::ErrorKind::DimensionMismatch);
@@ -373,16 +353,13 @@ fn test_search_returns_k_or_fewer() {
     let temp_file = NamedTempFile::new().unwrap();
     let mut index = VectorIndex::open(temp_file.path(), 128, IndexOptions::default()).unwrap();
 
-    // Add 5 vectors
     for i in 0..5 {
         index.add(&vec![i as f32; 128]).unwrap();
     }
 
-    // Search for k=10, should return only 5
     let results = index.search(&vec![0.0; 128], 10).unwrap();
     assert_eq!(results.len(), 5);
 
-    // Search for k=3, should return 3
     let results = index.search(&vec![0.0; 128], 3).unwrap();
     assert_eq!(results.len(), 3);
 }
@@ -392,17 +369,14 @@ fn test_identical_vectors() {
     let temp_file = NamedTempFile::new().unwrap();
     let mut index = VectorIndex::open(temp_file.path(), 128, IndexOptions::default()).unwrap();
 
-    // Add identical vectors
     for _ in 0..10 {
         index.add(&vec![0.5; 128]).unwrap();
     }
 
     let results = index.search(&vec![0.5; 128], 5).unwrap();
 
-    // Should find 5 results
     assert_eq!(results.len(), 5);
 
-    // All should have distance ~0
     for result in results {
         assert!(result.distance < 0.001);
     }
@@ -428,13 +402,10 @@ fn test_concurrent_opens_fail() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path().to_owned();
 
-    // Open first index
     let _index1 = VectorIndex::open(&path, 128, IndexOptions::default()).unwrap();
 
-    // Try to open second index on same file
     let result = VectorIndex::open(&path, 128, IndexOptions::default());
 
-    // Should fail due to exclusive lock
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("already open"));
 }
@@ -444,7 +415,6 @@ fn test_stress_sequential_adds() {
     let temp_file = NamedTempFile::new().unwrap();
     let mut index = VectorIndex::open(temp_file.path(), 128, IndexOptions::default()).unwrap();
 
-    // Add 1000 vectors sequentially
     for i in 0..1000 {
         let mut vec = vec![0.0; 128];
         vec[0] = (i as f32) / 1000.0;
@@ -457,13 +427,11 @@ fn test_stress_sequential_adds() {
 
     assert_eq!(index.len(), 1000);
 
-    // Verify search works on large index
     let query = vec![0.5; 128];
     let results = index.search(&query, 20).unwrap();
 
     assert_eq!(results.len(), 20);
 
-    // Verify results are sorted
     for i in 1..results.len() {
         assert!(results[i - 1].distance <= results[i].distance);
     }

@@ -35,7 +35,7 @@ fn create_test_graph(num_vectors: usize, dims: u32) -> (HnswGraph, NamedTempFile
 fn test_forward_links_written_before_backward_links() {
     let (mut graph, _temp) = create_test_graph(100, 128);
 
-    // Model A: Node 0 cannot link to non-existent nodes
+    // Node 0 has no node to link to yet.
     graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
     graph.publish_node(0, 1).unwrap();
 
@@ -47,7 +47,6 @@ fn test_forward_links_written_before_backward_links() {
     graph.write_node_and_backlinks(2, 1, &[vec![0, 1]]).unwrap();
     graph.publish_node(2, 1).unwrap();
 
-    // Verify forward links exist
     let node2 = graph.read_node_record(2).unwrap();
     assert_eq!(node2.get_neighbors(0), vec![0, 1]);
     assert_eq!(graph.node_count(), 3);
@@ -68,18 +67,15 @@ fn test_empty_neighbor_list() {
 fn test_single_neighbor() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
-    // Sequential construction
     graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
     graph.publish_node(0, 1).unwrap();
 
     graph.write_node_and_backlinks(1, 1, &[vec![0]]).unwrap();
     graph.publish_node(1, 1).unwrap();
 
-    // Verify forward link
     let node1 = graph.read_node_record(1).unwrap();
     assert_eq!(node1.get_neighbors(0), vec![0]);
 
-    // Verify backward link
     let node0 = graph.read_node_record(0).unwrap();
     assert!(node0.get_neighbors(0).contains(&1));
 }
@@ -91,7 +87,6 @@ fn test_maximum_neighbors_no_pruning() {
     let params = graph.record_params();
     let m0 = params.m0 as usize;
 
-    // Build sequentially
     graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
     graph.publish_node(0, 1).unwrap();
 
@@ -102,7 +97,6 @@ fn test_maximum_neighbors_no_pruning() {
         graph.publish_node(i, 1).unwrap();
     }
 
-    // Check a node has correct count
     let node_mid = graph.read_node_record(m0.min(25) as u64).unwrap();
     assert!(node_mid.get_neighbors(0).len() <= m0);
 }
@@ -136,7 +130,6 @@ fn test_diversity_respects_capacity() {
     let params = graph.record_params();
     let m0 = params.m0 as usize;
 
-    // Build hub
     graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
     graph.publish_node(0, 1).unwrap();
 
@@ -175,7 +168,6 @@ fn test_starvation_fallback_maintains_minimum_degree() {
 fn test_layer_independence_preserved() {
     let (mut graph, _temp) = create_test_graph(100, 128);
 
-    // Build multi-layer graph sequentially
     graph.write_node_and_backlinks(0, 3, &[vec![], vec![], vec![]]).unwrap();
     graph.publish_node(0, 3).unwrap();
 
@@ -188,13 +180,11 @@ fn test_layer_independence_preserved() {
     graph.write_node_and_backlinks(3, 3, &[vec![0, 1], vec![0], vec![]]).unwrap();
     graph.publish_node(3, 3).unwrap();
 
-    // Verify forward links
     let record = graph.read_node_record(3).unwrap();
     assert_eq!(record.get_neighbors(0), vec![0, 1]);
     assert_eq!(record.get_neighbors(1), vec![0]);
     assert_eq!(record.get_neighbors(2), vec![]);
 
-    // Verify layer-specific backward links
     let node0 = graph.read_node_record(0).unwrap();
     assert!(!node0.get_neighbors(0).is_empty()); // Has backward links from layer 0
     assert!(!node0.get_neighbors(1).is_empty()); // Has backward links from layer 1
@@ -204,7 +194,6 @@ fn test_layer_independence_preserved() {
 fn test_idempotency_retry_safety() {
     let (mut graph, _temp) = create_test_graph(100, 128);
 
-    // Build small graph
     graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
     graph.publish_node(0, 1).unwrap();
 
@@ -248,7 +237,7 @@ fn test_self_links_filtered() {
 fn test_invalid_neighbor_ids_handled_gracefully() {
     let (mut graph, _temp) = create_test_graph(10, 128);
 
-    // Try to link to nodes that don't exist yet (Model A filters them)
+    // Links to nodes that don't exist yet are dropped.
     graph.write_node_and_backlinks(0, 1, &[vec![1, 999, 1000]]).unwrap();
     graph.publish_node(0, 1).unwrap();
 
@@ -278,7 +267,6 @@ fn test_sequential_linking_maintains_consistency() {
 
     assert_eq!(graph.node_count(), 50);
 
-    // Spot check
     let node0 = graph.read_node_record(0).unwrap();
     assert!(node0.get_neighbors(0).contains(&1));
 
@@ -312,7 +300,6 @@ fn test_identical_vectors_diversity() {
     let temp_file = NamedTempFile::new().unwrap();
     let mut storage = Storage::open(temp_file.path(), 128).unwrap();
 
-    // Insert identical vectors
     for _ in 0..50 {
         storage.insert(&vec![0.5; 128]).unwrap();
     }
@@ -361,7 +348,6 @@ fn test_commit_persists_links() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path().to_owned();
 
-    // Create and link
     {
         let mut storage = Storage::open(&path, 128).unwrap();
         for i in 0..20 {
@@ -373,7 +359,6 @@ fn test_commit_persists_links() {
         let params = HnswParams::default();
         let mut graph = HnswGraph::open(storage, params).unwrap();
 
-        // Sequential construction
         for i in 0..10u64 {
             let neighbors = if i > 0 { vec![vec![(i - 1)]] } else { vec![vec![]] };
             graph.write_node_and_backlinks(i, 1, &neighbors).unwrap();
@@ -383,7 +368,6 @@ fn test_commit_persists_links() {
         graph.commit().unwrap();
     }
 
-    // Reopen and verify
     {
         let storage = Storage::open(&path, 128).unwrap();
         let params = HnswParams::default();
@@ -391,7 +375,6 @@ fn test_commit_persists_links() {
 
         assert_eq!(graph.node_count(), 10);
 
-        // Verify links
         let node1 = graph.read_node_record(1).unwrap();
         let neighbors = node1.get_neighbors(0);
         assert!(neighbors.contains(&0));
@@ -402,18 +385,15 @@ fn test_commit_persists_links() {
 fn test_new_node_gets_backward_links() {
     let (mut graph, _temp) = create_test_graph(100, 128);
 
-    // Build chain
     for i in 0..20u64 {
         let neighbors = if i > 0 { vec![vec![i - 1]] } else { vec![vec![]] };
         graph.write_node_and_backlinks(i, 1, &neighbors).unwrap();
         graph.publish_node(i, 1).unwrap();
     }
 
-    // Add new node
     graph.write_node_and_backlinks(20, 1, &[vec![0, 1, 2]]).unwrap();
     graph.publish_node(20, 1).unwrap();
 
-    // Verify it got backward links
     let new_record = graph.read_node_record(20).unwrap();
     assert_eq!(new_record.get_neighbors(0), vec![0, 1, 2]);
 
@@ -450,7 +430,6 @@ fn test_neighbor_list_capped_at_capacity() {
     let params = graph.record_params();
     let m0 = params.m0 as usize;
 
-    // Build large graph
     graph.write_node_and_backlinks(0, 1, &[vec![]]).unwrap();
     graph.publish_node(0, 1).unwrap();
 

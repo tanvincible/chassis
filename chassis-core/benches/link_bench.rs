@@ -1,18 +1,5 @@
-//! Production-grade benchmarks for bidirectional linking with diversity heuristics.
-//!
-//! # Benchmark Philosophy
-//!
-//! - **No resource leaks**: Proper file descriptor management
-//! - **Realistic workloads**: Patterns mirror actual HNSW construction
-//! - **Statistical rigor**: Sufficient samples, stable measurements
-//! - **Isolated tests**: Each benchmark measures one thing
-//!
-//! # Categories
-//!
-//! 1. **Throughput**: Single node, batch operations
-//! 2. **Pruning**: Cache effectiveness under pressure
-//! 3. **Scalability**: Dimensions, layers, graph size
-//! 4. **Edge Cases**: Worst-case scenarios
+//! Linking nodes both ways with the diversity heuristic: throughput, pruning, and how it scales
+//! with dimensions, layers and graph size.
 
 use chassisdb::{HnswGraph, HnswParams, Storage};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
