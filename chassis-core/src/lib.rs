@@ -46,6 +46,11 @@
 //!
 //! These concerns are left to the application. Chassis is embedded the way
 //! SQLite is: a library in your process, with everything in one file.
+//!
+//! # Internals
+//!
+//! The `internals` feature makes the layers under the index public, for this crate's own tests
+//! and benchmarks. They carry no semver promise: any release may change or remove them.
 
 // Every unsafe block says why it is sound, in a `// SAFETY:` comment.
 #![warn(clippy::undocumented_unsafe_blocks)]
