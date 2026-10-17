@@ -25,7 +25,9 @@ windows-sys = { version = "0.61", features = [
 
 [features]
 default = []
-internals = []  # Enables public access to internal modules
+# The layers under the index, for this crate's tests and benchmarks. No semver promise: any
+# release may change or remove them.
+internals = []
 
 [[bench]]
 name = "storage_bench"
