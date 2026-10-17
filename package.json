@@ -1,6 +1,6 @@
 {
   "name": "chassis",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "devDependencies": {
     "auto-changelog": "*"
   },

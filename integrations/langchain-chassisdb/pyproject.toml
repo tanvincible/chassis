@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langchain-chassisdb"
-version = "0.1.1"
+version = "0.1.2"
 description = "LangChain vector store on Chassis: semantic search in one file, in your own process"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 authors = [{name = "Chassis Contributors"}]
 keywords = ["langchain", "vector store", "semantic search", "rag", "embeddings"]
 dependencies = [
-    "chassisdb>=0.9",
+    "chassisdb>=0.9.1",
     "langchain-core>=1.0,<2",
 ]
 

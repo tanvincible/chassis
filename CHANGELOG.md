@@ -3,7 +3,12 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.0...HEAD)
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.1...HEAD)
+
+## [v0.9.1](https://github.com/tanvincible/chassis/compare/v0.9.0...v0.9.1) - 17 October 2026
+
+A write that fails partway leaves nothing behind for the next one to commit.
+The file format doesn't change.
 
 ### Added
 
@@ -18,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 - `langchain-chassisdb`: after such a failed add, every later add failed with `IdInUseError` (#107).
 - Database guide, `langchain-chassisdb` and `chassisdb-mcp`: a `COMMIT` that failed and stayed open
   stopped every later write (#107).
+- `chassisdb-mcp` and `langchain-chassisdb` 0.1.2; `langchain-chassisdb` needs `chassisdb` 0.9.1,
+  for `rollback()`.
 
 ## [v0.9.0](https://github.com/tanvincible/chassis/compare/v0.8.0...v0.9.0) - 17 October 2026
 
