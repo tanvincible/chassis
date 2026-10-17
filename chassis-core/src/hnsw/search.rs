@@ -381,6 +381,7 @@ impl HnswGraph {
         // SAFETY: the caller chose a kernel this CPU has, and `E` as the file keeps its vectors; a
         // stored vector has the index's dimensions, and so does a query.
         let mut best_dist = unsafe { K::squared(query, self.storage.stored::<E>(entry)?) };
+        crate::lab_count!(DISTANCES, 1);
         let prefetch = Prefetch::detect().for_dims::<E>(query.len());
 
         let mut visited = Visited::take(self.node_count as usize);
@@ -388,6 +389,7 @@ impl HnswGraph {
         let mut changed = true;
         while changed {
             changed = false;
+            crate::lab_count!(HOPS, 1);
 
             // As on layer 0, ask for every unvisited neighbor's vector before computing a
             // distance. Only hints, so a neighbor that can't be read is left for the loop below.
@@ -399,7 +401,9 @@ impl HnswGraph {
                 }
             }
             for neighbor_id in self.neighbors_iter_from_mmap(best_id, layer)? {
+                crate::lab_count!(SCANS, 1);
                 if visited.0.visit(neighbor_id) {
+                    crate::lab_count!(DISTANCES, 1);
                     let vector = self.storage.stored::<E>(neighbor_id)?;
                     // SAFETY: as above.
                     let dist = unsafe { K::squared(query, vector) };
@@ -640,6 +644,7 @@ impl HnswGraph {
         // SAFETY: the caller chose a kernel this CPU has, and `E` as the file keeps its vectors; a
         // stored vector has the index's dimensions, and so does a query.
         let entry_dist = unsafe { K::squared(query, self.storage.stored::<E>(entry)?) };
+        crate::lab_count!(DISTANCES, 1);
         candidates.push(Reverse(pack(entry_dist, entry)));
         if !excluded(entry)? {
             results.push(pack(entry_dist, entry));
@@ -656,13 +661,16 @@ impl HnswGraph {
             // Start loading every unvisited neighbor's vector before computing any distance, so the
             // cache misses overlap instead of each distance waiting on its own.
             fresh.clear();
+            crate::lab_count!(HOPS, 1);
             for neighbor_id in self.neighbors_iter_from_mmap(current & SLOT, layer)? {
+                crate::lab_count!(SCANS, 1);
                 if visited.0.visit(neighbor_id) {
                     let vector = self.storage.stored::<E>(neighbor_id)?;
                     prefetch.vector(vector);
                     fresh.push((neighbor_id, vector));
                 }
             }
+            crate::lab_count!(DISTANCES, fresh.len());
             // Their distances `W` at a time, then one by one for what is left over; each
             // group's are taken in as soon as they are known.
             let mut take = |neighbor_id: NodeId, dist: f32| -> Result<bool> {

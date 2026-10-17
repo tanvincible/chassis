@@ -62,6 +62,36 @@ mod storage;
 #[cfg(test)]
 mod power_loss;
 
+/// Lab counters, compiled only with `--cfg lab` and counted only with `--cfg lab_count`.
+#[cfg(lab)]
+pub mod lab {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub static DISTANCES: AtomicU64 = AtomicU64::new(0);
+    pub static HOPS: AtomicU64 = AtomicU64::new(0);
+    pub static SCANS: AtomicU64 = AtomicU64::new(0);
+
+    pub fn distances() -> u64 {
+        DISTANCES.load(Ordering::Relaxed)
+    }
+
+    pub fn hops_scans() -> (u64, u64) {
+        (HOPS.load(Ordering::Relaxed), SCANS.load(Ordering::Relaxed))
+    }
+}
+
+#[cfg(lab_count)]
+macro_rules! lab_count {
+    ($counter:ident, $n:expr) => {
+        crate::lab::$counter.fetch_add($n as u64, std::sync::atomic::Ordering::Relaxed);
+    };
+}
+#[cfg(not(lab_count))]
+macro_rules! lab_count {
+    ($counter:ident, $n:expr) => {};
+}
+pub(crate) use lab_count;
+
 #[cfg(feature = "internals")]
 pub use hnsw::*;
 
