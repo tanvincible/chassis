@@ -77,12 +77,13 @@ job. FAISS ran at AVX2 on Zen 3, at AVX512_VPOPCNT on the Xeons and Zen 5, and a
 
 Hops a query were 51 or 52 for Chassis on dbpedia and 56 for FAISS, 67 to 69 against 69 on SIFT.
 FAISS's upper layers count every neighbor, visited or not, so its distances run high by at most
-16 a hop on its 5 to 8 upper hops: its true count on dbpedia is between about 960 and 1,087.
+16 a hop on its upper-layer hops, about 2 on each of 4 layers at 99,000 vectors: its true count on
+dbpedia is between about 960 and 1,087.
 
 **Predictions.**
 
-1. **Held.** On dbpedia Chassis computed 0.951 to 0.978 of FAISS's distances as counted, and at
-   most 1.10 with FAISS's upper-layer count taken out whole.
+1. **Held.** On dbpedia Chassis computed 0.951 to 0.978 of FAISS's distances as counted. Only if
+   every upper-layer neighbor FAISS counted were one it had seen already would it reach 1.11.
 2. **Held.** On SIFT, 0.999 to 1.010.
 3. **Held as counted**: 1.212 and 1.220 on Zen 3. With FAISS's count at its lowest, 1.07 to 1.08,
    so the bound is wider than the prediction; the queries a second (1.15 to 1.17) don't depend on
