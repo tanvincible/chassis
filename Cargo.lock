@@ -149,7 +149,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chassis-ffi"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "cbindgen",
@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "chassisdb"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "chassisdb",
