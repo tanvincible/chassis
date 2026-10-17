@@ -638,12 +638,6 @@ fn main() -> anyhow::Result<()> {
             for ef_search in efs.into_iter().filter(|&ef| only.is_none_or(|o| o == ef)) {
                 let mut index = Handle::open(&arg(3), dims as u32, options(ef_search))?;
                 let n = index.len()?;
-                #[cfg(all(lab, target_os = "linux"))]
-                if std::env::var("LAB_MADV").is_ok()
-                    && let Handle::Writer(index) = &index
-                {
-                    index.lab_huge();
-                }
                 // The first pass over a file that may not be in memory yet.
                 let first = Instant::now();
                 for query in &queries {

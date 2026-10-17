@@ -104,8 +104,15 @@ class Faiss:
         self.index = faiss.read_index(str(path))
 
     def search(self, queries, ef):
+        import faiss
+
         self.index.hnsw.efSearch = ef
-        return self.index.search(queries, K)[1]
+        faiss.cvar.hnsw_stats.reset()
+        found = self.index.search(queries, K)[1]
+        # Distances and nodes expanded a query, every layer, as Chassis's lab counts them.
+        stats = faiss.cvar.hnsw_stats
+        self.counts = stats.ndis / len(queries), stats.nhops / len(queries)
+        return found
 
 
 class Annoy:
@@ -356,6 +363,9 @@ def main() -> None:
             rates.append(len(test) / (time.perf_counter() - start))
         hits = sum(len(set(f) & set(t)) for f, t in zip(np.asarray(found).tolist(), truth.tolist()))
         line("search", setting, hits / (len(test) * K), sorted(rates)[1])
+        if hasattr(engine, "counts"):
+            line("distances", setting, hits / (len(test) * K), engine.counts[0])
+            line("hops", setting, hits / (len(test) * K), engine.counts[1])
 
     pagetool = os.environ.get("PAGETOOL")
     if pagetool:

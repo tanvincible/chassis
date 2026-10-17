@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 8
-  CHASSIS: perf/python-call
+  RUN: 9
+  CHASSIS: lab/exp-ndis
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -100,8 +100,11 @@ jobs:
           sed s/chassis_core/chassisdb/g chassis-core/examples/lab.rs > "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
           (cd "$RUNNER_TEMP/src" && export RUSTFLAGS="--cfg lab_hp --cfg lab_half" \
             && cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t" \
+            && RUSTFLAGS="$RUSTFLAGS --cfg lab --cfg lab_count" \
+              cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/tc" \
             && cargo build --release -p chassis-ffi --target-dir "$RUNNER_TEMP/t")
           cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
+          cp "$RUNNER_TEMP/tc/release/examples/lab" "$RUNNER_TEMP/lab-count"
           cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
           for pkg in numpy pyarrow hnswlib usearch faiss-cpu annoy sqlite-vec lancedb; do
             pip install -q "$pkg" || echo "could not install $pkg" | tee -a results/inc.log
@@ -127,11 +130,14 @@ jobs:
             "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" full 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
             LAB_HALF=1 "$L" search "$DATA" "$NAME" "$T/h.chassis" "$truth" half 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
           done
+          # Distances, hops and neighbors scanned a query, from the build that counts them.
+          LAB_PASSES=1 "$T/lab-count" search "$DATA" "$NAME" "$T/c.chassis" "$truth" count-full 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+          LAB_PASSES=1 LAB_HALF=1 "$T/lab-count" search "$DATA" "$NAME" "$T/h.chassis" "$truth" count-half 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
           for state in cold; do
             "$PAGETOOL" evict "$T/c.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/c.chassis" "$truth" cold-full | tee -a results/cold.tsv
             "$PAGETOOL" evict "$T/h.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/h.chassis" "$truth" cold-half | tee -a results/cold.tsv
           done
-          for engine in chassis-py-old chassis-py chassis-py-batch chassis-py-half chassis-py-half-batch hnswlib faiss faiss-avx2 faiss-again; do
+          for engine in faiss; do
             case $engine in
               chassis-py-old) set -- PYTHONPATH="$RUNNER_TEMP/old/chassisdb" ;;
               faiss-avx2) set -- FAISS_OPT_LEVEL=avx2 FAISS_SIMD_LEVEL=AVX2 ;;
