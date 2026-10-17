@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.1...HEAD)
 
+### Performance
+
+- Python `search` spends half as long outside the library, and `get` a third less (#109).
+
 ## [v0.9.1](https://github.com/tanvincible/chassis/compare/v0.9.0...v0.9.1) - 17 October 2026
 
 A write that fails partway leaves nothing behind for the next one to commit.
