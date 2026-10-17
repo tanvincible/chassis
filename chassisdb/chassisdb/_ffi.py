@@ -89,7 +89,8 @@ class ChassisIndex(ctypes.Structure):
 ChassisIndexPtr = ctypes.POINTER(ChassisIndex)
 
 
-# Function signatures
+# Function signatures. Arrays go as `array.ctypes.data`: a pointer from `data_as` costs over a
+# microsecond each, much of what a search spends outside the library.
 
 # chassis_open
 _lib.chassis_open.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
@@ -144,7 +145,7 @@ _lib.chassis_free.restype = None
 # chassis_add
 _lib.chassis_add.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
     ctypes.c_size_t,
 ]
 _lib.chassis_add.restype = ctypes.c_uint64
@@ -153,7 +154,7 @@ _lib.chassis_add.restype = ctypes.c_uint64
 _lib.chassis_add_with_id.argtypes = [
     ChassisIndexPtr,
     ctypes.c_uint64,
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
     ctypes.c_size_t,
 ]
 _lib.chassis_add_with_id.restype = ctypes.c_int
@@ -161,18 +162,18 @@ _lib.chassis_add_with_id.restype = ctypes.c_int
 # chassis_add_batch
 _lib.chassis_add_batch.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_float),  # vectors, count * dim, row-major
+    ctypes.c_void_p,  # vectors, count * dim, row-major
     ctypes.c_size_t,  # count
     ctypes.c_size_t,  # dim
-    ctypes.POINTER(ctypes.c_uint64),  # out_ids
+    ctypes.c_void_p,  # out_ids
 ]
 _lib.chassis_add_batch.restype = ctypes.c_size_t
 
 # chassis_add_batch_with_ids
 _lib.chassis_add_batch_with_ids.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_uint64),  # ids
-    ctypes.POINTER(ctypes.c_float),  # vectors, count * dim, row-major
+    ctypes.c_void_p,  # ids
+    ctypes.c_void_p,  # vectors, count * dim, row-major
     ctypes.c_size_t,  # count
     ctypes.c_size_t,  # dim
 ]
@@ -185,49 +186,49 @@ _lib.chassis_delete.restype = ctypes.c_int
 # chassis_search
 _lib.chassis_search.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
     ctypes.c_size_t,
     ctypes.c_size_t,
-    ctypes.POINTER(ctypes.c_uint64),
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
+    ctypes.c_void_p,
 ]
 _lib.chassis_search.restype = ctypes.c_size_t
 
 # chassis_search_filtered
 _lib.chassis_search_filtered.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
     ctypes.c_size_t,
     ctypes.c_size_t,
-    ctypes.POINTER(ctypes.c_uint64),  # allowed_ids
+    ctypes.c_void_p,  # allowed_ids
     ctypes.c_size_t,  # allowed_len
-    ctypes.POINTER(ctypes.c_uint64),
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
+    ctypes.c_void_p,
 ]
 _lib.chassis_search_filtered.restype = ctypes.c_size_t
 
 # chassis_search_excluding
 _lib.chassis_search_excluding.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
     ctypes.c_size_t,
     ctypes.c_size_t,
-    ctypes.POINTER(ctypes.c_uint64),  # excluded_ids
+    ctypes.c_void_p,  # excluded_ids
     ctypes.c_size_t,  # excluded_len
-    ctypes.POINTER(ctypes.c_uint64),
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
+    ctypes.c_void_p,
 ]
 _lib.chassis_search_excluding.restype = ctypes.c_size_t
 
 # chassis_search_batch
 _lib.chassis_search_batch.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_float),  # queries
+    ctypes.c_void_p,  # queries
     ctypes.c_size_t,  # count
     ctypes.c_size_t,  # dim
     ctypes.c_size_t,  # k
-    ctypes.POINTER(ctypes.c_uint64),
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
+    ctypes.c_void_p,
 ]
 _lib.chassis_search_batch.restype = ctypes.c_size_t
 
@@ -255,7 +256,7 @@ _lib.chassis_warm.restype = ctypes.c_int
 _lib.chassis_get.argtypes = [
     ChassisIndexPtr,
     ctypes.c_uint64,
-    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_void_p,
     ctypes.c_size_t,
 ]
 _lib.chassis_get.restype = ctypes.c_int
@@ -265,13 +266,13 @@ _lib.chassis_contains.argtypes = [ChassisIndexPtr, ctypes.c_uint64]
 _lib.chassis_contains.restype = ctypes.c_int
 
 # chassis_ids
-_lib.chassis_ids.argtypes = [ChassisIndexPtr, ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t]
+_lib.chassis_ids.argtypes = [ChassisIndexPtr, ctypes.c_void_p, ctypes.c_size_t]
 _lib.chassis_ids.restype = ctypes.c_size_t
 
 # chassis_check
 _lib.chassis_check.argtypes = [
     ChassisIndexPtr,
-    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.c_void_p,
     ctypes.c_size_t,
     ctypes.POINTER(ctypes.c_size_t),
 ]
