@@ -414,9 +414,12 @@ checked against their code says so; the rest is the survey's.
   **Not AVX-512** (RUN 8, 2026-10-17, FAISS 1.15.1, `bench/lab/faiss-plan.md` on `lab/x86`): forced
   to AVX2 on Zen 4, FAISS lost 2.6% and still made 1.31 times Chassis's queries a second, and it
   leads on Zen 3, which has no AVX-512, by 1.17 to 1.26 times. At 128 dimensions the two are even on
-  Zen 3. **To validate next**: distances computed per query at 0.95 recall, Chassis's from the lab's
-  counters and FAISS's from `hnsw_stats.ndis`. More means the graph or the search order; the same
-  means each 6 KB distance costs Chassis more: memory, prefetch or the kernel.
+  Zen 3. **Not the graph** (RUN 9, 2026-10-18, `bench/lab/ndis-plan.md`): at 0.95 recall Chassis
+  computes 2 to 5% fewer distances than FAISS on dbpedia and expands fewer nodes, but each costs it
+  1.21 times FAISS's on Zen 3. On Ice Lake Xeons Chassis is even or ahead (FAISS 0.86 to 0.97 times
+  its speed), on N2 and Zen 5 well ahead. **To validate next**: one 6 KB distance alone on Zen 3 and
+  Zen 4, from cache and from memory, Chassis's kernel and prefetch (8 lines into L2) against FAISS's
+  (no vector prefetch); vary the prefetch first.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
