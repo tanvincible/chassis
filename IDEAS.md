@@ -411,7 +411,12 @@ checked against their code says so; the rest is the survey's.
   every engine given its queries in one call (2026-10-10, `incumbents.yml` RUN 7), FAISS made 1.28
   times Chassis's queries a second for 0.95 recall on Zen 4 and 1.05 on a Xeon 6973P-C; Chassis was
   1.09 times FAISS on Neoverse-N2. In half precision Chassis led on all three, 1.09 to 1.40 times.
-  What FAISS still does differently is unknown.
+  **Not AVX-512** (RUN 8, 2026-10-17, FAISS 1.15.1, `bench/lab/faiss-plan.md` on `lab/x86`): forced
+  to AVX2 on Zen 4, FAISS lost 2.6% and still made 1.31 times Chassis's queries a second, and it
+  leads on Zen 3, which has no AVX-512, by 1.17 to 1.26 times. At 128 dimensions the two are even on
+  Zen 3. **To validate next**: distances computed per query at 0.95 recall, Chassis's from the lab's
+  counters and FAISS's from `hnsw_stats.ndis`. More means the graph or the search order; the same
+  means each 6 KB distance costs Chassis more: memory, prefetch or the kernel.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
