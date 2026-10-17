@@ -1,3 +1,4 @@
+import sqlite3
 from collections.abc import Generator
 
 import pytest
@@ -149,6 +150,49 @@ def test_a_failed_commit_is_mended_by_the_next_write(tmp_path, embeddings, write
                 store.delete(["p"])
             else:
                 store.add_texts(["apricots"], ids=["a"])
+    store.add_texts(["cherries"], ids=["c"])
+    assert _found(store) == ["apples", "cherries", "pears"]
+
+
+@pytest.mark.parametrize("write", ["add", "delete", "replace"])
+def test_a_write_stopped_before_its_flush_leaves_nothing_for_the_next(tmp_path, embeddings, write):
+    def interrupted(index, number):  # Ctrl-C after the write changed the index, before its number
+        raise KeyboardInterrupt
+
+    store = ChassisVectorStore(tmp_path / "docs.chassis", embeddings)
+    store.add_texts(["apples", "pears"], ids=["a", "p"])
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(VectorIndex, "user_version", VectorIndex.user_version.setter(interrupted))
+        with pytest.raises(KeyboardInterrupt):
+            if write == "add":
+                store.add_texts(["plums"], ids=["q"])  # Its key goes back to the next insert
+            elif write == "delete":
+                store.delete(["p"])
+            else:
+                store.add_texts(["apricots"], ids=["a"])
+    store.add_texts(["cherries"], ids=["c"])
+    assert _found(store) == ["apples", "cherries", "pears"]
+
+
+def test_a_commit_that_fails_and_stays_open_is_mended_by_the_next_write(tmp_path, embeddings):
+    class BusyCommit:  # SQLite leaves a transaction open when its COMMIT is busy
+        def __init__(self, db):
+            self.db, self.busy = db, True
+
+        def execute(self, sql, *args):
+            if sql == "COMMIT" and self.busy:
+                self.busy = False
+                raise sqlite3.OperationalError("database is locked")
+            return self.db.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.db, name)
+
+    store = ChassisVectorStore(tmp_path / "docs.chassis", embeddings)
+    store.add_texts(["apples", "pears"], ids=["a", "p"])
+    store._db = BusyCommit(store._db)
+    with pytest.raises(sqlite3.OperationalError):
+        store.delete(["p"])
     store.add_texts(["cherries"], ids=["c"])
     assert _found(store) == ["apples", "cherries", "pears"]
 

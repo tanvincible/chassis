@@ -169,6 +169,18 @@ from a timer.
 Dropping a `VectorIndex` doesn't flush: what was added or deleted since the last `flush()` is
 discarded, as after a crash.
 
+#### Rollback
+
+```rust
+// Every add, delete and user version since the last flush is gone.
+index.rollback()?;
+```
+
+As closing the index and opening it again would, without letting go of the writer's lock. Call it
+where a write's transaction in your own store rolls back, or the next flush commits what that write
+did to the index ([With a database](./with-a-database.md#writing)). If it fails, later flushes fail
+too: close the index and open it again.
+
 At rest the index is one file. A `<name>.undo` file sits beside it from the first add after a flush
 until the next flush, and after a crash until a writer reopens the index ([file
 format](../architecture/file-format.md#undo-file)). Move, copy or delete the two together.
@@ -210,7 +222,8 @@ own store, in the transaction the flush sits in, and compare the two on open and
 begins: they differ only when a flush's commit never came, after a crash or a failed commit
 ([With a database](./with-a-database.md#opening),
 [ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)).
-`IndexReader::user_version` returns the number of the flush its last snapshot shows.
+The writer returns the number last set, flushed or not, and `rollback` sets it back to the flushed
+one. `IndexReader::user_version` returns the number of the flush its last snapshot shows.
 
 #### Check
 

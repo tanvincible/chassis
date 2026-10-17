@@ -362,10 +362,11 @@ class Memory:
             if mend:
                 self._mend()
             yield
+            self.db.execute("COMMIT")
         except BaseException:
-            self.db.execute("ROLLBACK")
+            if self.db.in_transaction:  # A failed COMMIT can leave it open
+                self.db.execute("ROLLBACK")
             raise
-        self.db.execute("COMMIT")
 
     def _count_write(self, index: VectorIndex) -> None:
         """Counts this write in its transaction; the index's flush commits the same number."""

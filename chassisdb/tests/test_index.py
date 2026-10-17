@@ -9,6 +9,7 @@ from chassisdb import Check, IndexOptions, SearchResult, VectorIndex
 from chassisdb.exceptions import (
     ChassisError,
     DimensionMismatchError,
+    IndexLockedError,
     InvalidArgumentError,
     OptionsMismatchError,
     ReadOnlyError,
@@ -740,6 +741,25 @@ class TestUserVersion:
         index.close()
         with VectorIndex(path, dimensions=3) as index:
             assert (index.user_version, len(index)) == (5, 1)
+
+    def test_rollback_discards_what_a_close_would_and_keeps_the_lock(self, tmp_path):
+        path = tmp_path / "rolled.chassis"
+        index = VectorIndex(path, dimensions=3)
+        index.add([1.0, 0.0, 0.0], id=7)
+        index.user_version = 1
+        index.flush()
+        index.add([0.0, 1.0, 0.0], id=8)
+        index.delete(7)
+        index.user_version = 2
+        index.rollback()
+        assert (index.user_version, list(index.ids())) == (1, [7])
+        with pytest.raises(IndexLockedError):
+            VectorIndex(path, dimensions=3)
+        index.close()
+        reader = VectorIndex(path, dimensions=3, read_only=True)
+        with pytest.raises(ReadOnlyError, match="roll back"):
+            reader.rollback()
+        reader.close()
 
     def test_a_read_only_index_sees_each_flush_and_cannot_set_it(self, tmp_path):
         path = tmp_path / "versioned.chassis"

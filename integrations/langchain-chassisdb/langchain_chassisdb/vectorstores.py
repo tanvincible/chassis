@@ -140,7 +140,8 @@ class ChassisVectorStore(VectorStore):
     def _writing(self, index: VectorIndex) -> Iterator[None]:
         """A write: the documents and the index change together, or neither does. The index is
         flushed before the commit, with the write's number, so a write that never commits shows
-        as an index one ahead, which the next write or the next open mends."""
+        as an index one ahead, which the next write or the next open mends. A write that fails
+        before its flush rolls the index back too, or the next write's flush would commit it."""
         self._db.execute("BEGIN IMMEDIATE")
         try:
             self._mend()
@@ -149,10 +150,12 @@ class ChassisVectorStore(VectorStore):
             self._db.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)", (str(version),))
             index.user_version = version
             index.flush()
+            self._db.execute("COMMIT")
         except BaseException:
-            self._db.execute("ROLLBACK")
+            if self._db.in_transaction:  # A failed COMMIT can leave it open
+                self._db.execute("ROLLBACK")
+            index.rollback()
             raise
-        self._db.execute("COMMIT")
 
     def close(self) -> None:
         """Close the files. Everything added or deleted was saved already."""

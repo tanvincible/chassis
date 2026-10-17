@@ -1510,6 +1510,45 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
     .unwrap_or(-1)
 }
 
+/// Discard every add, delete and user version since the last flush
+///
+/// As closing the index and opening it again would, without letting go of the writer's lock.
+/// Call it where a write's transaction in your own store rolls back, before the next flush
+/// commits what that write left.
+///
+/// # Returns
+///
+/// - 0 on success
+/// - -1 on failure (check `chassis_last_error_message()`); later flushes then fail too: close the
+///   index and open it again, which recovers it to its last flush
+///
+/// # Thread Safety
+///
+/// Safe from any thread. Writes run one at a time; searches wait for them.
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_rollback(ptr: *mut ChassisIndex) -> c_int {
+    ffi_guard(|| {
+        let Some(mut index) = (unsafe { write_index(ptr) }) else {
+            return -1;
+        };
+        match index.rollback() {
+            Ok(()) => {
+                clear_last_error();
+                0
+            }
+            Err(e) => {
+                set_last_error(e);
+                -1
+            }
+        }
+    })
+    .unwrap_or(-1)
+}
+
 /// Ask the operating system to keep the index's vectors on huge pages
 ///
 /// On an index too large for the CPU's caches, searches are up to a quarter faster and batch
@@ -1904,8 +1943,9 @@ pub unsafe extern "C" fn chassis_deleted_count(ptr: *const ChassisIndex) -> u64 
 ///
 /// Like SQLite's `user_version`. `chassis_flush()` commits it with the data, so after a crash it
 /// says which flush the index holds: keep the same number in your own store, in the transaction
-/// the flush sits in, and compare the two on open and as each write begins. A reader handle
-/// returns the one in its newest snapshot.
+/// the flush sits in, and compare the two on open and as each write begins. A writer handle
+/// returns the number last set, flushed or not, and `chassis_rollback()` sets it back to the
+/// flushed one; a reader handle returns the one in its newest snapshot.
 ///
 /// # Returns
 ///
@@ -2485,6 +2525,14 @@ mod tests {
         assert_eq!(unsafe { chassis_user_version(reader) }, 5, "until a flush commits it");
         assert_eq!(unsafe { chassis_flush(writer) }, 0);
         assert_eq!(unsafe { chassis_user_version(reader) }, 6);
+
+        // A rollback discards what wasn't flushed, the number too; a reader has nothing to discard.
+        assert_eq!(unsafe { chassis_set_user_version(writer, 9) }, 0);
+        assert_eq!(unsafe { chassis_add(writer, [1.0f32, 2.0].as_ptr(), 2) }, 0);
+        assert_eq!(unsafe { chassis_rollback(writer) }, 0);
+        assert_eq!(unsafe { (chassis_user_version(writer), chassis_len(writer)) }, (6, 0));
+        assert_eq!(unsafe { chassis_rollback(reader) }, -1);
+        assert_eq!(unsafe { chassis_rollback(ptr::null_mut()) }, -1);
 
         assert_eq!(unsafe { chassis_set_user_version(reader, 7) }, -1);
         assert!(!chassis_last_error_message().is_null());
