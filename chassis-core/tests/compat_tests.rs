@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/compat");
 
-/// The generators' vector `i`; their queries are `10_000` and up.
+/// The generators' vector `i`; their queries are `10_000` and up, and no file holds `20_000`.
 fn vector(i: u64, dims: u32) -> Vec<f32> {
     let mut x = i.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     (0..dims)
@@ -72,7 +72,11 @@ fn nearest(search: &mut dyn FnMut(&[f32]) -> Vec<u64>, dims: u32) -> Vec<Vec<u64
 #[test]
 fn test_files_from_earlier_releases_open_and_search_as_they_did() {
     let cases = cases();
-    assert_eq!(cases.len(), 11, "one format 1 file, and five each from v0.7.0 and v0.8.0");
+    assert_eq!(
+        cases.len(),
+        17,
+        "one format 1 file, five each from v0.7.0 and v0.8.0, six from v0.9.1"
+    );
     for case in &cases {
         let dir = tempfile::tempdir().unwrap();
         let path = unpack(case, dir.path());
@@ -98,13 +102,13 @@ fn test_files_from_earlier_releases_open_and_search_as_they_did() {
         assert_eq!(nearest(&mut search, dims), case.results, "{name}");
 
         // And it goes on: one more vector, under an id never used before, found after a reopen.
-        let id = index.add(&vector(500, dims)).unwrap();
+        let id = index.add(&vector(20_000, dims)).unwrap();
         assert!(case.live.iter().all(|&live| live < id), "{name}: id {id} reused");
         index.flush().unwrap();
         drop(index);
         let index = VectorIndex::open(&path, dims, case.options.clone()).unwrap();
         assert_eq!(index.len(), case.len + 1, "{name}");
-        assert_eq!(index.search(&vector(500, dims), 1).unwrap()[0].id, id, "{name}");
+        assert_eq!(index.search(&vector(20_000, dims), 1).unwrap()[0].id, id, "{name}");
     }
 }
 
