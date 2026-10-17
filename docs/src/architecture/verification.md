@@ -60,9 +60,9 @@ cut off after its header crashed the process on its first search; that is now an
 
 ## Old files
 
-`compat_tests.rs` opens indexes written by earlier releases, from v0.6.3's format 1 to v0.8.0, with
-deletes, custom ids, cosine, half precision and a compaction. Each has to show what the release
-that wrote it showed, and take one more vector
+`compat_tests.rs` opens indexes written by earlier releases, from v0.6.3's format 1 to v0.9.1, with
+deletes, custom ids, cosine, half precision and a compaction, and one of 1,500 vectors, past the
+first segment. Each has to show what the release that wrote it showed, and take one more vector
 ([ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)).
 
 ## Platforms
