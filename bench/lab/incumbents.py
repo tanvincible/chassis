@@ -210,7 +210,7 @@ class ChassisPy:
     precision, warm = "full", False
 
     def options(self, ef):
-        from chassis import IndexOptions
+        from chassisdb import IndexOptions
 
         return IndexOptions(
             max_connections=16,
@@ -221,7 +221,7 @@ class ChassisPy:
         )
 
     def build(self, train, path):
-        from chassis import VectorIndex
+        from chassisdb import VectorIndex
 
         index = VectorIndex(path, dimensions=train.shape[1], options=self.options(64))
         index.add_batch(train)
@@ -233,7 +233,7 @@ class ChassisPy:
         self.reopen(self.settings[1])
 
     def reopen(self, ef):
-        from chassis import VectorIndex
+        from chassisdb import VectorIndex
 
         if self.index is not None:
             self.index.close()
@@ -280,10 +280,13 @@ ENGINES = {
     "usearch": Usearch,
     "usearch-view": UsearchView,
     "faiss": Faiss,
+    "faiss-avx2": Faiss,
+    "faiss-again": Faiss,
     "annoy": Annoy,
     "sqlitevec": SqliteVec,
     "lancedb": Lance,
     "chassis-py": ChassisPy,
+    "chassis-py-old": ChassisPy,
     "chassis-py-batch": ChassisPyBatch,
     "chassis-py-half-batch": ChassisPyHalfBatch,
     "chassis-py-half": ChassisPyHalf,
@@ -333,6 +336,17 @@ def main() -> None:
     start = time.perf_counter()
     engine.load(path, dims, n)
     line("open_ms", 0, 0, ms(start))
+    # Which build each engine loaded: FAISS picks one for the CPU, and chassis-py-old has to be
+    # main's package.
+    if "faiss" in sys.modules:
+        faiss = sys.modules["faiss"]
+        build = getattr(faiss, "get_compile_options", lambda: "?")().strip()
+        # A build with dynamic dispatch holds every level and picks one as it starts: FAISS_SIMD_LEVEL.
+        config = getattr(faiss, "SIMDConfig", None)
+        level = config.get_level_name() if config else "no SIMDConfig"
+        print(f"inc-lib\t{name}\tfaiss {faiss.__version__} {build}, level {level}", flush=True)
+    if "chassisdb" in sys.modules:
+        print(f"inc-lib\t{name}\t{sys.modules['chassisdb'].__file__}", flush=True)
     for setting in engine.settings:
         engine.search(test[:10], setting)
         rates = []

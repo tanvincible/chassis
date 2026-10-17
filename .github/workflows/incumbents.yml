@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 7
-  CHASSIS: feat/search-batch
+  RUN: 8
+  CHASSIS: perf/python-call
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -24,7 +24,10 @@ jobs:
       matrix:
         name: [dbpedia-openai3-1536, sift-128]
         runner: [ubuntu-latest]
-        shard: [a, b]
+        shard: [a, b, c, d]
+        exclude:
+          - { name: sift-128, shard: c }
+          - { name: sift-128, shard: d }
         include:
           - { name: dbpedia-openai3-1536, n: 99000 }
           - { name: sift-128, n: 1000000 }
@@ -94,9 +97,9 @@ jobs:
         run: |
           git fetch -q origin "$CHASSIS"
           git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
-          cp chassis-core/examples/lab.rs "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+          sed s/chassis_core/chassisdb/g chassis-core/examples/lab.rs > "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
           (cd "$RUNNER_TEMP/src" && export RUSTFLAGS="--cfg lab_hp --cfg lab_half" \
-            && cargo build --release -p chassis-core --example lab --target-dir "$RUNNER_TEMP/t" \
+            && cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t" \
             && cargo build --release -p chassis-ffi --target-dir "$RUNNER_TEMP/t")
           cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
           cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
@@ -104,6 +107,9 @@ jobs:
             pip install -q "$pkg" || echo "could not install $pkg" | tee -a results/inc.log
           done
           pip install -q --no-deps -e "$RUNNER_TEMP/src/chassisdb"
+          # chassis-py-old: main's Python package on the same C library, through PYTHONPATH.
+          git fetch -q origin main
+          git worktree add --detach "$RUNNER_TEMP/old" FETCH_HEAD
           pip list 2>/dev/null | grep -iE "numpy|pyarrow|hnswlib|usearch|faiss|annoy|sqlite|lancedb|chassis" | tee -a results/versions.txt
 
       - name: Every engine on the same vectors
@@ -125,8 +131,13 @@ jobs:
             "$PAGETOOL" evict "$T/c.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/c.chassis" "$truth" cold-full | tee -a results/cold.tsv
             "$PAGETOOL" evict "$T/h.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/h.chassis" "$truth" cold-half | tee -a results/cold.tsv
           done
-          for engine in chassis-py chassis-py-batch chassis-py-half chassis-py-half-batch hnswlib usearch faiss; do
-            timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
+          for engine in chassis-py-old chassis-py chassis-py-batch chassis-py-half chassis-py-half-batch hnswlib faiss faiss-avx2 faiss-again; do
+            case $engine in
+              chassis-py-old) set -- PYTHONPATH="$RUNNER_TEMP/old/chassisdb" ;;
+              faiss-avx2) set -- FAISS_OPT_LEVEL=avx2 FAISS_SIMD_LEVEL=AVX2 ;;
+              *) set -- ;;
+            esac
+            env "$@" timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
             grep "^inc" "$T/inc.out" | tee -a results/inc.tsv || true
             grep -v "^inc" "$T/inc.out" | tail -5 >> results/inc.log || true
           done
