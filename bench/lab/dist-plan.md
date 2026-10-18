@@ -453,7 +453,7 @@ and 768 half, 270 to 276 at 768 full.
 | 768 half | 1,536 | 1.038 | 1.002 | 1.009 | 0.802 | 0.961 |
 | 768 full | 3,072 | 1.114 | 1.030 | 0.994 | 1.021 | 1.035 |
 
-By round, the Zen 4 made 0.65, 0.85 and 0.82 at 384 full, 0.80, 0.79 and 0.80 at 768 half, and
+By round, the Zen 4 made 0.65, 0.85 and 0.82 at 384 full, 0.83, 0.79 and 0.80 at 768 half, and
 0.91, 0.90 and 0.94 at 384 half; `warm` lost as much where it asked. The Zen 5 made 0.92, 0.99 and
 1.05 at 768 half.
 
