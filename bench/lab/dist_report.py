@@ -25,22 +25,26 @@ def at(points, target=TARGET):
 def part1():
     by_cpu = collections.defaultdict(list)
     for d in sorted(glob.glob("distbench-*")):
-        ns, share, policy = {}, {}, "?"
+        ns, share, policy, collapse = {}, {}, "?", []
         for line in open(f"{d}/distbench.tsv"):
             f = line.rstrip("\n").split("\t")
             if f[1] == "policy":
                 policy = f[2]
                 continue
+            if f[1] == "collapse":
+                collapse.append(f"{f[2]} {f[3]} {f[4]}")
+                continue
             share[f[1]] = float(f[2])
             ns[(f[1], f[3])] = float(f[4])
         noisy = [m for m in share if m != "cache" and abs(ns[(m, "now-again")] / ns[(m, "now")] - 1) > 0.05]
-        pages_ok = share["anon"] >= 0.9 and share["anon-4k"] <= 0.05
+        pages_ok = share["anon"] >= 0.9 and share.get("anon-4k", 0) <= 0.05
         print(f"{d}: {cpu(d)}, {policy}, shares " + " ".join(f"{m} {s:.3f}" for m, s in share.items())
-              + (f", NOISY in {noisy}" if noisy else "") + ("" if pages_ok else ", PAGES FAIL"))
+              + (f", NOISY in {noisy}" if noisy else "") + ("" if pages_ok else ", PAGES FAIL")
+              + (f"\n   collapse: {'; '.join(collapse)}" if collapse else ""))
         if not noisy and pages_ok:
             by_cpu[cpu(d)].append((ns, share))
     arms = ["now", "pf0", "pf8", "pf16", "pf32", "pf96", "faiss", "now-again"]
-    memories = ["cache", "anon", "anon-4k", "file", "file-huge"]
+    memories = list(dict.fromkeys(m for j in by_cpu.values() for x in j for m in x[1]))
     for name, jobs in by_cpu.items():
         print(f"\n### {name}, {len(jobs)} jobs: ns a distance, the median over jobs\n")
         print("| memory | huge | " + " | ".join(arms) + " |")
@@ -50,11 +54,13 @@ def part1():
             share = statistics.median(j[1][m] for j in jobs)
             print(f"| {m} | {share:.2f} | " + " | ".join(f"{med(a):.1f}" for a in arms) + " |")
         med = lambda m, a: statistics.median(j[0][(m, a)] for j in jobs)
-        print(f"\n1. now anon-4k / anon: {med('anon-4k', 'now') / med('anon', 'now'):.3f}")
-        print(f"2. now file / anon-4k: {med('file', 'now') / med('anon-4k', 'now'):.3f}")
-        print(f"3. anon pf0 / faiss: {med('anon', 'pf0') / med('anon', 'faiss'):.3f}")
-        print(f"4. cache pf0 / faiss: {med('cache', 'pf0') / med('cache', 'faiss'):.3f}")
-        print(f"   file-huge now / anon now: {med('file-huge', 'now') / med('anon', 'now'):.3f}")
+        if "cache" in memories:
+            print(f"\n1. now anon-4k / anon: {med('anon-4k', 'now') / med('anon', 'now'):.3f}")
+            print(f"2. now file / anon-4k: {med('file', 'now') / med('anon-4k', 'now'):.3f}")
+            print(f"3. anon pf0 / faiss: {med('anon', 'pf0') / med('anon', 'faiss'):.3f}")
+            print(f"4. cache pf0 / faiss: {med('cache', 'pf0') / med('cache', 'faiss'):.3f}")
+        for m in memories:
+            print(f"   now {m} / file-huge: {med(m, 'now') / med('file-huge', 'now'):.3f}")
 
 
 def kb(text, key):

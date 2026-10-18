@@ -226,3 +226,38 @@ on huge pages comes from `/proc/self/smaps`, as before.
   call.
 - **Neither works**: Linux 6.17 on ext4 won't do it for a file. What's left is choosing by size,
   huge pages when the index fits in memory, or keeping it opt-in, and that is the user's call.
+
+### Results
+
+[Run 39143314863](https://github.com/tanvincible/chassis/actions/runs/39143314863), `lab/exp-dist`
+at 3f892a5. The jobs drew Zen 3 twice, Zen 4 once, Zen 5 four times and a Xeon Platinum 8370C
+once.
+
+**Linux refused both collapses on every job.** `madvise(MADV_COLLAPSE)` returned `EINVAL` at once,
+for the writable mapping and for the read-only one with nothing holding the file open for
+writing. Neither memory had any of it on huge pages afterwards, and both cost what `file` costs.
+The other memories' shares were as in RUN 1, and `now-again` was within 5% of `now` everywhere.
+
+`now` on 4 KB pages (`file`) against huge ones (`file-huge`), as the time a distance:
+
+| CPU (jobs) | `file` / `file-huge` | `file-collapse` / `file-huge` | `file-ro-collapse` / `file-huge` |
+| --- | --- | --- | --- |
+| Zen 3 (2) | 1.107 | 1.104 | 1.100 |
+| Zen 4 (1) | 1.402 | 1.400 | 1.413 |
+| Zen 5 (4) | 1.054 | 1.072 | 1.063 |
+| Xeon 8370C (1) | 1.010 | 0.994 | 0.966 |
+
+**Predictions.**
+
+1. **Failed.** The read-only collapse returned `EINVAL`.
+2. **Held.** The writable collapse failed.
+3. **Not tested.** No collapse succeeded.
+4. **Not tested.** No collapse succeeded.
+
+**The decision: neither works.** On Linux 6.17 with ext4, pages of a regular file already in
+memory can't be put onto huge pages after the fact. The only way onto huge pages is to be read
+onto them, which `huge_pages` asks for. What's left is choosing by size, or keeping it opt-in;
+that is the user's call.
+
+Not decided on: the one Zen 4 job took 1.40 times as long a distance on 4 KB pages, the largest
+cost of small pages measured here.
