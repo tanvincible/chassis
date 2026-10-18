@@ -43,9 +43,7 @@ use std::ptr;
 use std::slice;
 use std::sync::{Mutex, RwLock, RwLockWriteGuard};
 
-/// Internal state holder (not exposed to C)
-///
-/// This holds the actual index and is purely Rust-internal.
+/// What a `ChassisIndex *` points to.
 struct ChassisIndexState {
     inner: Kind,
 }
@@ -324,7 +322,7 @@ unsafe fn open_handle(
     }
     // SAFETY: Caller guarantees path is valid C string
     let c_path = unsafe { CStr::from_ptr(path) };
-    // STRICT UTF-8 CHECK: Do not use to_string_lossy()
+    // Not to_string_lossy(), which would open a file other than the one named.
     let Ok(path_str) = c_path.to_str() else {
         set_last_error("The path isn't valid UTF-8\nhelp: pass the path encoded as UTF-8");
         return ptr::null_mut();
@@ -453,38 +451,18 @@ fn set_last_error(err: impl Into<Failure>) {
     LAST_ERROR.with(|cell| *cell.borrow_mut() = Some((code, message)));
 }
 
-/// Clear the last error message for the current thread
 fn clear_last_error() {
     LAST_ERROR.with(|cell| {
         *cell.borrow_mut() = None;
     });
 }
 
-/// Panic barrier that catches all panics at the FFI boundary
-///
-/// # Critical Safety Invariant
-///
-/// No Rust panic may EVER unwind across the FFI boundary. This would cause
-/// undefined behavior as C code cannot handle Rust panics.
-///
-/// # Implementation
-///
-/// - Wraps all FFI operations in `std::panic::catch_unwind`
-/// - Converts panics to error messages via `set_last_error`
-/// - Returns `None` on panic, allowing callers to use sentinel values
-///
-/// # AssertUnwindSafe Justification
-///
-/// `AssertUnwindSafe` is permitted here because:
-/// - We abort the operation on panic (don't resume broken logic)
-/// - We don't hold any shared mutable state across the panic boundary
-/// - The error is reported via thread-local storage
+/// Runs `f`, turning a panic into the last error and `None`: a panic must never unwind into C.
 fn ffi_guard<F, R>(f: F) -> Option<R>
 where
     F: FnOnce() -> R,
 {
-    // AssertUnwindSafe is permitted at the FFI boundary because we abort the
-    // operation on panic, we do not attempt to resume broken logic.
+    // AssertUnwindSafe: a call that panics is abandoned, so nothing uses what it left broken.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(result) => Some(result),
         Err(e) => {
@@ -508,9 +486,7 @@ where
     }
 }
 
-//
-//  LIFECYCLE MANAGEMENT
-//
+// LIFECYCLE MANAGEMENT
 
 /// Open or create a Chassis vector index
 ///
@@ -584,7 +560,6 @@ pub unsafe extern "C" fn chassis_open_with_options(
     ef_search: u32,
 ) -> *mut ChassisIndex {
     ffi_guard(|| {
-        // Validate max_connections is u16
         let Ok(max_connections) = u16::try_from(max_connections) else {
             set_last_error(format!(
                 "max_connections is {max_connections}, but has to be between 2 and 32,767\nhelp: 16 \
@@ -787,9 +762,7 @@ pub unsafe extern "C" fn chassis_free(ptr: *mut ChassisIndex) {
     }
 }
 
-//
-//  VECTOR OPERATIONS
-//
+// VECTOR OPERATIONS
 
 /// Add a vector to the index
 ///
@@ -1765,9 +1738,7 @@ pub unsafe extern "C" fn chassis_compact(ptr: *mut ChassisIndex) -> c_int {
     .unwrap_or(-1)
 }
 
-//
-//  INTROSPECTION
-//
+// INTROSPECTION
 
 /// Copy the vector with `id` into `out`
 ///
@@ -2170,9 +2141,7 @@ pub unsafe extern "C" fn chassis_precision(ptr: *const ChassisIndex) -> c_int {
     ffi_guard(|| unsafe { read(ptr, precision) }.unwrap_or(-1)).unwrap_or(-1)
 }
 
-//
-//  ERROR HANDLING
-//
+// ERROR HANDLING
 
 /// Get the last error message for the current thread
 ///
@@ -2230,10 +2199,6 @@ pub extern "C" fn chassis_last_error_code() -> c_int {
     LAST_ERROR.with(|cell| cell.borrow().as_ref().map_or(CHASSIS_OK, |&(code, _)| code))
 }
 
-//
-//  VERSIONING
-//
-
 /// Get the Chassis library version
 ///
 /// # Returns
@@ -2252,16 +2217,10 @@ pub extern "C" fn chassis_last_error_code() -> c_int {
 /// ```
 #[unsafe(no_mangle)]
 pub extern "C" fn chassis_version() -> *const c_char {
-    // Compile-time constant.
-    // concat! appends the null terminator required by C.
-    // env! pulls "version" directly from Cargo.toml.
     static VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
 
     VERSION.as_ptr() as *const c_char
 }
-//
-//  TESTS
-//
 
 // Tests pass the C functions handles and buffers they made just above.
 #[cfg(test)]
@@ -2284,17 +2243,14 @@ mod tests {
         let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
         assert!(!ptr.is_null(), "Failed to open index");
 
-        // Add vector
         let vec = vec![0.1f32; 128];
         let id = unsafe { chassis_add(ptr, vec.as_ptr(), 128) };
         assert_eq!(id, 0, "First insert should have ID 0");
 
-        // Add another vector
         let vec2 = vec![0.2f32; 128];
         let id2 = unsafe { chassis_add(ptr, vec2.as_ptr(), 128) };
         assert_eq!(id2, 1, "Second insert should have ID 1");
 
-        // Search
         let mut ids = vec![0u64; 5];
         let mut dists = vec![0.0f32; 5];
         let count = unsafe {
@@ -2303,11 +2259,9 @@ mod tests {
         assert!(count > 0, "Search should return results");
         assert!(count <= 2, "Should not return more than 2 results");
 
-        // Flush
         let flush_result = unsafe { chassis_flush(ptr) };
         assert_eq!(flush_result, 0, "Flush should succeed");
 
-        // Clean up
         unsafe { chassis_free(ptr) };
     }
 
@@ -2800,16 +2754,13 @@ mod tests {
 
     #[test]
     fn test_ffi_null_safety() {
-        // Null path
         let ptr = unsafe { chassis_open(ptr::null(), 128) };
         assert!(ptr.is_null());
 
-        // Null index pointer for add
         let vec = vec![0.1f32; 128];
         let id = unsafe { chassis_add(ptr::null_mut(), vec.as_ptr(), 128) };
         assert_eq!(id, u64::MAX);
 
-        // Null index pointer for search
         let mut ids = vec![0u64; 5];
         let mut dists = vec![0.0f32; 5];
         let count = unsafe {
@@ -2827,12 +2778,10 @@ mod tests {
         let ptr = unsafe { chassis_open(path.as_ptr(), 128) };
         assert!(!ptr.is_null());
 
-        // Try to add vector with wrong dimensions
         let vec = vec![0.1f32; 64];
         let id = unsafe { chassis_add(ptr, vec.as_ptr(), 64) };
         assert_eq!(id, u64::MAX, "Should fail with dimension mismatch");
 
-        // Check error message
         assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_DIMENSION_MISMATCH);
         let error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
         assert!(
@@ -2850,17 +2799,14 @@ mod tests {
         let ptr = unsafe { chassis_open(path.as_ptr(), 256) };
         assert!(!ptr.is_null());
 
-        // Check initial state
         assert_eq!(unsafe { chassis_len(ptr) }, 0);
         assert_eq!(unsafe { chassis_is_empty(ptr) }, 1);
         assert_eq!(unsafe { chassis_dimensions(ptr) }, 256);
 
-        // Add a vector
         let vec = vec![0.5f32; 256];
         let id = unsafe { chassis_add(ptr, vec.as_ptr(), 256) };
         assert_eq!(id, 0);
 
-        // Check updated state
         assert_eq!(unsafe { chassis_len(ptr) }, 1);
         assert_eq!(unsafe { chassis_is_empty(ptr) }, 0);
 
@@ -2872,7 +2818,6 @@ mod tests {
         let version = unsafe { CStr::from_ptr(chassis_version()) };
         let version_str = version.to_string_lossy();
 
-        // Compare dynamically against the Cargo.toml version
         let expected = env!("CARGO_PKG_VERSION");
         assert_eq!(version_str, expected, "FFI version should match Cargo.toml version");
     }
@@ -2883,7 +2828,6 @@ mod tests {
         let ptr = unsafe { chassis_open_with_options(path.as_ptr(), 128, 32, 100, 75) };
         assert!(!ptr.is_null(), "Should open with custom options");
 
-        // Add and search to verify it works
         let vec = vec![0.3f32; 128];
         let id = unsafe { chassis_add(ptr, vec.as_ptr(), 128) };
         assert_eq!(id, 0);
@@ -3031,7 +2975,6 @@ mod tests {
 
     #[test]
     fn test_ffi_invalid_utf8_path() {
-        // Create a path with invalid UTF-8
         let invalid_bytes = b"test\xFF\xFE.chassis\0";
         let ptr = unsafe { chassis_open(invalid_bytes.as_ptr() as *const c_char, 128) };
         assert!(ptr.is_null(), "Should reject invalid UTF-8");
@@ -3045,17 +2988,14 @@ mod tests {
     fn test_ffi_error_thread_local() {
         use std::thread;
 
-        // Set an error on main thread
         set_last_error("Main thread error");
         let main_error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
         assert_eq!(main_error.to_string_lossy(), "Main thread error");
 
-        // Spawn a thread and verify it has no error
         let handle = thread::spawn(|| {
             let error_ptr = chassis_last_error_message();
             assert!(error_ptr.is_null(), "New thread should have no error");
 
-            // Set error on spawned thread
             set_last_error("Spawned thread error");
             let spawned_error = unsafe { CStr::from_ptr(chassis_last_error_message()) };
             assert_eq!(spawned_error.to_string_lossy(), "Spawned thread error");
