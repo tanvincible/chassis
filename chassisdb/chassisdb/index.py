@@ -409,7 +409,7 @@ class VectorIndex:
         """
         self._check_writable("add")
         vector = _as_vector(vector, self._dimensions, "vector")
-        vector_ptr = vector.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        vector_ptr = vector.ctypes.data
         if id is not None:
             id = _check_id(id)
             if _ffi._lib.chassis_add_with_id(self._ptr, id, vector_ptr, len(vector)) != 0:
@@ -447,11 +447,11 @@ class VectorIndex:
         self._check_writable("add")
         vectors = _as_batch(vectors, self._dimensions)
         count = len(vectors)
-        vectors_ptr = vectors.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        vectors_ptr = vectors.ctypes.data
 
         if ids is None:
             out_ids = np.zeros(count, dtype=np.uint64)
-            out_ptr = out_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            out_ptr = out_ids.ctypes.data
             added = _ffi._lib.chassis_add_batch(
                 self._ptr, vectors_ptr, count, self._dimensions, out_ptr
             )
@@ -466,7 +466,7 @@ class VectorIndex:
                 "or leave ids out to have them chosen"
             )
         id_array = np.array(ids, dtype=np.uint64)
-        ids_ptr = id_array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+        ids_ptr = id_array.ctypes.data
         if (
             _ffi._lib.chassis_add_batch_with_ids(
                 self._ptr, ids_ptr, vectors_ptr, count, self._dimensions
@@ -514,7 +514,7 @@ class VectorIndex:
         """
         self._check_closed()
         out = np.empty(self._dimensions, dtype=np.float32)
-        out_ptr = out.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        out_ptr = out.ctypes.data
         result: int = _ffi._lib.chassis_get(self._ptr, _check_id(id), out_ptr, self._dimensions)
         if result < 0:
             raise _ffi.last_error("The vector couldn't be read")
@@ -542,7 +542,7 @@ class VectorIndex:
         self._check_closed()
         out = np.empty(len(self), dtype=np.uint64)
         while True:
-            out_ptr = out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            out_ptr = out.ctypes.data
             count = _ffi._lib.chassis_ids(self._ptr, out_ptr, len(out))
             if count == 0 and _ffi._lib.chassis_last_error_code() != 0:
                 raise _ffi.last_error("The ids couldn't be read")
@@ -563,7 +563,7 @@ class VectorIndex:
         out = np.empty(len(self), dtype=np.uint64)
         unreachable = ctypes.c_size_t()
         while True:
-            out_ptr = out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            out_ptr = out.ctypes.data
             count = _ffi._lib.chassis_check(self._ptr, out_ptr, len(out), ctypes.byref(unreachable))
             if count == 0 and _ffi._lib.chassis_last_error_code() != 0:
                 raise _ffi.last_error("The index couldn't be checked")
@@ -616,14 +616,10 @@ class VectorIndex:
             )
         query = _as_vector(query, self._dimensions, "query")
 
-        # Allocate output buffers
-        out_ids = np.zeros(k, dtype=np.uint64)
-        out_dists = np.zeros(k, dtype=np.float32)
-
-        # Call FFI
-        query_ptr = query.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        ids_ptr = out_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
-        dists_ptr = out_dists.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        # ctypes arrays, not numpy: they cost less to make and to read back.
+        ids_out = (ctypes.c_uint64 * k)()
+        dists_out = (ctypes.c_float * k)()
+        query_ptr = query.ctypes.data
 
         if excluded is not None:
             excluded = _id_array("excluded", excluded)
@@ -633,30 +629,25 @@ class VectorIndex:
                 allowed = np.setdiff1d(allowed, excluded)
 
         if allowed is not None:
-            allowed_ptr = allowed.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            allowed_ptr = allowed.ctypes.data
             count = _ffi._lib.chassis_search_filtered(
-                self._ptr, query_ptr, len(query), k, allowed_ptr, len(allowed), ids_ptr, dists_ptr
+                self._ptr, query_ptr, len(query), k, allowed_ptr, len(allowed), ids_out, dists_out
             )
         elif excluded is not None:
-            excluded_ptr = excluded.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64))
+            excluded_ptr = excluded.ctypes.data
             count = _ffi._lib.chassis_search_excluding(
-                self._ptr, query_ptr, len(query), k, excluded_ptr, len(excluded), ids_ptr, dists_ptr
+                self._ptr, query_ptr, len(query), k, excluded_ptr, len(excluded), ids_out, dists_out
             )
         else:
             count = _ffi._lib.chassis_search(
-                self._ptr, query_ptr, len(query), k, ids_ptr, dists_ptr
+                self._ptr, query_ptr, len(query), k, ids_out, dists_out
             )
 
         # 0 results is an error only if one was set: an empty index has none either.
         if count == 0 and _ffi._lib.chassis_last_error_code() != 0:
             raise _ffi.last_error("The search failed")
 
-        # Convert to SearchResult objects
-        results = [
-            SearchResult(id=int(out_ids[i]), distance=float(out_dists[i])) for i in range(count)
-        ]
-
-        return results
+        return list(map(SearchResult, ids_out[:count], dists_out[:count]))
 
     def search_batch(
         self,
@@ -705,12 +696,12 @@ class VectorIndex:
 
         done = _ffi._lib.chassis_search_batch(
             self._ptr,
-            queries.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            queries.ctypes.data,
             count,
             self._dimensions,
             k,
-            out_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_uint64)),
-            out_dists.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            out_ids.ctypes.data,
+            out_dists.ctypes.data,
         )
         if done != count:
             raise _ffi.last_error("The search failed")
