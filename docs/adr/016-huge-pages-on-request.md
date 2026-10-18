@@ -167,12 +167,12 @@ not yet in memory took up to 28% less, and on one machine 1% more.
 **The option has three settings, and `warm` asks under long vectors.** `huge_pages` is an
 `Option<bool>` (`None` in Python; in C, `chassis_use_huge_pages` and `chassis_keep_small_pages`).
 `Some(true)` asks from opening, as the option did. `Some(false)` never asks. `None`, the default,
-leaves it to `warm`, which asks under vectors of 1 KB or more. `warm` reads the whole index in, so
+leaves it to `warm`, which asks under vectors of 2 KB or more. `warm` reads the whole index in, so
 reading the vectors 2 MB at a time reads the same bytes sooner: what kept this option off by
 default, reading far more than a miss uses, doesn't arise when every page is read. It asks for the
 same pieces as this option, by decision 2.
 
-Three runs on GitHub's runners (`bench/lab/dist-plan.md` on `lab/x86`) gave the reasons:
+Four runs on GitHub's runners (`bench/lab/dist-plan.md` on `lab/x86`) gave the reasons:
 
 - **FAISS's lead at 1,536 dimensions on Zen 3 is the pages.** The runners give anonymous memory
   huge pages without asking, so FAISS's vectors are on them and Chassis's file is not. With this
@@ -188,12 +188,16 @@ Three runs on GitHub's runners (`bench/lab/dist-plan.md` on `lab/x86`) gave the 
   and 0.978 at 0.99; `Some(true)` did the same. Zen 3 made 1.05 and a Xeon 8573C 1.03. At 1,536
   dimensions, Zen 3 made 1.16 and a Xeon 6973P-C 1.05. `warm` came within 3% of `Some(true)` on
   every machine.
+- **Vectors of 1,536 bytes lose on Zen 4.** dbpedia's 99,000 vectors cut to 384 and 768
+  dimensions, in full and half precision, on 20 jobs. Of 1,536 bytes (384 dimensions full, 768
+  half), a Zen 4 made 0.81 and 0.80 times the queries a second on huge pages, in every round, and
+  a Zen 5 0.96 at 768 half, from rounds of 0.92 to 1.05; of 768 bytes (384 half), the Zen 4 made
+  0.90. Of 3,072 bytes (768 full), every CPU made at least 0.99: Zen 3 1.11 in the median of 12
+  jobs, Zen 4 1.02, Zen 5 1.04. Zen 4 and Zen 5 drew one job each.
 
-The line at 1 KB lies between the 512 bytes of a 128-dimension vector, which lost on Zen 5, and the
-3,840 of a 960-dimension one, which gained on every CPU but a Xeon 8370C, where it was level
-(ADR-0018); nothing between was measured. Short vectors on the other CPUs, which gained up to 14%,
-get huge pages only with `Some(true)`. In half precision the line is less sure. In single runs
-(ADR-0018), huge pages gained 3 to 20% under 128-dimension vectors, Zen 5's included, and from 3%
-less to 8% more under long ones. `Some(true)` is still not the default, for the misses above.
+The line at 2 KB lies between the 1,536 bytes that lost on Zen 4 and the 3,072 that gained or held
+on every CPU. Shorter vectors on the other CPUs, which gained up to 14%, get huge pages only with
+`Some(true)`. In half precision the line is less sure: in a single run (ADR-0018), a Zen 4 made
+0.96 at 1,536 dimensions, 3,072 bytes. `Some(true)` is still not the default, for the misses above.
 
 The new type breaks Rust code that sets `huge_pages`.

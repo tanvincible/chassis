@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Changed
 
-- `warm()` asks for huge pages under vectors of 1 KB or more, on Linux, unless told not to (#121).
+- `warm()` asks for huge pages under vectors of 2 KB or more, on Linux, unless told not to (#121).
 - Python: `huge_pages` is `None` by default, leaving it to `warm` (#121).
 
 ### Performance

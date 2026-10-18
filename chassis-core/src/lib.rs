@@ -134,9 +134,9 @@ pub struct IndexOptions {
     /// (ADR-0019), so that searches stop waiting for the disk one page at a time. For an index
     /// that fits in memory; one much larger would push everything else out. Off by default. It
     /// takes Linux 5.14 or macOS: an older Linux reads only some of the index, and Windows none.
-    /// Unless `huge_pages` says otherwise, it asks for huge pages under vectors of 1 KB or more:
-    /// read in whole, the index costs no more on them. Shorter ones searched a little slower on
-    /// them on Zen 5.
+    /// Unless `huge_pages` says otherwise, it asks for huge pages under vectors of 2 KB or more:
+    /// read in whole, the index costs no more on them. Shorter ones searched slower on them on
+    /// AMD's Zen 4 and Zen 5.
     pub warm: bool,
 }
 

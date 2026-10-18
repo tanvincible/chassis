@@ -437,8 +437,8 @@ struct Segment {
 const HUGE_PAGE: u64 = 2 << 20;
 
 /// The size of vector from which `warm` asks for huge pages unless told: shorter ones lost on
-/// them on Zen 5 (ADR-0016).
-const WARM_HUGE_FROM: usize = 1024;
+/// them on Zen 4 and Zen 5 (ADR-0016).
+const WARM_HUGE_FROM: usize = 2048;
 
 /// The whole huge pages inside the file offsets `start..end`, if there are any. Bytes that share
 /// a huge page with bytes outside the range are left out: a page written through the mapping is

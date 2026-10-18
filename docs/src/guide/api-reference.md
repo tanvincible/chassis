@@ -371,14 +371,15 @@ searches are up to a quarter faster and batch builds a little faster
 ([ADR-0016](https://github.com/tanvincible/chassis/blob/main/docs/adr/016-huge-pages-on-request.md)). It works on Linux, where the kernel and
 filesystem keep files on huge pages (ext4 on Linux 6.17 does), and does nothing elsewhere. A writer
 and its readers each ask for themselves. On most CPUs measured, searches were faster on huge pages,
-by up to 27%. With vectors of 128 dimensions they were 2 to 5% slower on AMD's Zen 5 and level on a
-Xeon 6973P-C, and at 960 dimensions level on a Xeon 8370C. In half precision, under long vectors,
-they ranged from 3% slower to 8% faster.
+by up to 27%. With vectors of 128 dimensions they were 2 to 5% slower on AMD's Zen 5, and with 384
+dimensions, or 768 in half precision, 10 to 20% slower on a Zen 4. A Xeon 6973P-C at 128 dimensions
+and a Xeon 8370C at 768 and 960 were level. In half precision at 1,536 dimensions, a Zen 4 was 4%
+slower.
 
 `Some(true)` asks from the moment the index is opened. A page not yet in memory is then read 2 MB at
 a time, which an index much larger than memory pays for on every miss. `Some(false)` never asks.
-`None`, the default, leaves it to `warm`, which asks under vectors of 1 KB or more: 256 dimensions
-at full precision, 512 at half. `use_huge_pages` and `keep_small_pages`, on `VectorIndex` and
+`None`, the default, leaves it to `warm`, which asks under vectors of 2 KB or more: 512 dimensions
+at full precision, 1,024 at half. `use_huge_pages` and `keep_small_pages`, on `VectorIndex` and
 `IndexReader`, do the same after opening.
 
 Only pages read from the disk after asking go on huge pages. Vectors a writer added one at a time,
@@ -395,7 +396,7 @@ after 0.37 s with it and 1.9 s without. On Linux servers with slower disks, it r
 file. It is off by default because an index much larger than memory would push everything else out,
 itself included, and on a slow disk reading the whole file can take longer than the searches would.
 It takes Linux 5.14 or later, or macOS; an older Linux reads in only some of the index, and Windows
-none. On Linux, unless `huge_pages` says otherwise, it asks for huge pages under vectors of 1 KB or
+none. On Linux, unless `huge_pages` says otherwise, it asks for huge pages under vectors of 2 KB or
 more: read in whole, the index costs no more on them. `VectorIndex::warm` and `IndexReader::warm` ask for it after opening and return at once. From
 then on the option is on, so a reader that opens the file again after a compaction reads the new one
 in too.

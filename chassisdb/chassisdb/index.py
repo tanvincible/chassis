@@ -72,7 +72,7 @@ class IndexOptions:
             one page at a time. For an index that fits in memory. It takes
             Linux 5.14 or macOS: an older Linux reads only some of the
             index, and Windows none. Unless ``huge_pages`` says otherwise, it
-            asks for huge pages under vectors of 1 KB or more. Default: False
+            asks for huge pages under vectors of 2 KB or more. Default: False
     """
 
     max_connections: int = 16
@@ -745,7 +745,7 @@ class VectorIndex:
 
         Doesn't wait for the reading: searches go on meanwhile. While it
         is under way, calling again does nothing. On Linux it asks for huge
-        pages too, under vectors of 1 KB or more, unless the index was opened
+        pages too, under vectors of 2 KB or more, unless the index was opened
         with ``huge_pages=False``. Opening with ``IndexOptions(warm=True)``
         does the same from the start.
 
