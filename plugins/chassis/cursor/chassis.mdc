@@ -110,6 +110,9 @@ reader.close()
   row's id. The guide, with what a crash leaves:
   https://tanvincible.github.io/chassis/guide/with-a-database.html
 - **Compacting**: deletes cost speed, not recall; compact once `deleted_count()` nears `len()`.
+- **Backups**: `index.backup(path)` writes a copy that opens like any index. Don't copy the file
+  while it is open: between flushes its undo file sits beside it. A `read_only=True` index backs up
+  the writer's last flush while the writer keeps writing.
 - **Many at once**: `add_batch` links on every core, far faster than `add` in a loop;
   `search_batch(queries, k)` returns `(ids, distances)` arrays for many queries in one call.
 - **Speed**: a search over tens of thousands of vectors takes about 0.1 ms, so the embedding model

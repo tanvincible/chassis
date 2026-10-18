@@ -1549,6 +1549,71 @@ pub unsafe extern "C" fn chassis_rollback(ptr: *mut ChassisIndex) -> c_int {
     .unwrap_or(-1)
 }
 
+/// Write a copy of the index to `path` (ADR-0024)
+///
+/// From a writer's handle it flushes first, and the backup holds every add and delete so far. From
+/// a reader's handle it holds the writer's last flush, taken while the writer keeps writing: it
+/// copies the file, then the undo file beside it, and starts over if a flush lands meanwhile, a few
+/// times before it gives up. The copy is written beside `path` and renamed over it once whole, so a
+/// crash never leaves half a backup there; a file already at `path` is replaced. Restore a backup
+/// by copying it into place while nothing has the index open.
+///
+/// # Returns
+///
+/// - 0 on success
+/// - -1 on failure (check `chassis_last_error_message()`): `path` is NULL, not UTF-8 or the
+///   index's own file, the copy can't be written, or, from a reader, a flush landed during every
+///   try
+///
+/// # Thread Safety
+///
+/// Safe from any thread. From a writer's handle it runs as a write does; searches wait for it.
+///
+/// # Safety
+///
+/// - `ptr` must be NULL or a live handle
+/// - `path` must be NULL or a NUL-terminated string
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_backup(ptr: *mut ChassisIndex, path: *const c_char) -> c_int {
+    ffi_guard(|| {
+        if path.is_null() {
+            set_last_error(
+                "The backup's path is NULL\nhelp: pass where to write the backup, as a \
+                 NUL-terminated string",
+            );
+            return -1;
+        }
+        // SAFETY: the caller passes `path` as a NUL-terminated string, as it isn't NULL.
+        let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else {
+            set_last_error("The backup's path isn't valid UTF-8\nhelp: pass it encoded as UTF-8");
+            return -1;
+        };
+        // SAFETY: the caller passes NULL or a live handle.
+        let Some(state) = (unsafe { state(ptr) }) else {
+            return -1;
+        };
+        let backed_up = match &state.inner {
+            Kind::Writer(lock) => lock.write().map(|mut index| index.backup(path)).map_err(drop),
+            Kind::Reader(lock) => lock.lock().map(|mut reader| reader.backup(path)).map_err(drop),
+        };
+        match backed_up {
+            Ok(Ok(())) => {
+                clear_last_error();
+                0
+            }
+            Ok(Err(e)) => {
+                set_last_error(e);
+                -1
+            }
+            Err(()) => {
+                set_last_error(POISONED);
+                -1
+            }
+        }
+    })
+    .unwrap_or(-1)
+}
+
 /// Ask the operating system to keep the index's vectors on huge pages
 ///
 /// On an index too large for the CPU's caches, searches are up to a quarter faster and batch
@@ -2660,6 +2725,35 @@ mod tests {
         });
 
         assert_eq!(unsafe { chassis_len(ptr) }, 1201);
+        unsafe { chassis_free(ptr) };
+    }
+
+    #[test]
+    fn test_ffi_backup_from_a_writer_and_from_a_reader() {
+        let (dir, path) = temp_index_path();
+        let ptr = unsafe { chassis_open(path.as_ptr(), 4) };
+        for i in 0..21 {
+            if i == 20 {
+                assert_eq!(unsafe { chassis_flush(ptr) }, 0);
+            }
+            assert_eq!(unsafe { chassis_add(ptr, [i as f32; 4].as_ptr(), 4) }, i);
+        }
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 4, 16, 50) };
+        let backup = |name: &str| CString::new(dir.path().join(name).to_str().unwrap()).unwrap();
+        let (from_reader, from_writer) = (backup("reader.chassis"), backup("writer.chassis"));
+        assert_eq!(unsafe { chassis_backup(reader, from_reader.as_ptr()) }, 0);
+        assert_eq!(unsafe { chassis_backup(ptr, from_writer.as_ptr()) }, 0);
+        // The reader's holds the last flush; the writer flushes first.
+        for (backup, len) in [(&from_reader, 20), (&from_writer, 21)] {
+            let copy = unsafe { chassis_open(backup.as_ptr(), 4) };
+            assert_eq!(unsafe { chassis_len(copy) }, len);
+            unsafe { chassis_free(copy) };
+        }
+
+        assert_eq!(unsafe { chassis_backup(ptr, ptr::null()) }, -1);
+        assert_eq!(unsafe { chassis_backup(reader, path.as_ptr()) }, -1);
+        assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_INVALID_ARGUMENT);
+        unsafe { chassis_free(reader) };
         unsafe { chassis_free(ptr) };
     }
 

@@ -769,6 +769,29 @@ class VectorIndex:
         if _ffi._lib.chassis_compact(self._ptr) != 0:
             raise _ffi.last_error("The compaction failed")
 
+    def backup(self, path: str | Path) -> None:
+        """Write a copy of the index to ``path`` (ADR-0024).
+
+        From a writer it flushes first, and the backup holds every add and
+        delete so far. From a ``read_only`` index it holds the writer's last
+        flush, taken while the writer keeps writing: if a flush lands during
+        each of a few tries, it gives up. The copy is written beside ``path``
+        and renamed over it once whole, so a crash never leaves half a backup
+        there; a file already at ``path`` is replaced. Restore a backup by
+        copying it into place while nothing has the index open.
+
+        Raises:
+            InvalidArgumentError: If ``path`` is the index's own file
+            ChassisError: If the copy can't be written, or, from a reader, a
+                flush landed during every try
+
+        Thread Safety:
+            Safe from any thread; from a writer it runs as a write does.
+        """
+        self._check_closed()
+        if _ffi._lib.chassis_backup(self._ptr, str(Path(path)).encode("utf-8")) != 0:
+            raise _ffi.last_error("The backup failed")
+
     def __len__(self) -> int:
         """Get the number of vectors in the index.
 

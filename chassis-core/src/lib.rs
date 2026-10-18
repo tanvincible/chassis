@@ -192,13 +192,7 @@ impl VectorIndex {
     /// - The file was created with a different `max_connections`
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
         let params = hnsw_params(&options);
-        // Compaction and migration rename a new file over this one: through a symlink that would
-        // replace the link and leave the file it points to behind. Only links are resolved, so
-        // errors name the path as given (on Windows a canonical one starts `\\?\`).
-        let mut path = path.as_ref().to_path_buf();
-        if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
-            path = std::fs::canonicalize(&path).unwrap_or(path);
-        }
+        let path = file_path(path.as_ref());
         let storage = Storage::open_with_precision(
             &path,
             dims,
@@ -655,6 +649,23 @@ impl VectorIndex {
         Ok(())
     }
 
+    /// Flushes, then writes a copy of the index to `path` (ADR-0024): a backup holding every add
+    /// and delete so far, which opens like any index. The copy is written beside `path` and
+    /// renamed over it once whole, so a crash never leaves half a backup there; an existing file
+    /// at `path` is replaced. Restore a backup by copying it into place while nothing has the
+    /// index open.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the flush fails, `path` is the index's own file, or the copy can't be
+    /// written.
+    pub fn backup<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        Ok(storage::write_backup(&self.path.clone(), path.as_ref(), |temp| {
+            self.flush()?;
+            self.graph.storage.copy_into(&mut std::fs::File::create(temp)?)
+        })?)
+    }
+
     /// Rewrites the index without its deleted vectors and with a newly built graph, then replaces
     /// the file with the copy (ADR-0011). Ids don't change. Like `flush`, it makes every add and
     /// delete so far durable. It takes as long as building the index, on every core, and needs
@@ -1089,6 +1100,20 @@ fn precision_name(precision: Precision) -> &'static str {
     }
 }
 
+/// How many times `IndexReader::backup` copies the file before it gives up on flushes landing.
+const BACKUP_TRIES: usize = 5;
+
+/// `path`, or the file it links to. Compaction and migration rename a new file over the index:
+/// through a symlink that would replace the link and leave the file it points to behind. Only
+/// links are resolved, so errors name the path as given (on Windows a canonical one starts `\\?\`).
+fn file_path(path: &Path) -> PathBuf {
+    let path = path.to_path_buf();
+    if path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return std::fs::canonicalize(&path).unwrap_or(path);
+    }
+    path
+}
+
 fn hnsw_params(options: &IndexOptions) -> HnswParams {
     HnswParams {
         max_connections: options.max_connections,
@@ -1145,6 +1170,38 @@ impl IndexReader {
             *self = Self::open(&self.path, self.dims, self.options.clone())?;
         }
         Ok(())
+    }
+
+    /// Writes a copy of the writer's last flush to `path` while it keeps writing (ADR-0024),
+    /// as `VectorIndex::backup` does from the writer. It copies the file, then the undo file
+    /// beside it, and starts over if a flush lands meanwhile; after a few tries it gives up. The
+    /// copy then recovers as after a crash, to exactly that flush.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `path` is the index's own file, the copy can't be written, or a flush
+    /// landed during every try.
+    pub fn backup<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let source = file_path(&self.path);
+        Ok(storage::write_backup(&source, path.as_ref(), |temp| {
+            for _ in 0..BACKUP_TRIES {
+                self.sync()?;
+                let storage = &self.graph.storage;
+                if storage.copy_commit(&source, temp)? {
+                    let (dims, params) = (storage.dimensions(), storage.params());
+                    let (metric, precision) = (storage.metric(), storage.precision());
+                    Storage::open_with_precision(temp, dims, params, metric, precision)?;
+                    return Ok(());
+                }
+            }
+            fail!(
+                Other,
+                "The writer flushed, rolled back or compacted the index at {} during each of \
+                 {BACKUP_TRIES} copies, so none holds one flush whole\nhelp: back up from the \
+                 writer with its backup(), or while it flushes less often",
+                self.path.display()
+            )
+        })?)
     }
 
     /// Search for the `k` nearest committed vectors, by the ids given to `add`/`add_with_id`.
@@ -1943,5 +2000,185 @@ mod tests {
         let query = vec![10.0; 128];
         let results = index.search(&query, 5).unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_a_backup_from_the_writer_holds_everything_so_far_and_replaces_what_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, backup) = (dir.path().join("index.chassis"), dir.path().join("backup.chassis"));
+        let (mut index, _) = index_with_unflushed_adds(&path);
+        assert!(index.delete(7).unwrap());
+        index.set_user_version(3);
+        std::fs::write(&backup, b"an older backup").unwrap();
+        std::fs::write(storage::sibling(&backup, "undo"), b"left by a writer of it").unwrap();
+        index.backup(&backup).unwrap();
+        assert!(!storage::sibling(&backup, "undo").exists());
+        assert!(!storage::sibling(&backup, "partial").exists());
+
+        let copy = VectorIndex::open(&backup, 16, IndexOptions::default()).unwrap();
+        assert_eq!(copy.ids().unwrap(), index.ids().unwrap());
+        assert_eq!(lists(&copy), lists(&index));
+        assert_eq!(copy.get(1999).unwrap(), Some(random_vector(1999)));
+        assert_eq!((copy.len(), copy.deleted_count(), copy.user_version()), (1999, 1, 3));
+        assert_eq!(index.add(&random_vector(5000)).unwrap(), 2000, "the index writes on");
+    }
+
+    #[test]
+    fn test_a_backup_onto_the_index_itself_is_refused_and_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let (mut index, committed) = index_with_unflushed_adds(&path);
+        let mut reader = IndexReader::open(&path, 16, IndexOptions::default()).unwrap();
+        let same = dir.path().join(".").join("index.chassis");
+        for target in [&path, &same, &storage::sibling(&path, "undo")] {
+            let refused = index.backup(target).unwrap_err();
+            assert_eq!(refused.kind(), ErrorKind::InvalidArgument, "{target:?}");
+            assert!(refused.to_string().contains("is the index's own file"), "{refused}");
+            assert_eq!(reader.backup(target).unwrap_err().kind(), ErrorKind::InvalidArgument);
+        }
+        drop(index);
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!(lists(&index), committed, "nothing was flushed");
+    }
+
+    #[test]
+    fn test_a_backup_from_a_reader_is_the_writers_last_flush_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, backup) = (dir.path().join("index.chassis"), dir.path().join("backup.chassis"));
+        let (mut index, committed) = index_with_unflushed_adds(&path);
+        index.set_user_version(9);
+        assert!(index.delete(3).unwrap());
+        let mut reader = IndexReader::open(&path, 16, IndexOptions::default()).unwrap();
+        reader.backup(&backup).unwrap();
+        assert!(storage::sibling(&path, "undo").exists(), "the writer's lists were mid-change");
+        assert!(!storage::sibling(&backup, "undo").exists());
+        assert!(!storage::sibling(&backup, "partial").exists());
+
+        let copy = VectorIndex::open(&backup, 16, IndexOptions::default()).unwrap();
+        assert_eq!(lists(&copy), committed);
+        assert_eq!((copy.len(), copy.deleted_count(), copy.user_version()), (300, 0, 0));
+        assert!((0..300).all(|id| copy.get(id).unwrap() == Some(random_vector(id))));
+        assert_eq!(index.len(), 1999, "the writer is as it was");
+    }
+
+    /// A copy recovers the commit because it takes the undo file after the index: a list changed
+    /// between the two is saved before it changes. Taken the other way round, it doesn't.
+    #[test]
+    fn test_a_copy_of_the_index_then_its_undo_file_recovers_the_commit() {
+        for undo_first in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, copy) = (dir.path().join("index.chassis"), dir.path().join("copy.chassis"));
+            let mut index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+            index.add_batch(&(0..300).flat_map(random_vector).collect::<Vec<f32>>()).unwrap();
+            index.flush().unwrap();
+            let committed = lists(&index);
+            index.add(&random_vector(300)).unwrap();
+            let reader = IndexReader::open(&path, 16, IndexOptions::default()).unwrap();
+            let copy_index = || {
+                let file = &mut std::fs::File::create(&copy).unwrap();
+                reader.graph.storage.copy_into(file).unwrap();
+            };
+            let copy_undo =
+                || std::fs::copy(storage::sibling(&path, "undo"), storage::sibling(&copy, "undo"));
+            if undo_first {
+                copy_undo().unwrap();
+            } else {
+                copy_index();
+            }
+            for id in 301..900 {
+                index.add(&random_vector(id)).unwrap();
+            }
+            if undo_first {
+                copy_index();
+            } else {
+                copy_undo().unwrap();
+            }
+            let recovered = lists(&VectorIndex::open(&copy, 16, IndexOptions::default()).unwrap());
+            assert_eq!(recovered == committed, !undo_first, "undo first: {undo_first}");
+        }
+    }
+
+    #[test]
+    fn test_a_rollback_that_puts_lists_back_writes_a_header_a_backup_sees() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let (mut index, committed) = index_with_unflushed_adds(&path);
+        let reader = IndexReader::open(&path, 16, IndexOptions::default()).unwrap();
+        let before = reader.graph.storage.header_words();
+        index.rollback().unwrap();
+        assert_ne!(reader.graph.storage.header_words(), before);
+        drop(index);
+        let index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        assert_eq!((lists(&index), index.len()), (committed, 300), "the same commit");
+    }
+
+    #[test]
+    fn test_backups_from_a_reader_while_the_writer_adds_and_flushes_hold_one_flush_each() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.chassis");
+        let mut index = VectorIndex::open(&path, 16, IndexOptions::default()).unwrap();
+        index.add_batch(&(0..100).flat_map(random_vector).collect::<Vec<f32>>()).unwrap();
+        index.flush().unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let writing = stop.clone();
+        let writer = std::thread::spawn(move || {
+            for id in 100.. {
+                index.add(&random_vector(id)).unwrap();
+                if id % 100 == 99 {
+                    index.flush().unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    if writing.load(Ordering::Relaxed) {
+                        return;
+                    }
+                }
+            }
+        });
+        let mut reader = IndexReader::open(&path, 16, IndexOptions::default()).unwrap();
+        let mut held = 0;
+        for i in 0..20 {
+            let backup = dir.path().join(format!("{i}.chassis"));
+            match reader.backup(&backup) {
+                Ok(()) => held += 1,
+                Err(e) if e.kind() == ErrorKind::Other => continue,
+                Err(e) => panic!("{e}"),
+            }
+            let copy = VectorIndex::open(&backup, 16, IndexOptions::default()).unwrap();
+            assert_eq!(copy.len() % 100, 0, "a flush whole");
+            assert!((0..copy.len()).all(|id| copy.get(id).unwrap() == Some(random_vector(id))));
+            let links = lists(&copy).into_iter().flatten().flatten();
+            assert!(links.into_iter().all(|id| id < copy.len()), "no link past the flush");
+        }
+        stop.store(true, Ordering::Relaxed);
+        writer.join().unwrap();
+        assert!(held > 0, "no backup held a flush");
+    }
+
+    /// A flush or a rollback between the copy of the index and the copy of its undo file takes
+    /// the undo file away; the header it writes sends the backup back to the start.
+    #[test]
+    fn test_a_backup_from_a_reader_starts_over_when_the_writer_flushes_or_rolls_back_mid_copy() {
+        use std::{cell::RefCell, rc::Rc};
+        for flush in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, backup) = (dir.path().join("index.chassis"), dir.path().join("b.chassis"));
+            let (index, committed) = index_with_unflushed_adds(&path);
+            let index = Rc::new(RefCell::new(index));
+            let mut reader = IndexReader::open(&path, 16, IndexOptions::default()).unwrap();
+            let (writer, tries) = (index.clone(), Rc::new(RefCell::new(0)));
+            let counted = tries.clone();
+            storage::BETWEEN_COPIES.set(Some(Box::new(move || {
+                *counted.borrow_mut() += 1;
+                if *counted.borrow() == 1 {
+                    let mut writer = writer.borrow_mut();
+                    if flush { writer.flush() } else { writer.rollback() }.unwrap();
+                }
+            })));
+            reader.backup(&backup).unwrap();
+            storage::BETWEEN_COPIES.set(None);
+            let copy = VectorIndex::open(&backup, 16, IndexOptions::default()).unwrap();
+            let expected = if flush { lists(&index.borrow()) } else { committed };
+            assert_eq!((lists(&copy), *tries.borrow()), (expected, 2), "flush: {flush}");
+        }
     }
 }

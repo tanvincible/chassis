@@ -183,7 +183,21 @@ too: close the index and open it again.
 
 At rest the index is one file. A `<name>.undo` file sits beside it from the first add after a flush
 until the next flush, and after a crash until a writer reopens the index ([file
-format](../architecture/file-format.md#undo-file)). Move, copy or delete the two together.
+format](../architecture/file-format.md#undo-file)). Move, copy or delete the two together, or copy
+the index with `backup` while it is open.
+
+#### Backup
+
+```rust
+// A copy of the index, every add and delete so far: it flushes first.
+index.backup("backups/embeddings.chassis")?;
+```
+
+The backup opens like any index. It is written beside its path and renamed into place once whole,
+so a crash never leaves half a backup there, and it replaces a file already at that path. An
+`IndexReader` makes one too, of the writer's last flush, while the writer keeps writing; see
+[`IndexReader`](#indexreader). To restore a backup, copy it into place while nothing has the index
+open ([ADR-0024](https://github.com/tanvincible/chassis/blob/main/docs/adr/024-backups.md)).
 
 #### Lookups
 
@@ -266,6 +280,11 @@ a moment. `len()` and `deleted_count()` report the last snapshot; `refresh()` ta
 without searching, and `snapshot()` identifies it, for keying a cache.
 `search` takes `&mut self`: open one reader per thread. The file must exist in the current format;
 open it once with `VectorIndex::open` to create or migrate it.
+
+`reader.backup(path)` copies the writer's last flush while the writer keeps writing. It copies the
+file, then the undo file beside it, and starts over if a flush lands meanwhile; after five tries it
+gives up. The copy needs a pause in the writer's flushes as long as itself, about a third of a
+second for 200 MB on a laptop: a writer that flushes more often than that backs up itself.
 
 ## Errors
 

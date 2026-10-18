@@ -206,6 +206,12 @@ to match); any number can search while one writer writes, in this process or oth
   transaction in your own store rolls back, or the next flush commits what that write did to the
   index. If it raises, later flushes fail too: close the index and open it again.
 
+- **`backup(path) -> None`**  
+  Write a copy of the index to `path`, which opens like any index. A writer flushes first, so the
+  backup holds every add and delete so far; a `read_only=True` index copies the writer's last
+  flush while the writer keeps writing, and gives up if a flush lands during each of five tries.
+  The copy is renamed into place once whole, replacing a file already there.
+
 - **`warm() -> None`**  
   Read the index into memory on another thread, so that searches stop waiting for the disk while
   its file is not in memory yet, as after a reboot. Returns at once; searches go on meanwhile.
