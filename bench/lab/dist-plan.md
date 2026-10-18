@@ -183,3 +183,46 @@ Zen 4, so only Zen 3 is decided on. `dist_report.py` reads both runs' artifacts.
   down to 0.93. Whether to change the default is the user's call.
 - **Zen 5 is open.** FAISS at AVX-512 leads there on one job, even with huge pages. It needs its
   own run.
+
+## Huge pages made from small ones (distbench RUN 2)
+
+Written before the run.
+
+`huge_pages` is opt-in because a page not yet in memory is then read 2 MB at a time, which costs
+an index much larger than memory on every miss (ADR-0016). Linux 6.1 and later can instead put
+pages that are already in memory onto a huge page in place: `madvise(MADV_COLLAPSE)`. A file read
+on small pages and collapsed once it is in memory would keep small reads from the disk and still
+search on huge pages. Whether Linux does that for a regular file, and for one a writer has open,
+is the question.
+
+**What is measured.** `distbench.yml` RUN 2, `lab/exp-dist` with the collapse added, eight jobs.
+The same timing as RUN 1, over five memories: `anon`, `file`, `file-huge` as before, and:
+
+- `file-collapse`: the file mapped shared and writable, as a writer maps it, read on small pages,
+  then `MADV_COLLAPSE` over all of it.
+- `file-ro-collapse`: the same through a read-only mapping, with nothing holding the file open
+  for writing, as a reader with no writer running.
+
+Each collapse prints whether `madvise` returned 0 or its error, and how long it took. The share
+on huge pages comes from `/proc/self/smaps`, as before.
+
+**Predictions.**
+
+1. `file-ro-collapse`: the collapse returns 0, and at least 0.9 of the memory is on huge pages.
+2. `file-collapse`: the collapse fails, or leaves under 0.1 on huge pages, because the file is
+   open for writing.
+3. Wherever a collapse put at least 0.9 on huge pages, `now` there is within 3% of `now` on
+   `file-huge`.
+4. A collapse of the 608 MB that succeeds takes under one second.
+
+**The decision.**
+
+- **The writable collapse works** (at least 0.9 on huge pages): next, a plan for putting vectors
+  on huge pages that way. Read on small pages, collapse the whole huge pages of committed vectors
+  once they are in memory, and decide from it whether that can be on by default. Decision 2 of
+  ADR-0016 still holds: only pieces that are never written again.
+- **Only the read-only one works**: a reader with no writer running could do it, and a writer
+  couldn't. That is reported, and whether a reader-only collapse is worth having is the user's
+  call.
+- **Neither works**: Linux 6.17 on ext4 won't do it for a file. What's left is choosing by size,
+  huge pages when the index fits in memory, or keeping it opt-in, and that is the user's call.
