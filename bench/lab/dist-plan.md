@@ -343,3 +343,41 @@ All arms have the same recall at every `ef`.
   before it merges. How (a three-state `huge_pages`, as the review proposes, or a rule by vector
   size) is the user's call.
 - **No Zen 5 drawn**: run again.
+
+### Results
+
+[Run 39149161712](https://github.com/tanvincible/chassis/actions/runs/39149161712),
+`feat/warm-huge-pages` at b5b4b37. SIFT drew Zen 3 seven times, Zen 5 (EPYC 9V45) twice and a
+Xeon 8573C once; dbpedia drew Zen 3 three times and a Xeon 6973P-C once. Every arm found the same
+recall at every `ef`. File on huge pages: `warm` 452 to 462 MB on SIFT and 540 to 546 MB on
+dbpedia, `huge` 464 to 470 and 564, `off` none.
+
+| Data | Job | CPU | `off` | `warm` | `huge` | `warm` / `off` | `huge` / `off` | `warm` / `huge` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SIFT | f | Zen 5 | 24,485 | 23,632 | 23,589 | 0.965 | 0.963 | 1.002 |
+| SIFT | j | Zen 5 | 25,830 | 24,563 | 25,097 | 0.951 | 0.972 | 0.979 |
+| SIFT | a | Zen 3 | 9,848 | 10,400 | 10,305 | 1.056 | 1.046 | 1.009 |
+| SIFT | b | Zen 3 | 10,236 | 10,768 | 10,764 | 1.052 | 1.052 | 1.000 |
+| SIFT | c | Zen 3 | 9,363 | 9,631 | 9,572 | 1.029 | 1.022 | 1.006 |
+| SIFT | d | Zen 3 | 10,019 | 10,542 | 10,655 | 1.052 | 1.064 | 0.989 |
+| SIFT | g | Zen 3 | 9,538 | 10,031 | 10,056 | 1.052 | 1.054 | 0.998 |
+| SIFT | h | Zen 3 | 9,887 | 10,360 | 10,297 | 1.048 | 1.042 | 1.006 |
+| SIFT | i | Zen 3 | 10,209 | 10,901 | 10,889 | 1.068 | 1.067 | 1.001 |
+| SIFT | e | Xeon 8573C | 12,299 | 12,643 | 12,719 | 1.028 | 1.034 | 0.994 |
+| dbpedia | a | Zen 3 | 2,645 | 2,907 | 2,923 | 1.099 | 1.105 | 0.995 |
+| dbpedia | c | Zen 3 | 3,128 | 3,623 | 3,659 | 1.158 | 1.170 | 0.990 |
+| dbpedia | d | Zen 3 | 2,812 | 3,396 | 3,297 | 1.207 | 1.173 | 1.030 |
+| dbpedia | b | Xeon 6973P-C | 2,319 | 2,436 | 2,387 | 1.050 | 1.029 | 1.020 |
+
+Queries a second at 0.95 recall. The medians over jobs of `warm` / `off`: Zen 5 on SIFT 0.958,
+Zen 3 on SIFT 1.052, Zen 3 on dbpedia 1.158.
+
+**Predictions.**
+
+1. **Held.** On Zen 5 at 128 dimensions `warm` made 0.951 and 0.965 of `off`'s queries a second.
+2. **Held.** On Zen 3 at 1,536 dimensions it made 1.158 in the median, from 1.099 to 1.207.
+3. **Held.** `warm` made 0.979 to 1.030 of `huge`'s.
+
+**The decision: the cost is real.** On Zen 5 at 128 dimensions huge pages cost 3 to 5%, through
+`warm` or `huge_pages` alike, as ADR-0016 found (−2%, from −7 to +5%). #121 gets a way to warm on
+small pages before it merges. On Zen 3 and both Xeons they gained at 128 dimensions too, 3 to 7%.

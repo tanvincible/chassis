@@ -1,4 +1,4 @@
-"""distbench RUN 1 and incumbents RUN 10 (`dist-plan.md`), from their artifacts in the current directory.
+"""distbench RUNs 1 and 2 and incumbents RUNs 10 to 12 (`dist-plan.md`), from their artifacts in the current directory.
 
     gh run download <distbench run>; gh run download <incumbents run>; python dist_report.py
 """
@@ -68,15 +68,22 @@ def kb(text, key):
     return int(m.group(1)) if m else None
 
 
+def chassis(d):
+    """lab.tsv's searches: queries a second by (tag, ef), recall by ef, and whether every tag found the same."""
+    qps, recall = collections.defaultdict(list), collections.defaultdict(set)
+    for line in open(f"{d}/lab.tsv"):
+        f = line.rstrip("\n").split("\t")
+        if len(f) >= 7 and f[3] == "search":
+            qps[(f[1], int(f[4]))].append(float(f[6]))
+            recall[int(f[4])].add(f[5])
+    return qps, {e: float(next(iter(r))) for e, r in recall.items()}, all(len(r) == 1 for r in recall.values())
+
+
 def part2():
     by_cpu = collections.defaultdict(list)
-    for d in sorted(glob.glob("incumbents-*")):
-        qps, recall = collections.defaultdict(list), collections.defaultdict(set)
-        for line in open(f"{d}/lab.tsv"):
-            f = line.rstrip("\n").split("\t")
-            if len(f) >= 7 and f[3] == "search":
-                qps[(f[1], int(f[4]))].append(float(f[6]))
-                recall[int(f[4])].add(f[5])
+    for d in sorted(glob.glob("incumbents-*/inc.tsv")):
+        d = d.split("/")[0]
+        qps, rec, same = chassis(d)
         pages = collections.defaultdict(list)
         for line in open(f"{d}/pages.txt"):
             m = re.match(r"pages chassis (\S+): (.*)", line)
@@ -91,10 +98,7 @@ def part2():
                 fpages[f[1]] = kb(f[2], "AnonHuge")
             elif f[0] == "inc" and len(f) >= 7 and f[3] == "search":
                 fq[f[1]][int(f[4])] = (float(f[5]), float(f[6]))
-        rec = {e: float(next(iter(r))) for e, r in recall.items()}
-        same = all(len(r) == 1 for r in recall.values())
-        tags = sorted({t for t, _ in qps})
-        out = {t: at([(e, rec[e], statistics.median(qps[(t, e)])) for e in rec]) for t in tags}
+        out = {t: at([(e, rec[e], statistics.median(qps[(t, e)])) for e in rec]) for t, _ in qps}
         for e in fq:
             out[e] = at([(ef, r, v) for ef, (r, v) in fq[e].items()])
         drift = max((abs(fq["faiss-again"][ef][1] / fq["faiss"][ef][1] - 1) for ef in fq.get("faiss", {})), default=1)
@@ -120,7 +124,35 @@ def part2():
         print(f"   {own} / faiss: {med[own] / med['faiss']:.3f}; faiss-4k / {own}: {med['faiss-4k'] / med[own]:.3f}")
 
 
+def part3():
+    """RUNs 11 and 12: Chassis alone, each tag against `off`."""
+    by = collections.defaultdict(list)
+    for d in sorted(glob.glob("incumbents-*")):
+        if glob.glob(f"{d}/inc.tsv"):
+            continue
+        qps, rec, same = chassis(d)
+        tags = list(dict.fromkeys(t for t, _ in qps))
+        out = {t: at([(e, rec[e], statistics.median(qps[(t, e)])) for e in rec]) for t in tags}
+        pmd = collections.defaultdict(list)
+        for line in open(f"{d}/pages.txt"):
+            m = re.match(r"pages chassis (\S+): (.*)", line)
+            if m:
+                pmd[m.group(1)].append(kb(m.group(2), "FilePmd") // 1024)
+        spread = max(max(qps[k]) / min(qps[k]) - 1 for k in qps)
+        print(f"{d}: {cpu(d)}, recall same {same}, rounds apart {spread:.2f}, FilePmd MB {dict(pmd)}")
+        print("   " + "  ".join(f"{t} {v:.0f}" for t, v in out.items())
+              + "   " + "  ".join(f"{t}/off {out[t] / out['off']:.3f}" for t in tags if t != "off"))
+        if same:
+            by[(d.split("-ubuntu")[0].removeprefix("incumbents-"), cpu(d))].append(out)
+    for (data, name), jobs in sorted(by.items()):
+        tags = [t for t in jobs[0] if t != "off"]
+        print(f"{data}, {name}, {len(jobs)} jobs, the median over jobs of each tag / off: "
+              + "  ".join(f"{t} {statistics.median(j[t] / j['off'] for j in jobs):.3f}" for t in tags))
+
+
 if glob.glob("distbench-*"):
     part1()
-if glob.glob("incumbents-*"):
+if glob.glob("incumbents-*/inc.tsv"):
     part2()
+if glob.glob("incumbents-*/pages.txt"):
+    part3()
