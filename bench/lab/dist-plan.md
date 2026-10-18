@@ -435,3 +435,48 @@ most of its file on them.
 - **Neither:** the line stays at 1 KB, and v0.10.0 is cut.
 - **No Zen 5 drawn:** run once more. Without Zen 5 the second time, the rules above apply to the
   CPUs drawn, and ADR-0016 says Zen 5 wasn't measured between 128 and 1,536 dimensions.
+
+### Results
+
+[Run 39175932818](https://github.com/tanvincible/chassis/actions/runs/39175932818), `main` at
+8676c4c on all 20 jobs. They drew Zen 3 twelve times, a Xeon 8573C three times, a Xeon 8370C three
+times, Zen 4 (EPYC 9V74) once and Zen 5 (EPYC 9V45) once. Every arm found the same recall at every
+`ef`. `off` had no file on huge pages; `huge` had 60 to 62 MB at 384 half, 128 to 130 at 384 full
+and 768 half, 270 to 276 at 768 full.
+
+`huge` / `off`, queries a second at 0.95 recall, each CPU's median over its jobs:
+
+| Vector | Bytes | Zen 3 (12) | Xeon 8573C (3) | Xeon 8370C (3) | Zen 4 (1) | Zen 5 (1) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 384 half | 768 | 1.008 | 1.061 | 1.039 | 0.904 | 1.030 |
+| 384 full | 1,536 | 1.050 | 1.062 | 1.022 | 0.809 | 1.005 |
+| 768 half | 1,536 | 1.038 | 1.002 | 1.009 | 0.802 | 0.961 |
+| 768 full | 3,072 | 1.114 | 1.030 | 0.994 | 1.021 | 1.035 |
+
+By round, the Zen 4 made 0.65, 0.85 and 0.82 at 384 full, 0.80, 0.79 and 0.80 at 768 half, and
+0.91, 0.90 and 0.94 at 384 half; `warm` lost as much where it asked. The Zen 5 made 0.92, 0.99 and
+1.05 at 768 half.
+
+**Predictions.**
+
+1. **Held.** `warm` had 92 to 99% of `huge`'s file on huge pages at 384 full, 768 full and 768
+   half, and none at 384 half.
+2. **Failed.** `warm` came within 3% of its match (`huge` where it asks, `off` at 384 half) in 68
+   of 80 index-jobs, not all: outside on 0 of 20 at 384 full, 5 at 384 half (0.92 to 1.11), 3 at
+   768 full and 4 at 768 half. The rounds were noisier than RUN 12's, up to 42% apart.
+3. **Failed in part.** Zen 3 made 1.050, 1.038 and 1.114 where predicted, but 1.008 at 384 half,
+   under 1.03. It did gain more at 768 full than at 384 half.
+4. **Held.** The Zen 5 made 1.035 at 768 full, from one job.
+
+**The decision: the line rises to 2 KB.** Above the line, the Zen 4 was under 0.97 at 384 full and
+768 half, both 1,536 bytes, and the Zen 5 at 768 half. Every CPU passed at 3,072 bytes, so what
+failed is all below what passed, and the line goes to the next power of two past 1,536: 2,048 bytes,
+512 dimensions at full precision and 1,024 at half (#122). 384 half doesn't drop under the line:
+the Zen 4 made 0.904 there.
+
+What this leaves: the Zen 4 and the Zen 5 are one job each, so one machine moved the line; it moved
+toward the setting before #121, where nobody got huge pages without asking. In half precision at
+1,536 dimensions, 3,072 bytes and above the new line, a Zen 4 made 0.96 in a single run
+(ADR-0018). The Zen 4's loss at 99,000 vectors runs against its gain of 1.26 to 1.29 at 1,536
+dimensions full (RUN 11), on a file twice as large as 768 full's; vector size alone may not be the
+whole story.
