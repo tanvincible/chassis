@@ -215,7 +215,8 @@ to match); any number can search while one writer writes, in this process or oth
 - **`warm() -> None`**  
   Read the index into memory on another thread, so that searches stop waiting for the disk while
   its file is not in memory yet, as after a reboot. Returns at once; searches go on meanwhile. On
-  Linux it asks for huge pages too. `IndexOptions(warm=True)` does the same from the moment the
+  Linux it asks for huge pages too, under vectors of 1 KB or more, unless the index was opened with
+  `huge_pages=False`. `IndexOptions(warm=True)` does the same from the moment the
   index is opened.
 
 - **`compact() -> None`**  
@@ -277,8 +278,8 @@ class IndexOptions:
     ef_search: int = 50            # Query-time search quality
     metric: str = "euclidean"      # or "cosine": 1 - cosine similarity, unit-length storage
     precision: str = "full"        # or "half": vectors kept as 16-bit floats, half the file and memory
-    huge_pages: bool = False       # Linux: keep the vectors on 2 MB pages (faster search if it fits in memory)
-    warm: bool = False             # read the index in from the start, in the background, on huge pages
+    huge_pages: bool | None = None # Linux: 2 MB pages; True from opening, False never, None: warm decides
+    warm: bool = False             # read the index in from the start, in the background
 ```
 
 ### `SearchResult`

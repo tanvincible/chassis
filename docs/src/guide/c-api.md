@@ -159,9 +159,19 @@ int chassis_use_huge_pages(ChassisIndex* index);
 Ask the operating system to keep the index's vectors on huge pages
 ([ADR-0016](https://github.com/tanvincible/chassis/blob/main/docs/adr/016-huge-pages-on-request.md)). On an index too large for the CPU's caches,
 searches are up to a quarter faster. Linux only, where the kernel and filesystem keep files on huge pages
-(ext4 on Linux 6.17 does); elsewhere it does nothing. For an index that fits in memory, ask;
-`chassis_warm` does. Call it right after opening, on a writer's handle or a reader's. Returns `0`,
-or `-1` for a NULL handle.
+(ext4 on Linux 6.17 does); elsewhere it does nothing. Unless this is called, only `chassis_warm`
+asks, under vectors of 1 KB or more: with huge pages a page not yet in memory is read 2 MB at a
+time, which an index much larger than memory pays for on every miss. Call it right after opening, on
+a writer's handle or a reader's. Returns `0`, or `-1` for a NULL handle.
+
+#### `chassis_keep_small_pages`
+```c
+int chassis_keep_small_pages(ChassisIndex* index);
+```
+Ask for no huge pages, not even by `chassis_warm`. Searches were faster on huge pages on most CPUs
+measured, not all; this is for a machine where they aren't.
+What was asked for already stays asked: call it right after opening, before `chassis_warm`, on a
+writer's handle or a reader's. Returns `0`, or `-1` for a NULL handle.
 
 #### `chassis_warm`
 ```c
@@ -173,8 +183,9 @@ reboot. Doesn't wait for the reading: searches go on meanwhile. What is read is 
 holds when this is called; while that is under way, calling again does nothing. A reader that opens
 the file again after a compaction reads the new one in too. For an index that fits in memory: one
 much larger would push everything else out. Linux 5.14 or macOS; an older Linux reads only some of
-the index, and Windows none. It asks for huge pages too, as `chassis_use_huge_pages` does: read in
-whole, the index costs no more on them. Call it on a writer's handle or a reader's, right after
+the index, and Windows none. Under vectors of 1 KB or more it asks for huge pages too, unless
+`chassis_keep_small_pages` was called: read in whole, the index costs no more on them. Pages already
+in memory stay as they are. Call it on a writer's handle or a reader's, right after
 opening or later. Returns `0`, or `-1` for a NULL handle.
 
 #### `chassis_free`

@@ -59,20 +59,20 @@ class IndexOptions:
             a component of 65,520 or more in magnitude refused. Fixed when the
             index is created; a read-only index takes it from the file.
             Default: "full"
-        huge_pages: Ask the operating system to keep the vectors on huge
-            pages. On an index too large for the CPU's caches, searches are
-            up to a quarter faster. Only on Linux, and only where the kernel and
-            filesystem keep files on huge pages (ext4 on Linux 6.17 does);
-            elsewhere it does nothing. With it a page not yet in memory is
-            read 2 MB at a time, which an index much larger than memory pays
-            for on every miss. For an index that fits in memory, turn it on;
-            ``warm`` does. Default: False
+        huge_pages: Whether to ask the operating system to keep the vectors
+            on huge pages. On an index too large for the CPU's caches,
+            searches are up to a quarter faster. Only on Linux, and only where
+            the kernel and filesystem keep files on huge pages (ext4 on Linux
+            6.17 does); elsewhere it does nothing. True asks from the moment
+            the index is opened: a page not yet in memory is then read 2 MB at
+            a time, which an index much larger than memory pays for on every
+            miss. False never asks. None leaves it to ``warm``. Default: None
         warm: Read the whole index into memory on another thread from the
             moment it is opened, so that searches stop waiting for the disk
             one page at a time. For an index that fits in memory. It takes
             Linux 5.14 or macOS: an older Linux reads only some of the
-            index, and Windows none. It asks for huge pages too, as
-            ``huge_pages`` does. Default: False
+            index, and Windows none. Unless ``huge_pages`` says otherwise, it
+            asks for huge pages under vectors of 1 KB or more. Default: False
     """
 
     max_connections: int = 16
@@ -80,7 +80,7 @@ class IndexOptions:
     ef_search: int = 50
     metric: str = "euclidean"
     precision: str = "full"
-    huge_pages: bool = False
+    huge_pages: bool | None = None
     warm: bool = False
 
     def validate(self) -> None:
@@ -290,6 +290,8 @@ class VectorIndex:
         self._ptr = ptr
         if self._options.huge_pages:
             _ffi._lib.chassis_use_huge_pages(ptr)
+        elif self._options.huge_pages is not None:
+            _ffi._lib.chassis_keep_small_pages(ptr)
         if self._options.warm:
             _ffi._lib.chassis_warm(ptr)
         # A reader takes the file's metric and precision; say so rather than use others.
@@ -743,8 +745,9 @@ class VectorIndex:
 
         Doesn't wait for the reading: searches go on meanwhile. While it
         is under way, calling again does nothing. On Linux it asks for huge
-        pages too. Opening with ``IndexOptions(warm=True)`` does the same
-        from the start.
+        pages too, under vectors of 1 KB or more, unless the index was opened
+        with ``huge_pages=False``. Opening with ``IndexOptions(warm=True)``
+        does the same from the start.
 
         Raises:
             ChassisError: If the index can't be used any more

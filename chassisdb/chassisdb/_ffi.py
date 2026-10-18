@@ -208,6 +208,9 @@ _lib.chassis_backup.restype = ctypes.c_int
 _lib.chassis_use_huge_pages.argtypes = [ChassisIndexPtr]
 _lib.chassis_use_huge_pages.restype = ctypes.c_int
 
+_lib.chassis_keep_small_pages.argtypes = [ChassisIndexPtr]
+_lib.chassis_keep_small_pages.restype = ctypes.c_int
+
 _lib.chassis_warm.argtypes = [ChassisIndexPtr]
 _lib.chassis_warm.restype = ctypes.c_int
 

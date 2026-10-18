@@ -121,20 +121,22 @@ pub struct IndexOptions {
     /// created; reopening needs the same one. A reader takes it from the file.
     pub precision: Precision,
 
-    /// Ask the operating system to keep the vectors on huge pages (ADR-0016). On an index too
-    /// large for the CPU's caches, searches are up to a quarter faster and batch builds a little
-    /// faster. Only on Linux, and only where the kernel and filesystem keep files on huge
-    /// pages (ext4 on Linux 6.17 does); elsewhere it does nothing. Off by default: with it a
-    /// page not yet in memory is read 2 MB at a time, which an index much larger than memory
-    /// pays for on every miss. For an index that fits in memory, turn it on; `warm` does.
-    pub huge_pages: bool,
+    /// Whether to ask the operating system to keep the vectors on huge pages (ADR-0016). On an
+    /// index too large for the CPU's caches, searches are up to a quarter faster and batch builds
+    /// a little faster. Only on Linux, and only where the kernel and filesystem keep files on
+    /// huge pages (ext4 on Linux 6.17 does); elsewhere it does nothing. `Some(true)` asks from
+    /// the moment the index is opened: a page not yet in memory is then read 2 MB at a time,
+    /// which an index much larger than memory pays for on every miss. `Some(false)` never asks.
+    /// `None`, the default, leaves it to `warm`.
+    pub huge_pages: Option<bool>,
 
     /// Read the whole index into memory on another thread from the moment it is opened
     /// (ADR-0019), so that searches stop waiting for the disk one page at a time. For an index
     /// that fits in memory; one much larger would push everything else out. Off by default. It
     /// takes Linux 5.14 or macOS: an older Linux reads only some of the index, and Windows none.
-    /// It asks for huge pages too, as `huge_pages` does: read in whole, the index costs no more
-    /// on them.
+    /// Unless `huge_pages` says otherwise, it asks for huge pages under vectors of 1 KB or more:
+    /// read in whole, the index costs no more on them. Shorter ones searched a little slower on
+    /// them on Zen 5.
     pub warm: bool,
 }
 
@@ -146,7 +148,7 @@ impl Default for IndexOptions {
             ef_search: 50,
             metric: DistanceMetric::Euclidean,
             precision: Precision::Full,
-            huge_pages: false,
+            huge_pages: None,
             warm: false,
         }
     }
@@ -239,7 +241,7 @@ impl VectorIndex {
 
     /// What `huge_pages` and `warm` ask of a newly opened file.
     fn apply_options(&mut self) {
-        if self.options.huge_pages {
+        if self.options.huge_pages == Some(true) {
             self.use_huge_pages();
         }
         if self.options.warm {
@@ -768,10 +770,18 @@ impl VectorIndex {
         Ok(())
     }
 
-    /// Asks for huge pages from here on, as opening with `IndexOptions::huge_pages` does.
+    /// Asks for huge pages from here on, as opening with `IndexOptions::huge_pages` at
+    /// `Some(true)` does.
     pub fn use_huge_pages(&mut self) {
-        self.options.huge_pages = true;
+        self.options.huge_pages = Some(true);
         self.graph.storage.use_huge_pages();
+    }
+
+    /// Asks for no huge pages from here on, not even by `warm`, as opening with
+    /// `IndexOptions::huge_pages` at `Some(false)` does. What was asked for already stays asked.
+    pub fn keep_small_pages(&mut self) {
+        self.options.huge_pages = Some(false);
+        self.graph.storage.keep_small_pages();
     }
 
     /// Reads what the index holds into memory on another thread, as opening with
@@ -780,7 +790,7 @@ impl VectorIndex {
     /// again, as a reader does after a compaction, is read in too.
     pub fn warm(&mut self) {
         self.options.warm = true;
-        self.graph.storage.warm();
+        self.graph.storage.warm(self.options.huge_pages);
     }
 
     /// The vector with `id`, or `None` if no live vector has it. It comes back as the index keeps
@@ -1152,7 +1162,7 @@ impl IndexReader {
         let graph = HnswGraph::reader(storage, hnsw_params(&options))?;
         let mut reader =
             Self { graph, ef_search: options.ef_search, path, dims, options, ids: None };
-        if reader.options.huge_pages {
+        if reader.options.huge_pages == Some(true) {
             reader.use_huge_pages();
         }
         if reader.options.warm {
@@ -1260,10 +1270,18 @@ impl IndexReader {
         self.graph.view.map_or((0, 0), |view| (view.committed, view.epoch))
     }
 
-    /// Asks for huge pages from here on, as opening with `IndexOptions::huge_pages` does.
+    /// Asks for huge pages from here on, as opening with `IndexOptions::huge_pages` at
+    /// `Some(true)` does.
     pub fn use_huge_pages(&mut self) {
-        self.options.huge_pages = true;
+        self.options.huge_pages = Some(true);
         self.graph.storage.use_huge_pages();
+    }
+
+    /// Asks for no huge pages from here on, not even by `warm`, as opening with
+    /// `IndexOptions::huge_pages` at `Some(false)` does. What was asked for already stays asked.
+    pub fn keep_small_pages(&mut self) {
+        self.options.huge_pages = Some(false);
+        self.graph.storage.keep_small_pages();
     }
 
     /// Reads what the index holds into memory on another thread, as opening with
@@ -1272,7 +1290,7 @@ impl IndexReader {
     /// again, as a reader does after a compaction, is read in too.
     pub fn warm(&mut self) {
         self.options.warm = true;
-        self.graph.storage.warm();
+        self.graph.storage.warm(self.options.huge_pages);
     }
 
     /// The committed vector with `id`, as `VectorIndex::get` returns it, or `None`.

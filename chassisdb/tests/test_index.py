@@ -491,12 +491,34 @@ class TestCosine:
         reader = VectorIndex(
             path, dimensions=4, options=IndexOptions(huge_pages=True), read_only=True
         )
-        plain = VectorIndex(path, dimensions=4, read_only=True)
+        plain = VectorIndex(
+            path, dimensions=4, options=IndexOptions(huge_pages=False), read_only=True
+        )
         query = [17.2, 1.0, 2.0, 3.0]
         assert [r.id for r in index.search(query, k=3)] == [17, 18, 16]
         assert reader.search(query, k=3) == plain.search(query, k=3) == index.search(query, k=3)
         for handle in (reader, plain, index):
             handle.close()
+
+    def test_huge_pages_false_is_said_before_warming(self, tmp_path, monkeypatch):
+        from chassisdb import _ffi
+
+        calls = []
+        for name in ("chassis_use_huge_pages", "chassis_keep_small_pages", "chassis_warm"):
+            real = getattr(_ffi._lib, name)
+            monkeypatch.setattr(
+                _ffi._lib, name, lambda ptr, real=real, name=name: calls.append(name) or real(ptr)
+            )
+        for huge_pages in (False, None, True):
+            options = IndexOptions(huge_pages=huge_pages, warm=True)
+            VectorIndex(tmp_path / f"{huge_pages}.chassis", dimensions=4, options=options).close()
+        assert calls == [
+            "chassis_keep_small_pages",
+            "chassis_warm",
+            "chassis_warm",
+            "chassis_use_huge_pages",
+            "chassis_warm",
+        ]
 
     def test_warming_changes_no_result(self, tmp_path):
         path = tmp_path / "warm.chassis"
@@ -506,7 +528,9 @@ class TestCosine:
         index.flush()
         index.warm()
         reader = VectorIndex(path, dimensions=4, options=IndexOptions(warm=True), read_only=True)
-        plain = VectorIndex(path, dimensions=4, read_only=True)
+        plain = VectorIndex(
+            path, dimensions=4, options=IndexOptions(huge_pages=False), read_only=True
+        )
         plain.warm()
         query = [17.2, 1.0, 2.0, 3.0]
         assert [r.id for r in index.search(query, k=3)] == [17, 18, 16]
