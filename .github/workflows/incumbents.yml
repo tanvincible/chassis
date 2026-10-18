@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 10
-  CHASSIS: lab/exp-dist
+  RUN: 11
+  CHASSIS: feat/warm-huge-pages
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -24,7 +24,7 @@ jobs:
       matrix:
         name: [dbpedia-openai3-1536]
         runner: [ubuntu-latest]
-        shard: [a, b, c, d, e, f]
+        shard: [a, b, c, d]
         include:
           - { name: dbpedia-openai3-1536, n: 99000 }
     env:
@@ -92,7 +92,7 @@ jobs:
           git fetch -q origin "$CHASSIS"
           git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
           sed s/chassis_core/chassisdb/g chassis-core/examples/lab.rs > "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
-          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab --cfg lab_hp" \
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_warm" \
             cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t")
           cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
           cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
@@ -106,22 +106,17 @@ jobs:
           L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"; truth="$T/gt.u32"
           "$L" truth "$DATA" "$NAME" "$N" "$truth"
           "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N" | tee -a results/lab.tsv
-          # Each arm reads the index from disk under its own advice, then searches it in memory.
+          # Each arm reads the index from disk under its own options, except warm-cached, which
+          # warms a file left in memory on small pages by the arm before it.
+          search() { env "$@" "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" "$tag" 2>>results/pages.txt | grep -v first_pass | tee -a results/lab.tsv; }
           for round in 1 2 3; do
-            for pf in 0 8 32; do
-              for huge in "" 1; do
-                "$T/pagetool" evict "$T/c.chassis"
-                env LAB_PF=$pf ${huge:+LAB_HUGE=1} "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" "pf$pf${huge:+-huge}" 2>>results/pages.txt | grep -v first_pass | tee -a results/lab.tsv
-              done
-            done
-          done
-          for engine in faiss faiss-4k faiss-again; do
-            timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
-            grep "^inc" "$T/inc.out" | tee -a results/inc.tsv || true
-            grep -v "^inc" "$T/inc.out" | tail -5 >> results/inc.log || true
+            "$T/pagetool" evict "$T/c.chassis"; tag=off search
+            tag=warm-cached search LAB_WARMOPT=1
+            "$T/pagetool" evict "$T/c.chassis"; tag=warm search LAB_WARMOPT=1
+            "$T/pagetool" evict "$T/c.chassis"; tag=huge search LAB_HUGE=1
           done
           cat results/pages.txt
-          { echo '```'; cat results/inc.tsv; cat results/inc.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; cat results/lab.tsv results/pages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()

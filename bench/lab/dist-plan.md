@@ -261,3 +261,28 @@ that is the user's call.
 
 Not decided on: the one Zen 4 job took 1.40 times as long a distance on 4 KB pages, the largest
 cost of small pages measured here.
+
+## `warm` on huge pages (incumbents RUN 11)
+
+Written before the run. `feat/warm-huge-pages` (PR #121) makes `warm` ask for huge pages, as
+`huge_pages` does. This run checks that it gets them, and what they give.
+
+**What is measured.** `incumbents.yml` RUN 11, dbpedia, four jobs. The branch's lab harness
+(`--cfg lab_hp --cfg lab_warm`) searches one index four ways, three rounds:
+
+- `off`: neither option.
+- `warm-cached`: `warm`, right after `off`, with the file still in memory on small pages.
+- `warm`: `warm`, the file read from disk.
+- `huge`: `huge_pages`, the file read from disk.
+
+Before `off`, `warm` and `huge` the file is put out of memory. Pages come from
+`/proc/self/smaps_rollup`, queries a second at 0.95 recall as in RUN 10.
+
+**Predictions.**
+
+1. `warm` with at least 500 MB of file on huge pages, `warm-cached` and `off` with at most 10 MB.
+2. `warm` within 3% of `huge`'s queries a second.
+3. `warm-cached` within 3% of `off`'s.
+
+**The decision.** With 1 and 2 holding, the PR's claim stands as written. If either fails, the PR
+is changed before it is merged.
