@@ -710,6 +710,10 @@ impl Storage {
     /// Starts another thread reading what the index holds into memory (`IndexOptions::warm`,
     /// ADR-0019), unless one is at it already, and returns at once.
     pub(crate) fn warm(&mut self) {
+        // It is all read in anyway: huge pages cost nothing more, and searches gain (ADR-0016).
+        if self.huge_slots.is_none() {
+            self.use_huge_pages();
+        }
         if self.warming.as_ref().is_some_and(Warming::running) {
             return;
         }
@@ -2303,9 +2307,12 @@ mod tests {
             assert!(ranges.contains(&(start, per_slot * 40)));
         }
 
-        // Reading it in changes nothing. Where there is a way to ask (not on Windows yet), asking
-        // again once that is done starts another.
+        // Reading it in changes nothing but asking for huge pages under the committed vectors.
+        // Where there is a way to ask (not on Windows yet), asking again once that is done starts
+        // another.
+        assert_eq!(storage.huge_slots, None);
         storage.warm();
+        assert_eq!(storage.huge_slots, Some(written));
         if cfg!(unix) {
             storage.warming.as_mut().unwrap().thread.take().unwrap().join().unwrap();
             let done = Arc::clone(&storage.warming.as_ref().unwrap().stop);

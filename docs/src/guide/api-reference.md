@@ -371,7 +371,9 @@ searches are up to a quarter faster and batch builds a little faster
 ([ADR-0016](https://github.com/tanvincible/chassis/blob/main/docs/adr/016-huge-pages-on-request.md)). It works on Linux, where the kernel and
 filesystem keep files on huge pages (ext4 on Linux 6.17 does), and does nothing elsewhere. A writer
 and its readers each ask for themselves. It is off by default because a page not yet in memory is
-then read 2 MB at a time, which an index much larger than memory pays for on every miss.
+then read 2 MB at a time, which an index much larger than memory pays for on every miss. For an
+index that fits in memory, turn it on: it reads the same bytes sooner. On AMD servers with vectors
+of 1,536 dimensions it was worth 18% on Zen 3 and more on Zen 4. `warm` turns it on too.
 `VectorIndex::use_huge_pages` and `IndexReader::use_huge_pages` turn it on after opening.
 
 `warm` is for an index whose file is not in memory yet, as after a reboot. Until it is, each page a
@@ -384,7 +386,8 @@ after 0.37 s with it and 1.9 s without. On Linux servers with slower disks, it r
 file. It is off by default because an index much larger than memory would push everything else out,
 itself included, and on a slow disk reading the whole file can take longer than the searches would.
 It takes Linux 5.14 or later, or macOS; an older Linux reads in only some of the index, and Windows
-none. `VectorIndex::warm` and `IndexReader::warm` ask for it after opening and return at once. From
+none. On Linux it asks for huge pages too, as `huge_pages` does: read in whole, the index costs no
+more on them. `VectorIndex::warm` and `IndexReader::warm` ask for it after opening and return at once. From
 then on the option is on, so a reader that opens the file again after a compaction reads the new one
 in too.
 

@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - `backup(path)`: a copy of the index, from its writer or, while it writes, from a reader (#116).
 
+### Changed
+
+- `warm()` asks for huge pages too, on Linux (#121).
+
 ### Performance
 
 - Python `search` spends half as long outside the library, and `get` 30% less (#109).

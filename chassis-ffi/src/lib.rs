@@ -1617,7 +1617,8 @@ pub unsafe extern "C" fn chassis_backup(ptr: *mut ChassisIndex, path: *const c_c
 /// builds a little faster. Only on Linux, and only where the kernel and filesystem keep files on huge
 /// pages (ext4 on Linux 6.17 does); elsewhere this does nothing. It is off unless asked for: with
 /// it a page not yet in memory is read 2 MB at a time, which an index much larger than memory
-/// pays for on every miss. Call it right after opening, on a writer's handle or a reader's.
+/// pays for on every miss. For an index that fits in memory, ask; `chassis_warm` does. Call it
+/// right after opening, on a writer's handle or a reader's.
 ///
 /// # Arguments
 ///
@@ -1660,8 +1661,9 @@ pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int
 /// everything else out. What is read is what the index holds when this is called; while that is
 /// under way, calling again does nothing. A reader that opens the file again after a compaction
 /// reads the new one in too. It takes Linux 5.14 or macOS: an older Linux reads only some of the
-/// index, and Windows none. Call it on a writer's handle or a reader's, right after opening or
-/// later.
+/// index, and Windows none. It asks for huge pages too, as `chassis_use_huge_pages` does: read in
+/// whole, the index costs no more on them. Call it on a writer's handle or a reader's, right after
+/// opening or later.
 ///
 /// # Arguments
 ///

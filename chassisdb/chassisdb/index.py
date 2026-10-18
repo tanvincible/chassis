@@ -65,12 +65,14 @@ class IndexOptions:
             filesystem keep files on huge pages (ext4 on Linux 6.17 does);
             elsewhere it does nothing. With it a page not yet in memory is
             read 2 MB at a time, which an index much larger than memory pays
-            for on every miss. Default: False
+            for on every miss. For an index that fits in memory, turn it on;
+            ``warm`` does. Default: False
         warm: Read the whole index into memory on another thread from the
             moment it is opened, so that searches stop waiting for the disk
             one page at a time. For an index that fits in memory. It takes
             Linux 5.14 or macOS: an older Linux reads only some of the
-            index, and Windows none. Default: False
+            index, and Windows none. It asks for huge pages too, as
+            ``huge_pages`` does. Default: False
     """
 
     max_connections: int = 16
@@ -740,8 +742,9 @@ class VectorIndex:
         """Start reading the whole index into memory on another thread.
 
         Doesn't wait for the reading: searches go on meanwhile. While it
-        is under way, calling again does nothing. Opening with
-        ``IndexOptions(warm=True)`` does the same from the start.
+        is under way, calling again does nothing. On Linux it asks for huge
+        pages too. Opening with ``IndexOptions(warm=True)`` does the same
+        from the start.
 
         Raises:
             ChassisError: If the index can't be used any more

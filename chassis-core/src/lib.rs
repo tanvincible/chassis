@@ -126,13 +126,15 @@ pub struct IndexOptions {
     /// faster. Only on Linux, and only where the kernel and filesystem keep files on huge
     /// pages (ext4 on Linux 6.17 does); elsewhere it does nothing. Off by default: with it a
     /// page not yet in memory is read 2 MB at a time, which an index much larger than memory
-    /// pays for on every miss.
+    /// pays for on every miss. For an index that fits in memory, turn it on; `warm` does.
     pub huge_pages: bool,
 
     /// Read the whole index into memory on another thread from the moment it is opened
     /// (ADR-0019), so that searches stop waiting for the disk one page at a time. For an index
     /// that fits in memory; one much larger would push everything else out. Off by default. It
     /// takes Linux 5.14 or macOS: an older Linux reads only some of the index, and Windows none.
+    /// It asks for huge pages too, as `huge_pages` does: read in whole, the index costs no more
+    /// on them.
     pub warm: bool,
 }
 

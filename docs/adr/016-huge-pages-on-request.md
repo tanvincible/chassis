@@ -1,7 +1,7 @@
 # ADR-0016: Huge Pages for the Vectors, on Request
 
 **Date:** 2026-10-09
-**Status:** Accepted; shipped in v0.7.0 (#31)
+**Status:** Accepted; shipped in v0.7.0 (#31), amended 2026-10-18 (see [Amendment](#amendment-2026-10-18))
 
 ## Context
 
@@ -161,3 +161,28 @@ not yet in memory took up to 28% less, and on one machine 1% more.
 * The file's vectors are cached and evicted 2 MB at a time, which costs an index much larger
   than memory.
 * One more option, in four APIs.
+
+## Amendment (2026-10-18)
+
+**`warm` asks for huge pages too.** It reads the whole index in, so reading the vectors 2 MB at a
+time reads the same bytes sooner. What kept this option off by default, reading far more than a
+miss uses, doesn't arise when every page is read. It asks for the same pieces as this option, by
+decision 2.
+
+Two runs on GitHub's runners (`bench/lab/dist-plan.md` on `lab/x86`) gave the reason:
+
+- **FAISS's lead at 1,536 dimensions on Zen 3 is the pages.** The runners give anonymous memory
+  huge pages without asking, so FAISS's vectors are on them and Chassis's file is not. With this
+  option on, Chassis made 0.99 times FAISS's queries a second at 0.95 recall, against 0.84 with
+  it off. With FAISS kept off huge pages too, it made 0.945 times Chassis's. The two distance
+  kernels took the same time, and 8 lines of prefetch was still the best setting.
+- **Pages already in memory stay small.** `madvise(MADV_COLLAPSE)` on a file's mapping returned
+  `EINVAL` on Linux 6.17 with ext4, writable or read-only. A file read on small pages can't be
+  moved onto huge ones afterwards, so the choice has to be made before the read.
+
+The option is still off by default. The guide says to turn it on for an index that fits in
+memory.
+
+Pages already in memory on small pages stay on them, as above, until the file is next read from
+disk, so `warm` on a file already cached gains nothing from this. Zen 5 at 128 dimensions, where
+huge pages gained nothing or cost up to 7%, now gets them with `warm` too.
