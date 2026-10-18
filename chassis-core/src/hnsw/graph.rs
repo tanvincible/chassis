@@ -69,10 +69,6 @@ pub(crate) struct View {
 
 impl HnswGraph {
     /// Opens the graph in `storage`. Stored vectors without a graph become slots to link again.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file was created with different graph parameters.
     #[cfg(any(test, feature = "internals"))]
     pub fn open(storage: Storage, params: HnswParams) -> Result<Self> {
         Self::open_inner(storage, params, false)
@@ -163,10 +159,6 @@ impl HnswGraph {
     }
 
     /// Reads a node's record: its id, layers and neighbor lists.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `node_id` has no written record.
     #[cfg(any(test, feature = "internals"))]
     pub fn read_node_record(&self, node_id: NodeId) -> Result<NodeRecord> {
         let layer_count = self.storage.layer_count(node_id)?;
@@ -180,21 +172,13 @@ impl HnswGraph {
     }
 
     /// Writes a new node's record into its slot, whose vector must already be stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the slot has no vector or the file cannot grow.
     pub fn write_node_record(&mut self, record: &NodeRecord) -> Result<()> {
         let layers: Vec<Vec<NodeId>> =
             (0..usize::from(record.header.layer_count)).map(|l| record.get_neighbors(l)).collect();
         self.storage.write_record(record.slot, &layers)
     }
 
-    /// Iterate a node's neighbors at `layer` straight from the mapped file, without allocating.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `node_id` has no valid record.
+    /// A node's neighbors at `layer`, straight from the mapped file, without allocating.
     #[inline]
     pub fn neighbors_iter_from_mmap(
         &self,
@@ -219,10 +203,6 @@ impl HnswGraph {
     }
 
     /// Distance from `query` to a stored vector, read in place.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `node_id` has no stored vector.
     #[inline]
     pub fn compute_distance_zero_copy(&self, query: &[f32], node_id: NodeId) -> Result<f32> {
         match self.storage.precision() {
@@ -237,12 +217,7 @@ impl HnswGraph {
     }
 
     /// Makes every node and delete so far durable: the flush commit point (ADR-0008, decision 6).
-    ///
-    /// Costs a few fsyncs, so call it once per batch, not once per insert.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if writing or syncing the file fails.
+    /// It costs a few fsyncs, so once per batch, not once per insert.
     pub fn commit(&mut self) -> Result<()> {
         let deletes: Vec<NodeId> = self.pending_deletes.iter().copied().collect();
         let state = &mut self.storage.state;
@@ -256,15 +231,10 @@ impl HnswGraph {
         Ok(())
     }
 
-    /// Inserts a node with no neighbors into the next slot, whose vector must already be stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error unless `vector_id` is the next slot (node ids are dense and
-    /// monotonically increasing), or if the record cannot be written.
+    /// Inserts a node with no neighbors into the next slot, `vector_id`, whose vector must already
+    /// be stored.
     #[cfg(any(test, feature = "internals"))]
     pub fn insert(&mut self, vector_id: NodeId, layer: usize) -> Result<()> {
-        // Enforce dense, monotonic node ID invariant
         debug_assert!(
             vector_id == self.node_count,
             "Node ID invariant violated: expected {}, got {}.  \
@@ -292,11 +262,7 @@ impl HnswGraph {
         Ok(())
     }
 
-    /// Replaces an existing node's neighbor lists (does NOT increment `node_count`).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the node doesn't exist or `record` has a different layer count.
+    /// Replaces an existing node's neighbor lists, which have to keep their layer count.
     #[cfg(any(test, feature = "internals"))]
     pub fn update_node_record(&mut self, record: &NodeRecord) -> Result<()> {
         let node_id = record.slot;
@@ -313,14 +279,12 @@ impl HnswGraph {
         Ok(())
     }
 
-    /// Returns the record params for this graph
     #[inline]
     #[cfg(any(test, feature = "internals"))]
     pub fn record_params(&self) -> NodeRecordParams {
         self.record_params
     }
 
-    /// Returns the current node count
     #[inline]
     pub fn node_count(&self) -> u64 {
         self.node_count

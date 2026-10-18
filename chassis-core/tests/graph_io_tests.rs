@@ -19,7 +19,6 @@ fn test_graph_header_survives_reopen() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Create graph and insert some nodes
     {
         let mut graph = graph_with_vectors(path, 3);
 
@@ -29,12 +28,10 @@ fn test_graph_header_survives_reopen() {
 
         graph.commit().unwrap();
 
-        // Verify state before closing
         assert_eq!(graph.entry_point, Some(2));
         assert_eq!(graph.max_layer, 2);
     }
 
-    // Reopen and verify header was persisted
     {
         let storage = Storage::open(path, 128).unwrap();
         let graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
@@ -53,17 +50,14 @@ fn test_write_and_read_node_record() {
 
     let mut graph = graph_with_vectors(path, 43);
 
-    // Create a node record
     let params = NodeRecordParams::default();
     let mut record = NodeRecord::new(42, 3, params);
     record.set_neighbors(0, &[1, 2, 3, 4, 5]);
     record.set_neighbors(1, &[10, 20, 30]);
     record.set_neighbors(2, &[100, 200]);
 
-    // Write it
     graph.write_node_record(&record).unwrap();
 
-    // Read it back
     let read_record = graph.read_node_record(42).unwrap();
 
     assert_eq!(read_record.header.id, 42);
@@ -99,7 +93,6 @@ fn test_multiple_node_records() {
 
     let params = NodeRecordParams::default();
 
-    // Write multiple node records
     for node_id in 0..10 {
         let mut record = NodeRecord::new(node_id, 2, params);
         record.set_neighbors(0, &[node_id + 100, node_id + 200]);
@@ -108,7 +101,6 @@ fn test_multiple_node_records() {
         graph.write_node_record(&record).unwrap();
     }
 
-    // Read them all back
     for node_id in 0..10 {
         let record = graph.read_node_record(node_id).unwrap();
         assert_eq!(record.header.id, node_id);
@@ -126,18 +118,15 @@ fn test_node_record_update_in_place() {
 
     let params = NodeRecordParams::default();
 
-    // Write initial record
     let mut record = NodeRecord::new(5, 2, params);
     record.set_neighbors(0, &[1, 2, 3]);
     graph.write_node_record(&record).unwrap();
 
-    // Update in place
     let mut updated_record = NodeRecord::new(5, 2, params);
     updated_record.set_neighbors(0, &[10, 20, 30, 40]);
     updated_record.set_neighbors(1, &[100, 200]);
     graph.write_node_record(&updated_record).unwrap();
 
-    // Read back and verify update
     let read_record = graph.read_node_record(5).unwrap();
     assert_eq!(read_record.get_neighbors(0), vec![10, 20, 30, 40]);
     assert_eq!(read_record.get_neighbors(1), vec![100, 200]);
@@ -160,15 +149,12 @@ fn test_neighbors_iter_from_mmap() {
 
     graph.write_node_record(&record).unwrap();
 
-    // Test layer 0
     let neighbors: Vec<u64> = graph.neighbors_iter_from_mmap(7, 0).unwrap().collect();
     assert_eq!(neighbors, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
-    // Test layer 1
     let neighbors: Vec<u64> = graph.neighbors_iter_from_mmap(7, 1).unwrap().collect();
     assert_eq!(neighbors, vec![10, 20, 30, 40]);
 
-    // Test layer 2
     let neighbors: Vec<u64> = graph.neighbors_iter_from_mmap(7, 2).unwrap().collect();
     assert_eq!(neighbors, vec![100, 200]);
 }
@@ -185,7 +171,6 @@ fn test_neighbors_iter_empty_layer() {
 
     graph.write_node_record(&record).unwrap();
 
-    // Empty layer should return no neighbors
     let neighbors: Vec<u64> = graph.neighbors_iter_from_mmap(3, 0).unwrap().collect();
     assert!(neighbors.is_empty());
 
@@ -215,14 +200,11 @@ fn test_neighbors_iter_out_of_bounds_layer() {
     assert!(neighbors.is_empty());
 }
 
-// Integration Tests
-
 #[test]
 fn test_graph_with_multiple_layers() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Insert vectors first
     {
         let mut storage = Storage::open(path, 128).unwrap();
         for i in 0..10 {
@@ -232,12 +214,10 @@ fn test_graph_with_multiple_layers() {
         storage.commit().unwrap();
     }
 
-    // Now open graph and insert nodes
     {
         let storage = Storage::open(path, 128).unwrap();
         let mut graph = HnswGraph::open(storage, HnswParams::default()).unwrap();
 
-        // Insert nodes with different layer counts
         graph.insert(0, 0).unwrap(); // Layer 0 only
         graph.insert(1, 1).unwrap(); // Layers 0-1
         graph.insert(2, 2).unwrap(); // Layers 0-2
@@ -245,7 +225,6 @@ fn test_graph_with_multiple_layers() {
 
         graph.commit().unwrap();
 
-        // Verify entry point and max layer
         assert_eq!(graph.entry_point, Some(2));
         assert_eq!(graph.max_layer, 2);
     }
@@ -256,7 +235,6 @@ fn test_graph_persistence_with_vectors() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Create vectors and graph
     {
         let mut storage = Storage::open(path, 128).unwrap();
         for i in 0..5 {
@@ -276,7 +254,6 @@ fn test_graph_persistence_with_vectors() {
         graph.commit().unwrap();
     }
 
-    // Reopen and verify both vectors and graph
     {
         let storage = Storage::open(path, 128).unwrap();
         assert_eq!(storage.count(), 5);
@@ -297,7 +274,6 @@ fn test_node_record_with_partial_neighbors() {
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path();
 
-    // Create graph with custom params
     let custom_params = HnswParams { max_connections: 4, ml: 1.0 / (4.0_f32).ln(), max_layers: 3 };
 
     let params = NodeRecordParams::new(4, 8, 3); // Matches custom_params
@@ -318,7 +294,6 @@ fn test_node_record_with_partial_neighbors() {
 
     graph.write_node_record(&record).unwrap();
 
-    // Read back and verify
     let read_record = graph.read_node_record(10).unwrap();
     assert_eq!(read_record.get_neighbors(0), vec![1, 2, 3, 4, 5]);
     assert_eq!(read_record.get_neighbors(1), vec![10, 11, 12, 13]);

@@ -315,23 +315,7 @@ fn squared_half_scalar(a: &[f32], b: &[u16]) -> f32 {
     sum
 }
 
-/// AVX2 implementation with 4-way accumulator unrolling (x86_64 only)
-///
-/// # Optimization Strategy
-///
-/// Uses 4 independent accumulators (sum0, sum1, sum2, sum3) to break
-/// FMA dependency chains and maximize pipeline utilization.
-///
-/// # Pipeline Analysis
-///
-/// - Single accumulator: 1 FMA / 4 cycles = 0.25 ops/cycle (latency-bound)
-/// - Four accumulators: 4 FMA / 4 cycles = 1 ops/cycle (approaching 2 ops/cycle theoretical max)
-///
-/// # Loop Structure
-///
-/// Main loop: Process 32 floats/iteration (4 accumulators × 8 floats/vector)
-/// Tail loop: Process remaining 8-float chunks
-/// Scalar tail: Process final <8 elements
+/// The Euclidean distance with AVX2 and FMA.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "avx2", enable = "fma")]
@@ -361,16 +345,12 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
     let mut sum2 = _mm256_setzero_ps();
     let mut sum3 = _mm256_setzero_ps();
 
-    // Main loop: Process 32 floats per iteration (4 vectors × 8 floats)
-    // This keeps 4 FMA units busy, hiding latency
     while i + 32 <= len {
         let diff0 = _mm256_sub_ps(query(i), stored(i));
         let diff1 = _mm256_sub_ps(query(i + 8), stored(i + 8));
         let diff2 = _mm256_sub_ps(query(i + 16), stored(i + 16));
         let diff3 = _mm256_sub_ps(query(i + 24), stored(i + 24));
 
-        // Fused multiply-add: sum = diff * diff + sum
-        // Each accumulator is independent, allowing parallel execution
         sum0 = _mm256_fmadd_ps(diff0, diff0, sum0);
         sum1 = _mm256_fmadd_ps(diff1, diff1, sum1);
         sum2 = _mm256_fmadd_ps(diff2, diff2, sum2);
@@ -379,29 +359,24 @@ unsafe fn squared_avx2(a: &[f32], b: &[f32]) -> f32 {
         i += 32;
     }
 
-    // Tail loop: Process remaining 8-float chunks
     while i + 8 <= len {
         let diff = _mm256_sub_ps(query(i), stored(i));
         sum0 = _mm256_fmadd_ps(diff, diff, sum0);
         i += 8;
     }
 
-    // Reduce accumulators: Combine the 4 independent sums
     let sum_combined = _mm256_add_ps(_mm256_add_ps(sum0, sum1), _mm256_add_ps(sum2, sum3));
 
-    // Horizontal reduction: Sum 8 lanes into a scalar
-    // Extract high 128 bits and add to low 128 bits
+    // The eight lanes' sum.
     let sum_high = _mm256_extractf128_ps(sum_combined, 1);
     let sum_low = _mm256_castps256_ps128(sum_combined);
     let sum128 = _mm_add_ps(sum_low, sum_high);
 
-    // Horizontal add within 128-bit register
     let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
     let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 0x55));
 
     let mut total = _mm_cvtss_f32(sum32);
 
-    // Scalar tail: Process remaining elements
     while i < len {
         let diff = a[i] - b[i];
         total += diff * diff;
@@ -470,12 +445,7 @@ unsafe fn squared_half_avx2(a: &[f32], b: &[u16]) -> f32 {
     total
 }
 
-/// NEON implementation with 4-way accumulator unrolling (aarch64)
-///
-/// # Optimization Strategy
-///
-/// Same strategy as AVX2: 4 independent accumulators to maximize throughput.
-/// NEON processes 4 floats per vector (vs 8 for AVX2), so main loop processes 16 floats.
+/// The Euclidean distance with NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[target_feature(enable = "neon")]
@@ -505,14 +475,12 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
     let mut sum2 = vdupq_n_f32(0.0);
     let mut sum3 = vdupq_n_f32(0.0);
 
-    // Main loop: Process 16 floats per iteration (4 vectors × 4 floats)
     while i + 16 <= len {
         let diff0 = vsubq_f32(query(i), stored(i));
         let diff1 = vsubq_f32(query(i + 4), stored(i + 4));
         let diff2 = vsubq_f32(query(i + 8), stored(i + 8));
         let diff3 = vsubq_f32(query(i + 12), stored(i + 12));
 
-        // Fused multiply-add
         sum0 = vfmaq_f32(sum0, diff0, diff0);
         sum1 = vfmaq_f32(sum1, diff1, diff1);
         sum2 = vfmaq_f32(sum2, diff2, diff2);
@@ -521,23 +489,20 @@ unsafe fn squared_neon(a: &[f32], b: &[f32]) -> f32 {
         i += 16;
     }
 
-    // Tail loop: Process remaining 4-float chunks
     while i + 4 <= len {
         let diff = vsubq_f32(query(i), stored(i));
         sum0 = vfmaq_f32(sum0, diff, diff);
         i += 4;
     }
 
-    // Reduce accumulators
     let sum_combined = vaddq_f32(vaddq_f32(sum0, sum1), vaddq_f32(sum2, sum3));
 
-    // Horizontal reduction: Sum 4 lanes
+    // The four lanes' sum.
     let sum_pair = vpadd_f32(vget_low_f32(sum_combined), vget_high_f32(sum_combined));
     let sum_total = vpadd_f32(sum_pair, sum_pair);
 
     let mut total = vget_lane_f32(sum_total, 0);
 
-    // Scalar tail
     while i < len {
         let diff = a[i] - b[i];
         total += diff * diff;

@@ -94,7 +94,6 @@ fn test_ef_less_than_k_handling() {
     // ef < k should be silently corrected
     let results = graph.search(&query, 10, 3).unwrap();
 
-    // Should not fail and should return up to 10 results
     assert!(results.len() <= 10);
     assert!(!results.is_empty(), "Should find some results even with small ef");
 }
@@ -107,7 +106,6 @@ fn test_results_sorted_by_distance() {
     let query = vec![0.25; 128];
     let results = graph.search(&query, 20, 50).unwrap();
 
-    // Verify sorted by ascending distance
     for i in 1..results.len() {
         assert!(
             results[i - 1].distance <= results[i].distance,
@@ -124,7 +122,6 @@ fn test_no_duplicate_results() {
     let query = vec![0.5; 128];
     let results = graph.search(&query, 20, 50).unwrap();
 
-    // Check for duplicates
     let mut seen = std::collections::HashSet::new();
     for result in results {
         assert!(seen.insert(result.id), "Result set contains duplicate node ID: {}", result.id);
@@ -183,7 +180,6 @@ fn test_search_quality_improves_with_ef() {
 
     let query = vec![0.25; 128];
 
-    // Search with different ef values
     let results_ef10 = graph.search(&query, 5, 10).unwrap();
     let results_ef50 = graph.search(&query, 5, 50).unwrap();
     let results_ef100 = graph.search(&query, 5, 100).unwrap();
@@ -222,7 +218,6 @@ fn test_search_with_large_ef() {
     // ef larger than graph size
     let results = graph.search(&query, 10, 1000).unwrap();
 
-    // Should not fail and return valid results
     assert!(results.len() <= 10);
     assert!(results.len() <= 50); // Can't return more than graph size
 }
@@ -280,7 +275,6 @@ fn test_identical_vectors() {
     let temp_file = NamedTempFile::new().unwrap();
     let mut storage = Storage::open(temp_file.path(), 128).unwrap();
 
-    // Insert identical vectors
     for _ in 0..20 {
         storage.insert(&vec![0.5; 128]).unwrap();
     }
@@ -293,10 +287,8 @@ fn test_identical_vectors() {
     let query = vec![0.5; 128];
     let results = graph.search(&query, 5, 20).unwrap();
 
-    // Should handle identical vectors gracefully
     assert!(!results.is_empty());
 
-    // All distances should be very small (or exactly 0)
     for result in results {
         assert!(result.distance < 0.001 || result.distance == 0.0);
     }
@@ -324,7 +316,6 @@ fn test_greedy_layer_descent() {
     let query = vec![0.5; 128];
     let results = graph.search(&query, 5, 20).unwrap();
 
-    // Should successfully navigate through layers
     assert!(!results.is_empty());
 }
 
@@ -337,10 +328,8 @@ fn test_search_correctness_on_small_graph() {
     let query = vec![0.15, 0.0]; // Closest to vector 1 and 2
     let results = graph.search(&query, 3, 10).unwrap();
 
-    // Should find the closest vectors
     assert_eq!(results.len(), 3);
 
-    // Verify the results make sense (distances increase)
     assert!(results[0].distance <= results[1].distance);
     assert!(results[1].distance <= results[2].distance);
 }

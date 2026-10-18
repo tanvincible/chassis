@@ -537,7 +537,7 @@ impl VectorIndex {
             }
         };
 
-        // STEP 1: Persist vector and id, reusing the slot of an add that failed part way
+        // The slot after the last node, whatever an add that failed part way left in it.
         let slot = self.graph.node_count();
         self.graph.storage.truncate_logical(slot);
         let new_id = self.graph.storage.append(id, vector)?;
@@ -551,11 +551,9 @@ impl VectorIndex {
             }
         };
 
-        // STEP 2: Determine layer for new node
         let layer = self.select_layer();
         let layer_count = layer + 1;
 
-        // STEP 3: Neighbor selection (in-memory phase); an empty graph has none
         let neighbors = match self.graph.entry_point {
             Some(entry) if self.graph.node_count() > 0 => {
                 let start = (entry, self.graph.max_layer);
@@ -565,12 +563,8 @@ impl VectorIndex {
             _ => vec![vec![]; layer_count],
         };
 
-        // STEP 4: Atomic write (disk phase)
-        // Node is written but invisible (node_count not incremented)
         self.graph.write_node_with_id_and_backlinks(new_id, id, layer_count, &neighbors)?;
 
-        // STEP 5: Publish (commit phase)
-        // Node becomes visible to readers
         self.graph.publish_node(new_id, layer_count)?;
 
         if let Some(table) = self.ids.get_mut() {
@@ -872,8 +866,6 @@ impl VectorIndex {
     pub fn precision(&self) -> Precision {
         self.graph.storage.precision()
     }
-
-    // Private helper methods
 
     /// Select layer for a new node using exponential decay
     fn select_layer(&self) -> usize {

@@ -1,19 +1,9 @@
-//! SIMD distance computation benchmarks.
-//!
-//! Measures:
-//! - Absolute timings for SIMD vs scalar
-//! - Scaling with vector dimensions
-//! - Different vector patterns (aligned, unaligned, sparse)
-//!
-//! Expected results:
-//! - AVX2: 4-6x speedup on 768-1536D
-//! - NEON: 3-5x speedup on 768-1536D
+//! The distance kernels against the scalar one, by dimensions and by the vectors' patterns.
 
 use chassisdb::distance::{euclidean_distance, euclidean_distance_scalar};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
-/// Benchmark: Pure distance computation at various dimensions
 fn bench_distance_by_dimension(c: &mut Criterion) {
     let mut group = c.benchmark_group("distance_by_dimension");
     group.sample_size(1000); // High sample count for precise measurements

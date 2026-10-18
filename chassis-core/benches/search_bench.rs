@@ -1,17 +1,4 @@
-//! Production-grade benchmarks for hardened HNSW search.
-//!
-//! # Benchmark Goals
-//!
-//! 1. Measure HashSet → Dense Filter improvement
-//! 2. Verify no regression at small ef
-//! 3. Demonstrate scaling at high ef
-//! 4. Validate NaN-safe ordering overhead
-//!
-//! # Reporting Requirements
-//!
-//! - Absolute timings (µs or ns)
-//! - CPU architecture
-//! - Dataset characteristics
+//! Search over built graphs, at small and large `ef`.
 
 use chassisdb::{HnswGraph, HnswParams, Storage};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

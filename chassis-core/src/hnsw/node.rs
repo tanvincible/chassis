@@ -35,7 +35,7 @@ pub const DEFAULT_MAX_LAYERS: u8 = 16;
 /// Maximum connections at layer 0 (typically 2*M)
 pub const DEFAULT_M0: u16 = DEFAULT_M * 2;
 
-/// Fixed-size on-disk node header.
+/// A node's header in a v1 or v2 file.
 ///
 /// # Layout (16 bytes, 8-byte aligned)
 ///
@@ -67,30 +67,14 @@ pub struct NodeHeader {
 }
 
 impl NodeHeader {
-    /// Size of the header in bytes
     pub const SIZE: usize = std::mem::size_of::<Self>();
 
-    /// Create a new node header
     #[must_use]
     pub const fn new(id: u64, layer_count: u8) -> Self {
         Self { id, layer_count, flags: 0, _padding: [0; 2], deleted_epoch: 0 }
     }
 
-    /// Read header from bytes with validation.
-    ///
-    /// # Safety Guarantees
-    ///
-    /// This method is safe because it:
-    /// - Checks slice length before reading
-    /// - Uses `read_unaligned` to handle arbitrary alignment
-    /// - Validates header fields for sanity
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Slice is too small
-    /// - `layer_count` is 0 (invalid)
-    /// - `id` is `INVALID_NODE_ID` (reserved sentinel)
+    /// Reads a header, refusing a short slice, a `layer_count` of 0 and an `INVALID_NODE_ID` id.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
         if bytes.len() < Self::SIZE {
             return Err("Buffer too small for NodeHeader");
@@ -100,7 +84,6 @@ impl NodeHeader {
         // and `read_unaligned` needs no alignment.
         let header = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>()) };
 
-        // Validate fields
         if header.layer_count == 0 {
             return Err("Invalid NodeHeader:  layer_count cannot be 0");
         }
@@ -112,16 +95,11 @@ impl NodeHeader {
         Ok(header)
     }
 
-    /// Read header from bytes WITHOUT validation (for performance-critical paths).
+    /// `from_bytes` without its checks.
     ///
     /// # Safety
     ///
-    /// Caller must ensure:
-    /// - `bytes.len() >= NodeHeader::SIZE`
-    /// - The bytes represent a valid, previously-written header
-    ///
-    /// Use this only when reading from known-good locations (e.g., after
-    /// successful write or when iterating over validated node records).
+    /// `bytes` must hold at least `SIZE` bytes, of a header written before.
     #[inline]
     pub unsafe fn from_bytes_unchecked(bytes: &[u8]) -> Self {
         debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for NodeHeader");
@@ -129,17 +107,13 @@ impl NodeHeader {
         unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Self>()) }
     }
 
-    /// Check if the node is marked as deleted
     #[must_use]
     pub const fn is_deleted(&self) -> bool {
         self.deleted_epoch != 0
     }
 }
 
-/// Parameters that determine the fixed record size.
-///
-/// These parameters are set at index creation and cannot be changed
-/// without rebuilding the index.
+/// Neighbors per layer and the most layers, fixed when the index is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodeRecordParams {
     /// Maximum connections per layer for layers > 0 (M)
@@ -159,34 +133,19 @@ impl Default for NodeRecordParams {
 }
 
 impl NodeRecordParams {
-    /// Create new node record parameters
     #[must_use]
     pub const fn new(m: u16, m0: u16, max_layers: u8) -> Self {
         Self { m, m0, max_layers }
     }
 
-    /// Calculate the fixed record size for these parameters.
-    ///
-    /// # Layout
-    ///
-    /// ```text
-    /// [NodeHeader:  16 bytes]
-    /// [Layer 0 neighbors: m0 * 8 bytes]
-    /// [Layer 1 neighbors: m * 8 bytes]
-    /// [Layer 2 neighbors: m * 8 bytes]
-    /// ...
-    /// [Layer (max_layers-1) neighbors: m * 8 bytes]
-    /// ```
-    ///
-    /// Total = 16 + (m0 * 8) + ((max_layers - 1) * m * 8), rounded up to 8-byte boundary
+    /// Bytes of a record in a v1 or v2 file: the header, then `m0` neighbors on layer 0 and `m` on
+    /// each layer above, 8 bytes each, rounded up to a multiple of 8.
     #[must_use]
     pub const fn record_size(&self) -> usize {
         let header_size = NodeHeader::SIZE;
 
-        // Layer 0 has m0 connections
         let layer0_size = self.m0 as usize * mem::size_of::<NodeId>();
 
-        // Layers 1 to max_layers-1 each have m connections
         let upper_layers_size = if self.max_layers > 1 {
             (self.max_layers as usize - 1) * self.m as usize * mem::size_of::<NodeId>()
         } else {
@@ -195,13 +154,10 @@ impl NodeRecordParams {
 
         let total = header_size + layer0_size + upper_layers_size;
 
-        // Round up to 8-byte boundary
         (total + 7) & !7
     }
 
-    /// Calculate the offset of a specific layer's neighbor array within a record.
-    ///
-    /// Returns `None` if the layer is out of bounds.
+    /// Where `layer`'s neighbors start in a record; `None` past the last layer.
     #[must_use]
     pub const fn layer_offset(&self, layer: usize) -> Option<usize> {
         if layer >= self.max_layers as usize {
@@ -214,22 +170,18 @@ impl NodeRecordParams {
             return Some(offset);
         }
 
-        // Skip layer 0
         offset += self.m0 as usize * mem::size_of::<NodeId>();
 
-        // Skip layers 1 to layer-1
         offset += (layer - 1) * self.m as usize * mem::size_of::<NodeId>();
 
         Some(offset)
     }
 
-    /// Get the maximum number of neighbors for a given layer.
     #[must_use]
     pub const fn max_neighbors(&self, layer: usize) -> usize {
         if layer == 0 { self.m0 as usize } else { self.m as usize }
     }
 
-    /// Calculate the total maximum neighbors across all layers.
     #[must_use]
     pub const fn total_max_neighbors(&self) -> usize {
         let layer0 = self.m0 as usize;
@@ -239,31 +191,18 @@ impl NodeRecordParams {
     }
 }
 
-/// Fixed-size node record that can be directly mapped to/from disk.
-///
-/// This struct represents the complete on-disk format of a node.
-/// The size is determined by `NodeRecordParams` at index creation.
-///
-/// # Addressing Formula
-///
-/// ```text
-/// node_offset = graph_start + (node_id * NODE_RECORD_SIZE)
-/// ```
-///
-/// No hash maps or indirection required.
+/// A node's record, which a v1 or v2 file keeps `slot × record_size` bytes into its graph.
 #[derive(Debug)]
 pub struct NodeRecord {
     /// The slot this record belongs to. Not stored on disk; reads and writes are addressed by it.
     pub slot: NodeId,
 
-    /// Node header
     pub header: NodeHeader,
 
     /// Neighbor IDs for all layers (flattened): layer 0 slots, then layer 1, then layer 2, and so on.
     /// Unused slots contain `INVALID_NODE_ID`.
     pub neighbors: Vec<NodeId>,
 
-    /// Parameters used to interpret the neighbor array
     params: NodeRecordParams,
 }
 
@@ -277,15 +216,12 @@ impl NodeRecord {
         Self { slot, header: NodeHeader::new(slot, layer_count), neighbors, params }
     }
 
-    /// Get the fixed record size.
     #[must_use]
     pub const fn record_size(&self) -> usize {
         self.params.record_size()
     }
 
-    /// Get neighbors at a specific layer.
-    ///
-    /// Returns only valid neighbors (excludes `INVALID_NODE_ID`).
+    /// The neighbors at `layer`, without the empty entries.
     #[must_use]
     pub fn get_neighbors(&self, layer: usize) -> Vec<NodeId> {
         if layer >= self.header.layer_count as usize {
@@ -300,28 +236,17 @@ impl NodeRecord {
             .collect()
     }
 
-    // In chassis-core/src/hnsw/node.rs, inside impl NodeRecord, after get_neighbors()
-
-    /// Iterator over valid neighbors at a specific layer (zero-allocation).
-    ///
-    /// This is more efficient than `get_neighbors()` in hot paths like HNSW search
-    /// because it avoids allocating a Vec.
-    ///
-    /// Returns an empty iterator if the layer is out of bounds.
+    /// `get_neighbors` without allocating.
     pub fn neighbors_iter(&self, layer: usize) -> impl Iterator<Item = NodeId> + '_ {
         let (start, count) = if layer >= self.header.layer_count as usize {
-            (0, 0) // Empty iterator for out-of-bounds layer
+            (0, 0)
         } else {
             self.layer_slice_bounds(layer)
         };
 
         self.neighbors[start..start + count].iter().copied().filter(|&id| id != INVALID_NODE_ID)
     }
-    /// Set neighbors for a specific layer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the layer is out of bounds or too many neighbors are provided.
+    /// Replaces the neighbors at `layer`. Panics past the last layer, or with more than fit.
     pub fn set_neighbors(&mut self, layer: usize, neighbors: &[NodeId]) {
         assert!(
             layer < self.params.max_layers as usize,
@@ -335,20 +260,16 @@ impl NodeRecord {
 
         let (start, count) = self.layer_slice_bounds(layer);
 
-        // Clear existing neighbors
         for slot in &mut self.neighbors[start..start + count] {
             *slot = INVALID_NODE_ID;
         }
 
-        // Write new neighbors
         for (i, &neighbor) in neighbors.iter().enumerate() {
             self.neighbors[start + i] = neighbor;
         }
     }
 
-    /// Add a neighbor to a specific layer if there's space.
-    ///
-    /// Returns `true` if the neighbor was added, `false` if the layer is full.
+    /// Adds a neighbor at `layer` if there is room, and says whether there was.
     pub fn add_neighbor(&mut self, layer: usize, neighbor: NodeId) -> bool {
         if layer >= self.params.max_layers as usize {
             return false;
@@ -356,7 +277,6 @@ impl NodeRecord {
 
         let (start, count) = self.layer_slice_bounds(layer);
 
-        // Find first empty slot
         for slot in &mut self.neighbors[start..start + count] {
             if *slot == INVALID_NODE_ID {
                 *slot = neighbor;
@@ -364,10 +284,9 @@ impl NodeRecord {
             }
         }
 
-        false // Layer is full
+        false
     }
 
-    /// Get the number of valid neighbors at a specific layer.
     #[must_use]
     pub fn neighbor_count(&self, layer: usize) -> usize {
         if layer >= self.header.layer_count as usize {
@@ -378,7 +297,7 @@ impl NodeRecord {
         self.neighbors[start..start + count].iter().filter(|&&id| id != INVALID_NODE_ID).count()
     }
 
-    /// Get the slice bounds for a layer's neighbors.
+    /// Where `layer`'s entries start in `neighbors`, and how many it has.
     fn layer_slice_bounds(&self, layer: usize) -> (usize, usize) {
         let start = if layer == 0 {
             0
@@ -391,7 +310,7 @@ impl NodeRecord {
         (start, count)
     }
 
-    /// Serialize the node record to bytes.
+    /// The record as a v1 or v2 file keeps it.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let size = self.params.record_size();
@@ -407,7 +326,6 @@ impl NodeRecord {
         };
         bytes[..NodeHeader::SIZE].copy_from_slice(header_bytes);
 
-        // Write neighbors
         let mut offset = NodeHeader::SIZE;
         for &neighbor in &self.neighbors {
             bytes[offset..offset + 8].copy_from_slice(&neighbor.to_le_bytes());
@@ -417,14 +335,8 @@ impl NodeRecord {
         bytes
     }
 
-    /// Deserialize a node record from bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Byte slice is too small
-    /// - Header validation fails
-    /// - Header `layer_count` exceeds the configured `max_layers`
+    /// Reads a record from a v1 or v2 file, refusing a short slice, a header `NodeHeader` refuses
+    /// and more layers than `params` allows.
     pub fn from_bytes(bytes: &[u8], params: NodeRecordParams) -> Result<Self, &'static str> {
         let expected_size = params.record_size();
         if bytes.len() < expected_size {
@@ -436,7 +348,6 @@ impl NodeRecord {
             return Err("Invalid NodeRecord: layer_count exceeds max_layers");
         }
 
-        // Read neighbors
         let total_slots = params.total_max_neighbors();
         let mut neighbors = Vec::with_capacity(total_slots);
 
@@ -456,16 +367,13 @@ impl NodeRecord {
     }
 }
 
-/// In-memory representation of a node (for building/manipulation).
-///
-/// This is a more ergonomic representation that doesn't require
-/// knowing the fixed size ahead of time.
+/// A node's lists, one `Vec` a layer, for building a record.
 #[derive(Debug, Clone)]
 pub struct Node {
     /// Node ID (same as vector storage index)
     pub id: NodeId,
 
-    /// File offset where this node is stored (for caching)
+    /// Unused: always 0.
     pub offset: Offset,
 
     /// Neighbors per layer (layer 0, layer 1, ...)
@@ -473,19 +381,16 @@ pub struct Node {
 }
 
 impl Node {
-    /// Create a new empty node.
     #[must_use]
     pub fn new(id: NodeId, layer_count: usize) -> Self {
         Self { id, offset: 0, layers: vec![Vec::new(); layer_count] }
     }
 
-    /// Returns the highest layer this node belongs to.
     #[must_use]
     pub fn top_layer(&self) -> usize {
         self.layers.len().saturating_sub(1)
     }
 
-    /// Convert to a fixed-size `NodeRecord` for disk storage.
     #[must_use]
     pub fn to_record(&self, params: NodeRecordParams) -> NodeRecord {
         let mut record = NodeRecord::new(self.id, self.layers.len() as u8, params);
@@ -497,7 +402,6 @@ impl Node {
         record
     }
 
-    /// Create from a `NodeRecord`.
     #[must_use]
     pub fn from_record(record: &NodeRecord) -> Self {
         let layer_count = record.header.layer_count as usize;
@@ -609,7 +513,6 @@ mod tests {
         assert_eq!(record.header.layer_count, 3);
         assert_eq!(record.neighbors.len(), params.total_max_neighbors());
 
-        // All neighbors should be invalid initially
         assert!(record.neighbors.iter().all(|&id| id == INVALID_NODE_ID));
     }
 
@@ -618,15 +521,12 @@ mod tests {
         let params = NodeRecordParams::new(16, 32, 4);
         let mut record = NodeRecord::new(0, 3, params);
 
-        // Set layer 0 neighbors
         record.set_neighbors(0, &[1, 2, 3, 4, 5]);
         assert_eq!(record.get_neighbors(0), vec![1, 2, 3, 4, 5]);
 
-        // Set layer 1 neighbors
         record.set_neighbors(1, &[10, 20]);
         assert_eq!(record.get_neighbors(1), vec![10, 20]);
 
-        // Layer 2 should still be empty
         assert!(record.get_neighbors(2).is_empty());
     }
 
@@ -635,12 +535,11 @@ mod tests {
         let params = NodeRecordParams::new(2, 4, 2); // Small for testing
         let mut record = NodeRecord::new(0, 2, params);
 
-        // Add neighbors to layer 0
         assert!(record.add_neighbor(0, 1));
         assert!(record.add_neighbor(0, 2));
         assert!(record.add_neighbor(0, 3));
         assert!(record.add_neighbor(0, 4));
-        assert!(!record.add_neighbor(0, 5)); // Layer full
+        assert!(!record.add_neighbor(0, 5));
 
         assert_eq!(record.get_neighbors(0), vec![1, 2, 3, 4]);
     }
