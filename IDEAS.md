@@ -417,9 +417,14 @@ checked against their code says so; the rest is the survey's.
   Zen 3. **Not the graph** (RUN 9, 2026-10-18, `bench/lab/ndis-plan.md`): at 0.95 recall Chassis
   computes 2 to 5% fewer distances than FAISS on dbpedia and expands fewer nodes, but each costs it
   1.21 times FAISS's on Zen 3. On Ice Lake Xeons Chassis is even or ahead (FAISS 0.86 to 0.97 times
-  its speed), on N2 and Zen 5 well ahead. **To validate next**: one 6 KB distance alone on Zen 3 and
-  Zen 4, from cache and from memory, Chassis's kernel and prefetch (8 lines into L2) against FAISS's
-  (no vector prefetch); vary the prefetch first.
+  its speed), on N2 and Zen 5 well ahead. **The pages, on Zen 3** (RUN 10, 2026-10-18,
+  `bench/lab/dist-plan.md`): the runners give FAISS's anonymous memory huge pages and Chassis's file
+  4 KB ones. With `huge_pages` on, Chassis makes 0.99 times FAISS's queries a second; with both on
+  4 KB pages, FAISS makes 0.945 times Chassis's. The kernels are even and 8 lines stays the best
+  prefetch. **To validate next**: `huge_pages` on by default on Linux, after a run where it cost
+  (Zen 5 at 128 dimensions).
+* **FAISS at AVX-512 on Zen 5, at 1,536 dimensions**, made 1.23 times Chassis's queries a second with
+  both on huge pages (RUN 10, one job).
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
