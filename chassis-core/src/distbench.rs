@@ -20,8 +20,6 @@ type K = crate::distance::Portable;
 const DIMS: usize = 1536;
 /// dbpedia's, as in the search runs: 608 MB.
 const COUNT: usize = 99_000;
-/// 240 KB, in L2 everywhere.
-const IN_CACHE: usize = 40;
 const NEIGHBORS: usize = 32;
 const DISTANCES: usize = 2_000_000;
 const HUGE: usize = 2 << 20;
@@ -49,12 +47,25 @@ const BATCH4: &CStr =
 const BATCH4: &CStr =
     c"_ZN5faiss18fvec_L2sqr_batch_4ILNS_9SIMDLevelE4EEEvPKfS3_S3_S3_S3_mRfS4_S4_S4_";
 
+/// What a file's pages are asked to be.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Pages {
+    /// Nothing asked: Chassis's default.
+    Small,
+    /// `MADV_HUGEPAGE` and `MADV_RANDOM` before the file is read, as `huge_pages` does.
+    Huge,
+    /// Read on small pages, then `MADV_COLLAPSE`.
+    Collapse,
+    /// The same through a read-only mapping of a file nothing has open for writing.
+    ReadOnlyCollapse,
+}
+
 /// Vectors in one kind of memory.
 struct Region {
     at: *const f32,
     count: usize,
     anon: Option<(*mut c_void, usize)>,
-    _file: Option<memmap2::MmapMut>,
+    _file: Option<Box<dyn std::any::Any>>,
 }
 
 impl Region {
@@ -84,9 +95,9 @@ impl Region {
         Self { at, count: data.len() / DIMS, anon: Some((map, len)), _file: None }
     }
 
-    /// A file mapped shared and writable, as a writer maps its index, read from the disk after
-    /// `advise` and before any timing. With `huge`, advised as Chassis's `huge_pages` does.
-    fn file(data: &[f32], dir: &Path, huge: bool) -> anyhow::Result<Self> {
+    /// A file read from the disk into a shared mapping before any timing: writable, as a writer
+    /// maps its index, unless `Pages::ReadOnlyCollapse`.
+    fn file(data: &[f32], dir: &Path, pages: Pages) -> anyhow::Result<Self> {
         let path = dir.join("vectors.f32");
         let mut file = std::fs::OpenOptions::new()
             .read(true)
@@ -102,18 +113,42 @@ impl Region {
         // Out of memory, so the pages come back under the mapping's advice.
         // SAFETY: a valid descriptor.
         unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
-        // SAFETY: the lab owns the file and nothing else writes it.
-        let map = unsafe { memmap2::MmapOptions::new().map_mut(&file)? };
-        if huge {
-            map.advise(memmap2::Advice::HugePage)?;
-            map.advise(memmap2::Advice::Random)?;
-        }
+        let (at, len, owner): (*const u8, usize, Box<dyn std::any::Any>) =
+            if pages == Pages::ReadOnlyCollapse {
+                // Nothing has the file open for writing, as when no writer is running.
+                drop(file);
+                let file = std::fs::File::open(&path)?;
+                // SAFETY: the lab owns the file and nothing else writes it.
+                let map = unsafe { memmap2::Mmap::map(&file)? };
+                (map.as_ptr(), map.len(), Box::new(map))
+            } else {
+                // SAFETY: as above.
+                let map = unsafe { memmap2::MmapOptions::new().map_mut(&file)? };
+                if pages == Pages::Huge {
+                    map.advise(memmap2::Advice::HugePage)?;
+                    map.advise(memmap2::Advice::Random)?;
+                }
+                (map.as_ptr(), map.len(), Box::new(map))
+            };
         let mut touched = 0u8;
-        for page in (0..map.len()).step_by(4096) {
-            touched ^= map[page];
+        for page in (0..len).step_by(4096) {
+            // SAFETY: inside the mapping.
+            touched ^= unsafe { *at.add(page) };
         }
         black_box(touched);
-        Ok(Self { at: map.as_ptr().cast(), count: data.len() / DIMS, anon: None, _file: Some(map) })
+        if matches!(pages, Pages::Collapse | Pages::ReadOnlyCollapse) {
+            // The pages are all in memory on 4 KB pages; ask for them to be put on huge ones.
+            let start = Instant::now();
+            // SAFETY: the whole mapping.
+            let done = unsafe { libc::madvise(at as *mut c_void, len, libc::MADV_COLLAPSE) };
+            let error =
+                if done == 0 { "ok".into() } else { std::io::Error::last_os_error().to_string() };
+            println!(
+                "distbench\tcollapse\t{pages:?}\t{error}\t{:.0} ms",
+                start.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        Ok(Self { at: at.cast(), count: data.len() / DIMS, anon: None, _file: Some(owner) })
     }
 
     fn vector(&self, id: usize) -> &[f32] {
@@ -304,13 +339,13 @@ pub fn bench() -> anyhow::Result<()> {
     }
     arms.push(("now-again".into(), Some(now)));
 
-    for memory in ["cache", "anon", "anon-4k", "file", "file-huge"] {
+    for memory in ["anon", "file", "file-huge", "file-collapse", "file-ro-collapse"] {
         let region = match memory {
-            "cache" => Region::anon(&data[..IN_CACHE * DIMS], None),
             "anon" => Region::anon(&data, None),
-            "anon-4k" => Region::anon(&data, Some(libc::MADV_NOHUGEPAGE)),
-            "file" => Region::file(&data, &dir, false)?,
-            _ => Region::file(&data, &dir, true)?,
+            "file" => Region::file(&data, &dir, Pages::Small)?,
+            "file-huge" => Region::file(&data, &dir, Pages::Huge)?,
+            "file-collapse" => Region::file(&data, &dir, Pages::Collapse)?,
+            _ => Region::file(&data, &dir, Pages::ReadOnlyCollapse)?,
         };
         check(&query, &region, batch4)?;
         let share = region.huge_share();
