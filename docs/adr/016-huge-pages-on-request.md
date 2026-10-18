@@ -1,7 +1,7 @@
 # ADR-0016: Huge Pages for the Vectors, on Request
 
 **Date:** 2026-10-09
-**Status:** Accepted; shipped in v0.7.0 (#31)
+**Status:** Accepted; shipped in v0.7.0 (#31), amended 2026-10-19 (see [Amendment](#amendment-2026-10-19))
 
 ## Context
 
@@ -161,3 +161,39 @@ not yet in memory took up to 28% less, and on one machine 1% more.
 * The file's vectors are cached and evicted 2 MB at a time, which costs an index much larger
   than memory.
 * One more option, in four APIs.
+
+## Amendment (2026-10-19)
+
+**The option has three settings, and `warm` asks under long vectors.** `huge_pages` is an
+`Option<bool>` (`None` in Python; in C, `chassis_use_huge_pages` and `chassis_keep_small_pages`).
+`Some(true)` asks from opening, as the option did. `Some(false)` never asks. `None`, the default,
+leaves it to `warm`, which asks under vectors of 1 KB or more. `warm` reads the whole index in, so
+reading the vectors 2 MB at a time reads the same bytes sooner: what kept this option off by
+default, reading far more than a miss uses, doesn't arise when every page is read. It asks for the
+same pieces as this option, by decision 2.
+
+Three runs on GitHub's runners (`bench/lab/dist-plan.md` on `lab/x86`) gave the reasons:
+
+- **FAISS's lead at 1,536 dimensions on Zen 3 is the pages.** The runners give anonymous memory
+  huge pages without asking, so FAISS's vectors are on them and Chassis's file is not. With this
+  option on, Chassis made 0.99 times FAISS's queries a second at 0.95 recall, against 0.84 with
+  it off. With FAISS kept off huge pages too, it made 0.945 times Chassis's. The two distance
+  kernels took the same time, and 8 lines of prefetch was still the best setting.
+- **Pages already in memory stay small.** `madvise(MADV_COLLAPSE)` on a file's mapping returned
+  `EINVAL` on Linux 6.17 with ext4, writable or read-only. A file read on small pages can't be
+  moved onto huge ones afterwards, so the choice has to be made before the read. `warm` on a file
+  that a process without the option had read searched as fast as neither option.
+- **Short vectors lose on Zen 5.** At 128 dimensions, `warm` on huge pages made 0.951 and 0.965
+  times the queries a second of neither option on two Zen 5 machines at 0.95 recall, and 0.965
+  and 0.978 at 0.99; `Some(true)` did the same. Zen 3 made 1.05 and a Xeon 8573C 1.03. At 1,536
+  dimensions, Zen 3 made 1.16 and a Xeon 6973P-C 1.05. `warm` came within 3% of `Some(true)` on
+  every machine.
+
+The line at 1 KB lies between the 512 bytes of a 128-dimension vector, which lost on Zen 5, and the
+3,840 of a 960-dimension one, which gained on every CPU but a Xeon 8370C, where it was level
+(ADR-0018); nothing between was measured. Short vectors on the other CPUs, which gained up to 14%,
+get huge pages only with `Some(true)`. In half precision the line is less sure. In single runs
+(ADR-0018), huge pages gained 3 to 20% under 128-dimension vectors, Zen 5's included, and from 3%
+less to 8% more under long ones. `Some(true)` is still not the default, for the misses above.
+
+The new type breaks Rust code that sets `huge_pages`.

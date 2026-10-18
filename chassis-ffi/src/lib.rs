@@ -1615,9 +1615,10 @@ pub unsafe extern "C" fn chassis_backup(ptr: *mut ChassisIndex, path: *const c_c
 ///
 /// On an index too large for the CPU's caches, searches are up to a quarter faster and batch
 /// builds a little faster. Only on Linux, and only where the kernel and filesystem keep files on huge
-/// pages (ext4 on Linux 6.17 does); elsewhere this does nothing. It is off unless asked for: with
-/// it a page not yet in memory is read 2 MB at a time, which an index much larger than memory
-/// pays for on every miss. Call it right after opening, on a writer's handle or a reader's.
+/// pages (ext4 on Linux 6.17 does); elsewhere this does nothing. Unless this is called, only
+/// `chassis_warm` asks, under vectors of 1 KB or more: with huge pages a page not yet in memory is
+/// read 2 MB at a time, which an index much larger than memory pays for on every miss. Call it
+/// right after opening, on a writer's handle or a reader's.
 ///
 /// # Arguments
 ///
@@ -1653,6 +1654,46 @@ pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int
     .unwrap_or(-1)
 }
 
+/// Ask the operating system for no huge pages, not even by `chassis_warm`
+///
+/// `chassis_warm` asks for huge pages under vectors of 1 KB or more, which searched faster on them
+/// on most CPUs measured; this is for a machine where they don't. What was asked for already stays
+/// asked: call it right after opening, before `chassis_warm`, on a writer's handle or a reader's.
+///
+/// # Arguments
+///
+/// - `ptr`: Non-NULL pointer to index
+///
+/// # Returns
+///
+/// - 0 on success
+/// - -1 on failure (check `chassis_last_error_message()`)
+///
+/// # Safety
+///
+/// - `ptr` must be non-NULL and valid
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chassis_keep_small_pages(ptr: *mut ChassisIndex) -> c_int {
+    ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
+        let Some(state) = (unsafe { state(ptr) }) else {
+            return -1;
+        };
+        let asked = match &state.inner {
+            Kind::Writer(lock) => lock.write().map(|mut index| index.keep_small_pages()).is_ok(),
+            Kind::Reader(lock) => lock.lock().map(|mut reader| reader.keep_small_pages()).is_ok(),
+        };
+        if asked {
+            clear_last_error();
+            0
+        } else {
+            set_last_error(POISONED);
+            -1
+        }
+    })
+    .unwrap_or(-1)
+}
+
 /// Start reading the whole index into memory on another thread
 ///
 /// Doesn't wait for the reading: searches go on meanwhile and stop waiting for the disk one page
@@ -1660,8 +1701,9 @@ pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int
 /// everything else out. What is read is what the index holds when this is called; while that is
 /// under way, calling again does nothing. A reader that opens the file again after a compaction
 /// reads the new one in too. It takes Linux 5.14 or macOS: an older Linux reads only some of the
-/// index, and Windows none. Call it on a writer's handle or a reader's, right after opening or
-/// later.
+/// index, and Windows none. Under vectors of 1 KB or more it asks for huge pages too, unless
+/// `chassis_keep_small_pages` was called: read in whole, the index costs no more on them. Call it
+/// on a writer's handle or a reader's, right after opening or later.
 ///
 /// # Arguments
 ///
@@ -2512,6 +2554,8 @@ mod tests {
         };
         assert_eq!((found, ids[0]), (1, 7));
         assert_eq!(unsafe { chassis_use_huge_pages(ptr::null_mut()) }, -1);
+        assert_eq!(unsafe { chassis_keep_small_pages(reader) }, 0);
+        assert_eq!(unsafe { chassis_keep_small_pages(ptr::null_mut()) }, -1);
 
         unsafe { chassis_free(reader) };
         unsafe { chassis_free(writer) };

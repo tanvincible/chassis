@@ -436,6 +436,10 @@ struct Segment {
 /// of it, where it keeps it on huge pages at all.
 const HUGE_PAGE: u64 = 2 << 20;
 
+/// The size of vector from which `warm` asks for huge pages unless told: shorter ones lost on
+/// them on Zen 5 (ADR-0016).
+const WARM_HUGE_FROM: usize = 1024;
+
 /// The whole huge pages inside the file offsets `start..end`, if there are any. Bytes that share
 /// a huge page with bytes outside the range are left out: a page written through the mapping is
 /// written back whole, so what is still being written must not share one with what is asked for
@@ -708,8 +712,13 @@ impl Storage {
     }
 
     /// Starts another thread reading what the index holds into memory (`IndexOptions::warm`,
-    /// ADR-0019), unless one is at it already, and returns at once.
-    pub(crate) fn warm(&mut self) {
+    /// ADR-0019), unless one is at it already, and returns at once. With `huge_pages` left unset,
+    /// it asks for huge pages under vectors of `WARM_HUGE_FROM` bytes or more.
+    pub(crate) fn warm(&mut self, huge_pages: Option<bool>) {
+        let long = self.geometry.vector_bytes() >= WARM_HUGE_FROM;
+        if huge_pages.is_none() && long && self.huge_slots.is_none() {
+            self.use_huge_pages();
+        }
         if self.warming.as_ref().is_some_and(Warming::running) {
             return;
         }
@@ -774,6 +783,11 @@ impl Storage {
     pub(crate) fn use_huge_pages(&mut self) {
         self.huge_slots = Some(self.committed.count);
         self.ask_for_huge_pages();
+    }
+
+    /// Asks for no more huge pages. What was asked for already stays asked.
+    pub(crate) fn keep_small_pages(&mut self) {
+        self.huge_slots = None;
     }
 
     /// The vectors in slots below `slots` are written for good, or a batch is about to write
@@ -2263,6 +2277,32 @@ mod tests {
     }
 
     #[test]
+    fn test_warming_asks_for_huge_pages_under_long_vectors_unless_told() {
+        use crate::{IndexOptions, IndexReader, VectorIndex};
+        let dir = tempdir().unwrap();
+        let warmed = |dims: usize, huge_pages| {
+            let path = dir.path().join(format!("{dims}-{huge_pages:?}.chassis"));
+            let options = IndexOptions { huge_pages, warm: true, ..IndexOptions::default() };
+            let mut index = VectorIndex::open(&path, dims as u32, options.clone()).unwrap();
+            index.add(&vec![1.0; dims]).unwrap();
+            index.flush().unwrap();
+            let reader = IndexReader::open(&path, dims as u32, options).unwrap();
+            (index.graph.storage.huge_slots, reader.graph.storage.huge_slots)
+        };
+        assert_eq!(warmed(WARM_HUGE_FROM / 4, None), (Some(1), Some(1)));
+        assert_eq!(warmed(WARM_HUGE_FROM / 4 - 1, None), (None, None));
+        assert_eq!(warmed(WARM_HUGE_FROM / 4, Some(false)), (None, None));
+        assert_eq!(warmed(4, Some(true)), (Some(1), Some(1)));
+        // Told after asking, it asks for no more.
+        let options = IndexOptions { huge_pages: Some(true), ..IndexOptions::default() };
+        let mut index = VectorIndex::open(dir.path().join("told.chassis"), 4, options).unwrap();
+        index.keep_small_pages();
+        index.add(&[1.0; 4]).unwrap();
+        index.flush().unwrap();
+        assert_eq!(index.graph.storage.huge_slots, None);
+    }
+
+    #[test]
     fn test_warming_asks_for_what_was_written_and_nothing_past_it() {
         let dir = tempdir().unwrap();
         let mut storage = Storage::open(dir.path().join("index.chassis"), 8).unwrap();
@@ -2303,13 +2343,15 @@ mod tests {
             assert!(ranges.contains(&(start, per_slot * 40)));
         }
 
-        // Reading it in changes nothing. Where there is a way to ask (not on Windows yet), asking
-        // again once that is done starts another.
-        storage.warm();
+        // Reading it in changes nothing, and asks for no huge pages under vectors this short.
+        // Where there is a way to ask (not on Windows yet), asking again once that is done starts
+        // another.
+        storage.warm(None);
+        assert_eq!(storage.huge_slots, None);
         if cfg!(unix) {
             storage.warming.as_mut().unwrap().thread.take().unwrap().join().unwrap();
             let done = Arc::clone(&storage.warming.as_ref().unwrap().stop);
-            storage.warm();
+            storage.warm(None);
             assert!(!Arc::ptr_eq(&storage.warming.as_ref().unwrap().stop, &done));
         }
         assert_eq!(storage.get_vector(87).unwrap(), vec![87.0; 8]);
@@ -2317,7 +2359,7 @@ mod tests {
         let (busy, _) = stand_in();
         let stop = Arc::clone(&busy.stop);
         storage.warming = Some(busy);
-        storage.warm();
+        storage.warm(None);
         assert!(Arc::ptr_eq(&storage.warming.as_ref().unwrap().stop, &stop));
 
         // In pieces the thread can be stopped between.
@@ -2492,7 +2534,7 @@ mod tests {
         }
         reader.refresh().unwrap();
         assert_eq!(reader.segments.len(), 2);
-        reader.warm();
+        reader.warm(None);
         drop(writer);
         // The next writer puts a heap chunk's table page where that segment was, and the segment
         // after it.

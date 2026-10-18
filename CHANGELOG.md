@@ -5,9 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.1...HEAD)
 
+### Breaking
+
+- Rust: `IndexOptions::huge_pages` is an `Option<bool>`, `None` by default (#121).
+
 ### Added
 
 - `backup(path)`: a copy of the index, from its writer or, while it writes, from a reader (#116).
+- `keep_small_pages()` and `chassis_keep_small_pages`: no huge pages, not even by `warm` (#121).
+
+### Changed
+
+- `warm()` asks for huge pages under vectors of 1 KB or more, on Linux, unless told not to (#121).
+- Python: `huge_pages` is `None` by default, leaving it to `warm` (#121).
 
 ### Performance
 
