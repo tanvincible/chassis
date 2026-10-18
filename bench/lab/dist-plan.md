@@ -286,3 +286,29 @@ Before `off`, `warm` and `huge` the file is put out of memory. Pages come from
 
 **The decision.** With 1 and 2 holding, the PR's claim stands as written. If either fails, the PR
 is changed before it is merged.
+
+### Results
+
+[Run 39148249932](https://github.com/tanvincible/chassis/actions/runs/39148249932),
+`feat/warm-huge-pages` at b5b4b37. The jobs drew Zen 4 (EPYC 9V74) three times and Zen 3 once.
+Every arm found the same recall at every `ef`, and no arm's three rounds were more than 8% apart.
+
+| Job | CPU | `off` | `warm-cached` | `warm` | `huge` | `warm` / `huge` | `warm-cached` / `off` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| a | Zen 4 | 2,565 | 2,604 | 3,245 | 3,298 | 0.984 | 1.015 |
+| b | Zen 3 | 3,170 | 3,186 | 3,645 | 3,664 | 0.995 | 1.005 |
+| c | Zen 4 | 2,813 | 2,808 | 3,489 | 3,548 | 0.983 | 0.998 |
+| d | Zen 4 | 2,836 | 2,839 | 3,494 | 3,565 | 0.980 | 1.001 |
+
+Queries a second at 0.95 recall. File on huge pages: `warm` 553 to 563 MB, `huge` 573 to
+578 MB, `off` and `warm-cached` none.
+
+**Predictions.**
+
+1. **Held.** `warm` had 553 to 563 MB on huge pages; `warm-cached` and `off`, none.
+2. **Held.** `warm` made 0.980 to 0.995 of `huge`'s queries a second.
+3. **Held.** `warm-cached` made 0.998 to 1.015 of `off`'s.
+
+**The decision: the PR's claim stands.** `warm` keeps 15 to 20 MB fewer vectors on huge pages
+than `huge_pages`, which may be the 0.5 to 2% it gives up; why was not looked into. Huge pages
+were worth 1.16 on this Zen 3 and 1.26 to 1.29 on Zen 4.
