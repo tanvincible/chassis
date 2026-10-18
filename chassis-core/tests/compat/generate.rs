@@ -78,5 +78,16 @@ fn main() {
     index.flush().unwrap();
     record(&mut out, &name, &index, "euclidean", "full", &(10..N + 2).collect::<Vec<_>>());
 
+    // More vectors than the first segment's 1,024 slots, with ids and deletes in both segments.
+    // From v0.9.1.
+    let name = format!("{release}-segments.chassis");
+    let mut index = open(&name, e, full);
+    let (n, deleted) = (1_500, [5, 1_200]);
+    for i in 0..n { index.add_with_id(1000 + 7 * i, &vector(i)).unwrap(); }
+    for i in deleted { index.delete(1000 + 7 * i).unwrap(); }
+    index.flush().unwrap();
+    let live: Vec<u64> = (0..n).filter(|i| !deleted.contains(i)).map(|i| 1000 + 7 * i).collect();
+    record(&mut out, &name, &index, "euclidean", "full", &live);
+
     print!("{out}");
 }
