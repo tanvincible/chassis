@@ -29,6 +29,9 @@
 //! - `chassis_free` must not race with any other call on the same handle.
 //! - Each thread has its own error message storage
 
+// Every unsafe block says why it is sound, in a `// SAFETY:` comment.
+#![warn(clippy::undocumented_unsafe_blocks)]
+
 use chassisdb::{
     Check, DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, SearchResult,
     VectorIndex,
@@ -265,6 +268,7 @@ const POISONED: Failure = Failure::other(
 ///
 /// Same as `state`.
 unsafe fn read<T>(ptr: *const ChassisIndex, f: impl FnOnce(&mut dyn Readable) -> T) -> Option<T> {
+    // SAFETY: our caller's contract is `state`'s.
     let result = match &unsafe { state(ptr) }?.inner {
         Kind::Writer(lock) => lock.read().map(|index| f(&mut &*index)).map_err(|_| ()),
         Kind::Reader(lock) => lock.lock().map(|mut reader| f(&mut *reader)).map_err(|_| ()),
@@ -278,6 +282,7 @@ unsafe fn read<T>(ptr: *const ChassisIndex, f: impl FnOnce(&mut dyn Readable) ->
 ///
 /// Same as `state`.
 unsafe fn write_index<'a>(ptr: *const ChassisIndex) -> Option<RwLockWriteGuard<'a, VectorIndex>> {
+    // SAFETY: our caller's contract is `state`'s.
     match &unsafe { state(ptr) }?.inner {
         Kind::Writer(lock) => lock.write().map_err(|_| set_last_error(POISONED)).ok(),
         Kind::Reader(_) => {
@@ -541,6 +546,7 @@ where
 /// - Caller must free the returned pointer with `chassis_free()`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_open(path: *const c_char, dimensions: u32) -> *mut ChassisIndex {
+    // SAFETY: the caller passes `path` as NULL or a NUL-terminated string.
     ffi_guard(|| unsafe { open_handle(path, dimensions, IndexOptions::default(), false) })
         .unwrap_or(ptr::null_mut())
 }
@@ -592,6 +598,7 @@ pub unsafe extern "C" fn chassis_open_with_options(
             ef_search: ef_search as usize,
             ..Default::default()
         };
+        // SAFETY: the caller passes `path` as NULL or a NUL-terminated string.
         unsafe { open_handle(path, dimensions, options, false) }
     })
     .unwrap_or(ptr::null_mut())
@@ -697,6 +704,7 @@ pub unsafe extern "C" fn chassis_open_with_precision(
             precision,
             ..Default::default()
         };
+        // SAFETY: the caller passes `path` as NULL or a NUL-terminated string.
         unsafe { open_handle(path, dimensions, options, false) }
     })
     .unwrap_or(ptr::null_mut())
@@ -741,6 +749,7 @@ pub unsafe extern "C" fn chassis_open_reader(
         };
         let options =
             IndexOptions { max_connections, ef_search: ef_search as usize, ..Default::default() };
+        // SAFETY: the caller passes `path` as NULL or a NUL-terminated string.
         unsafe { open_handle(path, dimensions, options, true) }
     })
     .unwrap_or(ptr::null_mut())
@@ -826,6 +835,7 @@ pub unsafe extern "C" fn chassis_add(
     len: size_t,
 ) -> u64 {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return u64::MAX;
         };
@@ -939,6 +949,7 @@ pub unsafe extern "C" fn chassis_add_batch(
             return 0;
         }
 
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return 0;
         };
@@ -1002,6 +1013,7 @@ pub unsafe extern "C" fn chassis_add_with_id(
     len: size_t,
 ) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return -1;
         };
@@ -1054,6 +1066,7 @@ pub unsafe extern "C" fn chassis_add_batch_with_ids(
     dim: size_t,
 ) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return -1;
         };
@@ -1115,6 +1128,7 @@ pub unsafe extern "C" fn chassis_add_batch_with_ids(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_delete(ptr: *mut ChassisIndex, id: u64) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return -1;
         };
@@ -1189,6 +1203,7 @@ pub unsafe extern "C" fn chassis_search(
     out_dists: *mut c_float,
 ) -> size_t {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle, and buffers as `len` and `k` say.
         unsafe { read(ptr, |index| search_into(index, query, len, k, None, out_ids, out_dists)) }
             .unwrap_or(0)
     })
@@ -1241,6 +1256,7 @@ pub unsafe extern "C" fn chassis_search_filtered(
             unsafe { slice::from_raw_parts(allowed_ids, allowed_len) }
         });
         let filter = |id| allowed.contains(id);
+        // SAFETY: the caller passes NULL or a live handle, and buffers as `len` and `k` say.
         unsafe {
             read(ptr, |index| search_into(index, query, len, k, Some(&filter), out_ids, out_dists))
         }
@@ -1292,6 +1308,7 @@ pub unsafe extern "C" fn chassis_search_excluding(
         });
         let filter = |id| !excluded.contains(id);
         let filter: Filter = if excluded_len == 0 { None } else { Some(&filter) };
+        // SAFETY: the caller passes NULL or a live handle, and buffers as `len` and `k` say.
         unsafe { read(ptr, |index| search_into(index, query, len, k, filter, out_ids, out_dists)) }
             .unwrap_or(0)
     })
@@ -1363,11 +1380,16 @@ pub unsafe extern "C" fn chassis_search_batch(
             return 0;
         };
         // SAFETY: the caller guarantees these lengths
-        let queries = unsafe { slice::from_raw_parts(queries, values) };
-        let ids = unsafe { slice::from_raw_parts_mut(out_ids, slots) };
-        let dists = unsafe { slice::from_raw_parts_mut(out_dists, slots) };
+        let (queries, ids, dists) = unsafe {
+            (
+                slice::from_raw_parts(queries, values),
+                slice::from_raw_parts_mut(out_ids, slots),
+                slice::from_raw_parts_mut(out_dists, slots),
+            )
+        };
         let rows =
             queries.chunks_exact(dim).zip(ids.chunks_exact_mut(k).zip(dists.chunks_exact_mut(k)));
+        // SAFETY: the caller passes NULL or a live handle.
         unsafe {
             read(ptr, |index| {
                 for (i, (query, (ids, dists))) in rows.enumerate() {
@@ -1433,8 +1455,8 @@ unsafe fn search_into(
             Ok(results) => {
                 let count = results.len();
 
-                // SAFETY: Caller guarantees out_ids and out_dists have space for k elements
                 for (i, result) in results.iter().enumerate() {
+                    // SAFETY: the caller guarantees out_ids and out_dists have space for k elements
                     unsafe {
                         *out_ids.add(i) = result.id;
                         *out_dists.add(i) = result.distance;
@@ -1492,6 +1514,7 @@ unsafe fn search_into(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return -1;
         };
@@ -1532,6 +1555,7 @@ pub unsafe extern "C" fn chassis_flush(ptr: *mut ChassisIndex) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_rollback(ptr: *mut ChassisIndex) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return -1;
         };
@@ -1637,6 +1661,7 @@ pub unsafe extern "C" fn chassis_backup(ptr: *mut ChassisIndex, path: *const c_c
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(state) = (unsafe { state(ptr) }) else {
             return -1;
         };
@@ -1680,6 +1705,7 @@ pub unsafe extern "C" fn chassis_use_huge_pages(ptr: *mut ChassisIndex) -> c_int
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_warm(ptr: *mut ChassisIndex) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(state) = (unsafe { state(ptr) }) else {
             return -1;
         };
@@ -1721,6 +1747,7 @@ pub unsafe extern "C" fn chassis_warm(ptr: *mut ChassisIndex) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_compact(ptr: *mut ChassisIndex) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return -1;
         };
@@ -1807,6 +1834,7 @@ pub unsafe extern "C" fn chassis_get(
             set_last_error("out is NULL\nhelp: pass space for chassis_dimensions(index) floats");
             return -1;
         }
+        // SAFETY: the caller passes NULL or a live handle.
         unsafe { read(ptr, get) }.unwrap_or(-1)
     })
     .unwrap_or(-1)
@@ -1838,6 +1866,7 @@ pub unsafe extern "C" fn chassis_contains(ptr: *const ChassisIndex, id: u64) -> 
             -1
         }
     };
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, contains) }.unwrap_or(-1)).unwrap_or(-1)
 }
 
@@ -1890,6 +1919,7 @@ pub unsafe extern "C" fn chassis_ids(
             set_last_error("out is NULL\nhelp: pass space for cap ids, or cap 0 to count them");
             return 0;
         }
+        // SAFETY: the caller passes NULL or a live handle.
         unsafe { read(ptr, ids) }.unwrap_or(0)
     })
     .unwrap_or(0)
@@ -1952,6 +1982,7 @@ pub unsafe extern "C" fn chassis_check(
             set_last_error("out is NULL\nhelp: pass space for cap ids, or cap 0 to count them");
             return 0;
         }
+        // SAFETY: the caller passes NULL or a live handle.
         unsafe { read(ptr, check) }.unwrap_or(0)
     })
     .unwrap_or(0)
@@ -1981,6 +2012,7 @@ pub unsafe extern "C" fn chassis_len(ptr: *const ChassisIndex) -> u64 {
         clear_last_error();
         index.len()
     };
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, len) }.unwrap_or(0)).unwrap_or(0)
 }
 
@@ -2001,6 +2033,7 @@ pub unsafe extern "C" fn chassis_deleted_count(ptr: *const ChassisIndex) -> u64 
         clear_last_error();
         index.deleted_count()
     };
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, deleted_count) }.unwrap_or(0)).unwrap_or(0)
 }
 
@@ -2025,6 +2058,7 @@ pub unsafe extern "C" fn chassis_user_version(ptr: *const ChassisIndex) -> u64 {
         clear_last_error();
         index.user_version()
     };
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, user_version) }.unwrap_or(0)).unwrap_or(0)
 }
 
@@ -2043,6 +2077,7 @@ pub unsafe extern "C" fn chassis_user_version(ptr: *const ChassisIndex) -> u64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_set_user_version(ptr: *mut ChassisIndex, version: u64) -> c_int {
     ffi_guard(|| {
+        // SAFETY: the caller passes NULL or a live handle.
         let Some(mut index) = (unsafe { write_index(ptr) }) else {
             return -1;
         };
@@ -2072,6 +2107,7 @@ pub unsafe extern "C" fn chassis_is_empty(ptr: *const ChassisIndex) -> c_int {
         clear_last_error();
         c_int::from(index.len() == 0)
     };
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, is_empty) }.unwrap_or(0)).unwrap_or(0)
 }
 
@@ -2090,6 +2126,7 @@ pub unsafe extern "C" fn chassis_is_empty(ptr: *const ChassisIndex) -> c_int {
 /// - `ptr` must be non-NULL and valid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chassis_dimensions(ptr: *const ChassisIndex) -> u32 {
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, |index| index.dimensions()) }.unwrap_or(0)).unwrap_or(0)
 }
 
@@ -2109,6 +2146,7 @@ pub unsafe extern "C" fn chassis_metric(ptr: *const ChassisIndex) -> c_int {
         DistanceMetric::Cosine => CHASSIS_METRIC_COSINE,
         _ => CHASSIS_METRIC_EUCLIDEAN,
     };
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, metric) }.unwrap_or(-1)).unwrap_or(-1)
 }
 
@@ -2128,6 +2166,7 @@ pub unsafe extern "C" fn chassis_precision(ptr: *const ChassisIndex) -> c_int {
         Precision::Half => CHASSIS_PRECISION_HALF,
         _ => CHASSIS_PRECISION_FULL,
     };
+    // SAFETY: the caller passes NULL or a live handle.
     ffi_guard(|| unsafe { read(ptr, precision) }.unwrap_or(-1)).unwrap_or(-1)
 }
 
@@ -2224,7 +2263,9 @@ pub extern "C" fn chassis_version() -> *const c_char {
 //  TESTS
 //
 
+// Tests pass the C functions handles and buffers they made just above.
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)]
 mod tests {
     use super::*;
     use std::ffi::CString;
