@@ -3,7 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.9.1...HEAD)
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.10.0...HEAD)
+
+## [v0.10.0](https://github.com/tanvincible/chassis/compare/v0.9.1...v0.10.0) - 19 October 2026
+
+Copy an index while it is in use, and search long vectors on huge pages after `warm`. Rust code
+that sets `huge_pages` now passes `Some(true)` or `Some(false)`.
+The file format doesn't change: v0.9.1 opens what v0.10.0 writes.
 
 ### Breaking
 
@@ -16,7 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Changed
 
-- `warm()` asks for huge pages under vectors of 2 KB or more, on Linux, unless told not to (#121).
+- `warm()` asks for huge pages under vectors of 2 KB or more, on Linux, unless told not to (#121,
+  #122).
 - Python: `huge_pages` is `None` by default, leaving it to `warm` (#121).
 
 ### Performance

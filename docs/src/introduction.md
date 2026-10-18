@@ -69,7 +69,7 @@ Chassis is kept small on purpose, so that it stays correct and fast. It is not:
 
 ## Status
 
-The latest release is **v0.9.1**; the
+The latest release is **v0.10.0**; the
 [changelog](https://github.com/tanvincible/chassis/blob/main/CHANGELOG.md) lists what each release
 changed. Files from older releases open, and opening one for writing converts it.
 
