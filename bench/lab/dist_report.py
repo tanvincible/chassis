@@ -125,9 +125,9 @@ def part2():
 
 
 def part3():
-    """RUNs 11 and 12: Chassis alone, each tag against `off`."""
+    """RUNs 11 to 13: Chassis alone, each tag against `off`; RUN 13 has an index per subdirectory."""
     by = collections.defaultdict(list)
-    for d in sorted(glob.glob("incumbents-*")):
+    for d in sorted(p.rsplit("/", 1)[0] for p in glob.glob("incumbents-*/pages.txt") + glob.glob("incumbents-*/*/pages.txt")):
         if glob.glob(f"{d}/inc.tsv"):
             continue
         qps, rec, same = chassis(d)
@@ -143,7 +143,8 @@ def part3():
         print("   " + "  ".join(f"{t} {v:.0f}" for t, v in out.items())
               + "   " + "  ".join(f"{t}/off {out[t] / out['off']:.3f}" for t in tags if t != "off"))
         if same:
-            by[(d.split("-ubuntu")[0].removeprefix("incumbents-"), cpu(d))].append(out)
+            data = d.split("/")[1] if "/" in d else d.split("-ubuntu")[0].removeprefix("incumbents-")
+            by[(data, cpu(d))].append(out)
     for (data, name), jobs in sorted(by.items()):
         tags = [t for t in jobs[0] if t != "off"]
         print(f"{data}, {name}, {len(jobs)} jobs, the median over jobs of each tag / off: "
@@ -154,5 +155,5 @@ if glob.glob("distbench-*"):
     part1()
 if glob.glob("incumbents-*/inc.tsv"):
     part2()
-if glob.glob("incumbents-*/pages.txt"):
+if glob.glob("incumbents-*/pages.txt") + glob.glob("incumbents-*/*/pages.txt"):
     part3()

@@ -12,9 +12,9 @@ permissions:
   contents: read
 
 env:
-  RUN: 12
-  CHASSIS: feat/warm-huge-pages
-  SHA: b5b4b37c7f925c648a5a53f9e13f015db0ca29f6
+  RUN: 13
+  CHASSIS: main
+  SHA: 8676c4c671b501a2dbc300cf624d8198e2128884
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -23,18 +23,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [sift-128, dbpedia-openai3-1536]
+        name: [dbpedia-openai3-1536]
         runner: [ubuntu-latest]
-        shard: [a, b, c, d, e, f, g, h, i, j]
-        exclude:
-          - { name: dbpedia-openai3-1536, shard: e }
-          - { name: dbpedia-openai3-1536, shard: f }
-          - { name: dbpedia-openai3-1536, shard: g }
-          - { name: dbpedia-openai3-1536, shard: h }
-          - { name: dbpedia-openai3-1536, shard: i }
-          - { name: dbpedia-openai3-1536, shard: j }
+        shard: [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t]
         include:
-          - { name: sift-128, n: 1000000 }
           - { name: dbpedia-openai3-1536, n: 99000 }
     env:
       DATA: bench/ann/data
@@ -102,7 +94,7 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/src" "${SHA:-FETCH_HEAD}"
           git -C "$RUNNER_TEMP/src" log --oneline -1 | tee results/sha.txt
           sed s/chassis_core/chassisdb/g chassis-core/examples/lab.rs > "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
-          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_warm" \
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_warm --cfg lab_half" \
             cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t")
           cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
           cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
@@ -112,19 +104,25 @@ jobs:
       - name: Every engine on the same vectors
         env:
           N: ${{ matrix.n }}
+          LAB_EFS: 16 32 64 128 256 512
         run: |
-          L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"; truth="$T/gt.u32"
-          "$L" truth "$DATA" "$NAME" "$N" "$truth"
-          "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N" | tee -a results/lab.tsv
-          # Each arm reads the index from disk under its own options.
-          search() { env "$@" "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" "$tag" 2>>results/pages.txt | grep -v first_pass | tee -a results/lab.tsv; }
-          for round in 1 2 3; do
-            "$T/pagetool" evict "$T/c.chassis"; tag=off search
-            "$T/pagetool" evict "$T/c.chassis"; tag=warm search LAB_WARMOPT=1
-            "$T/pagetool" evict "$T/c.chassis"; tag=huge search LAB_HUGE=1
+          L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"
+          # Each index, cut to its dimensions and in its precision, read from disk under each arm's options.
+          for dims in 384 768; do
+            export LAB_DIMS=$dims; truth="$T/gt-$dims.u32"
+            "$L" truth "$DATA" "$NAME" "$N" "$truth"
+            for precision in LAB_FULL LAB_HALF; do
+              out="results/$dims-$precision"; mkdir -p "$out"; cp results/lscpu.txt "$out/"
+              env "$precision=1" "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N" | tee -a "$out/lab.tsv"
+              search() { env "$precision=1" "$@" "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" "$tag" 2>>"$out/pages.txt" | grep -v first_pass | tee -a "$out/lab.tsv"; }
+              for round in 1 2 3; do
+                "$T/pagetool" evict "$T/c.chassis"; tag=off search
+                "$T/pagetool" evict "$T/c.chassis"; tag=warm search LAB_WARMOPT=1
+                "$T/pagetool" evict "$T/c.chassis"; tag=huge search LAB_HUGE=1
+              done
+            done
           done
-          cat results/pages.txt
-          { echo '```'; cat results/lab.tsv results/pages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; cat results/*/pages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()

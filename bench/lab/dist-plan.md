@@ -389,3 +389,49 @@ vectors of 1 KB or more. A skeptic pass afterwards found the line less sure in h
 single runs (ADR-0018), huge pages gained 3 to 20% under 128-dimension vectors, Zen 5's included,
 and from 3% less to 8% more under long ones. A same-job run of `warm` in half precision would settle
 it.
+
+## The 1 KB line at 384 and 768 dimensions (incumbents RUN 13)
+
+Written before the run. `warm` now asks for huge pages under vectors of 1 KB or more, unless
+`huge_pages` says otherwise (#121, merged as 8676c4c). The line rests on 128 dimensions (512
+bytes, Zen 5 lost) and 1,536 (6 KB, every CPU gained). Most text embeddings sit between: 384
+and 768 dimensions. In half precision those are 768 and 1,536 bytes, one on each side of the line;
+in full precision, 1,536 and 3,072 bytes, both above it. This run measures all four before v0.10.0
+ships the line.
+
+**What is measured.** `incumbents.yml` RUN 13, `main` at 8676c4c. dbpedia's 99,000 vectors cut to
+their first 384 and first 768 components (`LAB_DIMS`; text-embedding-3 is trained so a prefix is an
+embedding of its own), the true neighbors found again on the cut vectors. On each of 20 jobs, four
+indexes: 384 and 768 dimensions, each in full and in half precision. Each is searched three ways,
+three rounds, the file put out of memory before each:
+
+- `off`: neither option.
+- `warm`: `warm`, `huge_pages` unset: the rule decides.
+- `huge`: `huge_pages` on.
+
+`ef` from 16 to 512. Queries a second at 0.95 recall, the median of the three rounds, as in RUN 12.
+Each CPU's median over its jobs of `huge` / `off`.
+
+**Checks.** Every arm has the same recall at every `ef`. `off` has no file on huge pages. `huge` has
+most of its file on them.
+
+**Predictions.**
+
+1. `warm` has at least 80% of `huge`'s file on huge pages at 384 full, 768 full and 768 half, and
+   under 10 MB at 384 half.
+2. `warm` is within 3% of `huge` where it asks, and within 3% of `off` at 384 half.
+3. On Zen 3, `huge` makes at least 1.03 times `off`'s queries a second in all four, and more at
+   768 full than at 384 half.
+4. On Zen 5, `huge` makes at least 0.97 times `off`'s at 768 full.
+
+**The decision.** A vector size belongs above the line if no CPU's median `huge` / `off` is under
+0.97 there (RUN 12's bar).
+
+- **Above the line, a CPU under 0.97** at 384 full, 768 full or 768 half: the line rises past that
+  size, to the next power of two, in a PR before v0.10.0. If the sizes that fail aren't all below
+  the ones that pass, no single line fits, and the choice goes to the user.
+- **Below the line, 384 half:** if Zen 5 was drawn, no CPU is under 0.97, and the median over all
+  jobs is at least 1.03, the line drops to 768 bytes before v0.10.0. Otherwise it stays.
+- **Neither:** the line stays at 1 KB, and v0.10.0 is cut.
+- **No Zen 5 drawn:** run once more. Without Zen 5 the second time, the rules above apply to the
+  CPUs drawn, and ADR-0016 says Zen 5 wasn't measured between 128 and 1,536 dimensions.

@@ -340,7 +340,7 @@ fn options(ef_search: usize) -> IndexOptions {
     // LAB_HUGE=1 opens with huge pages, in a build that has them (`--cfg lab_hp`).
     #[cfg(lab_hp)]
     if std::env::var_os("LAB_HUGE").is_some() {
-        options.huge_pages = true;
+        options.huge_pages = Some(true);
     }
     // LAB_HALF=1 creates and opens indexes in half precision, in a build that has it
     // (`--cfg lab_half`).
