@@ -289,6 +289,7 @@ ENGINES = {
     "faiss": Faiss,
     "faiss-avx2": Faiss,
     "faiss-again": Faiss,
+    "faiss-4k": Faiss,
     "annoy": Annoy,
     "sqlitevec": SqliteVec,
     "lancedb": Lance,
@@ -310,6 +311,12 @@ def main() -> None:
     name, data_dir, dataset, n = sys.argv[1], Path(sys.argv[2]), sys.argv[3], int(sys.argv[4])
     truth_path, work = Path(sys.argv[5]), Path(sys.argv[6])
     phase = sys.argv[7] if len(sys.argv) > 7 else "all"
+    if name.endswith("-4k"):
+        # No huge pages under this process's memory.
+        import ctypes
+
+        PR_SET_THP_DISABLE = 41
+        assert ctypes.CDLL(None).prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0) == 0
     engine = ENGINES[name]()
     work.mkdir(parents=True, exist_ok=True)
     path = work / engine.file
@@ -366,6 +373,11 @@ def main() -> None:
         if hasattr(engine, "counts"):
             line("distances", setting, hits / (len(test) * K), engine.counts[0])
             line("hops", setting, hits / (len(test) * K), engine.counts[1])
+
+    rollup = Path("/proc/self/smaps_rollup")
+    if rollup.exists():
+        fields = dict(l.split(":", 1) for l in rollup.read_text().splitlines()[1:])
+        print(f"inc-pages\t{name}\tRss {fields['Rss'].strip()} AnonHuge {fields['AnonHugePages'].strip()}", flush=True)
 
     pagetool = os.environ.get("PAGETOOL")
     if pagetool:

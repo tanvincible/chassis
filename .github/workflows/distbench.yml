@@ -1,0 +1,70 @@
+name: x86 distbench
+
+# Experiment branch only: what one distance costs at 1,536 dimensions, by kernel, prefetch and the
+# pages under the vectors. The plan and the decision rule are in bench/lab/dist-plan.md. Runs when
+# this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/distbench.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  CHASSIS: lab/exp-dist
+
+jobs:
+  distance:
+    name: distbench (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [a, b, c, d, e, f, g, h]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            df -T "$RUNNER_TEMP" | tail -1
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+
+      - name: Build the branch and FAISS's library
+        run: |
+          git fetch -q origin "$CHASSIS"
+          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          cd "$RUNNER_TEMP/src"
+          git log --oneline -1 | tee "$GITHUB_WORKSPACE/results/sha.txt"
+          RUSTFLAGS="--cfg lab" cargo build -q --release -p chassisdb --example distbench
+          pip install -q faiss-cpu==1.15.1
+          echo "FAISS=$(python -c 'import faiss, os; print(os.path.dirname(faiss.__file__))')/libfaiss.so" >> "$GITHUB_ENV"
+
+      - name: Checks and timing
+        run: |
+          "$RUNNER_TEMP/src/target/release/examples/distbench" "$RUNNER_TEMP" "$FAISS" | tee results/distbench.tsv
+          { echo '```'; cat results/distbench.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: distbench-${{ matrix.shard }}
+          path: results/

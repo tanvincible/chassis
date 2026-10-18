@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 9
-  CHASSIS: lab/exp-ndis
+  RUN: 10
+  CHASSIS: lab/exp-dist
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -22,17 +22,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [dbpedia-openai3-1536, sift-128]
+        name: [dbpedia-openai3-1536]
         runner: [ubuntu-latest]
-        shard: [a, b, c, d]
-        exclude:
-          - { name: sift-128, shard: c }
-          - { name: sift-128, shard: d }
+        shard: [a, b, c, d, e, f]
         include:
           - { name: dbpedia-openai3-1536, n: 99000 }
-          - { name: sift-128, n: 1000000 }
-          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, n: 99000 }
-          - { name: sift-128, runner: ubuntu-24.04-arm, shard: a, n: 1000000 }
     env:
       DATA: bench/ann/data
       NAME: ${{ matrix.name }}
@@ -98,55 +92,35 @@ jobs:
           git fetch -q origin "$CHASSIS"
           git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
           sed s/chassis_core/chassisdb/g chassis-core/examples/lab.rs > "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
-          (cd "$RUNNER_TEMP/src" && export RUSTFLAGS="--cfg lab_hp --cfg lab_half" \
-            && cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t" \
-            && RUSTFLAGS="$RUSTFLAGS --cfg lab --cfg lab_count" \
-              cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/tc" \
-            && cargo build --release -p chassis-ffi --target-dir "$RUNNER_TEMP/t")
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab --cfg lab_hp" \
+            cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t")
           cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
-          cp "$RUNNER_TEMP/tc/release/examples/lab" "$RUNNER_TEMP/lab-count"
           cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
-          for pkg in numpy pyarrow hnswlib usearch faiss-cpu annoy sqlite-vec lancedb; do
-            pip install -q "$pkg" || echo "could not install $pkg" | tee -a results/inc.log
-          done
-          pip install -q --no-deps -e "$RUNNER_TEMP/src/chassisdb"
-          # chassis-py-old: main's Python package on the same C library, through PYTHONPATH.
-          git fetch -q origin main
-          git worktree add --detach "$RUNNER_TEMP/old" FETCH_HEAD
-          pip list 2>/dev/null | grep -iE "numpy|pyarrow|hnswlib|usearch|faiss|annoy|sqlite|lancedb|chassis" | tee -a results/versions.txt
+          pip install -q numpy faiss-cpu==1.15.1
+          pip list 2>/dev/null | grep -iE "numpy|faiss" | tee -a results/versions.txt
 
       - name: Every engine on the same vectors
         env:
           N: ${{ matrix.n }}
-          CHASSIS_LIB_PATH: ${{ runner.temp }}/t/release
-          PAGETOOL: ${{ runner.temp }}/pagetool
         run: |
           L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"; truth="$T/gt.u32"
           "$L" truth "$DATA" "$NAME" "$N" "$truth"
-          # Chassis from Rust, as the rest of this lab measures it.
-          "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N" | sed 's/\tbase\t/\tfull\t/' | tee -a results/lab.tsv
-          LAB_HALF=1 "$L" build "$DATA" "$NAME" "$T/h.chassis" "$N" | sed 's/\tbase\t/\thalf\t/' | tee -a results/lab.tsv
+          "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N" | tee -a results/lab.tsv
+          # Each arm reads the index from disk under its own advice, then searches it in memory.
           for round in 1 2 3; do
-            "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" full 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
-            LAB_HALF=1 "$L" search "$DATA" "$NAME" "$T/h.chassis" "$truth" half 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
+            for pf in 0 8 32; do
+              for huge in "" 1; do
+                "$T/pagetool" evict "$T/c.chassis"
+                env LAB_PF=$pf ${huge:+LAB_HUGE=1} "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" "pf$pf${huge:+-huge}" 2>>results/pages.txt | grep -v first_pass | tee -a results/lab.tsv
+              done
+            done
           done
-          # Distances, hops and neighbors scanned a query, from the build that counts them.
-          LAB_PASSES=1 "$T/lab-count" search "$DATA" "$NAME" "$T/c.chassis" "$truth" count-full 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
-          LAB_PASSES=1 LAB_HALF=1 "$T/lab-count" search "$DATA" "$NAME" "$T/h.chassis" "$truth" count-half 2>/dev/null | grep -v first_pass | tee -a results/lab.tsv
-          for state in cold; do
-            "$PAGETOOL" evict "$T/c.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/c.chassis" "$truth" cold-full | tee -a results/cold.tsv
-            "$PAGETOOL" evict "$T/h.chassis"; LAB_READER=1 "$L" cold "$DATA" "$NAME" "$T/h.chassis" "$truth" cold-half | tee -a results/cold.tsv
-          done
-          for engine in faiss; do
-            case $engine in
-              chassis-py-old) set -- PYTHONPATH="$RUNNER_TEMP/old/chassisdb" ;;
-              faiss-avx2) set -- FAISS_OPT_LEVEL=avx2 FAISS_SIMD_LEVEL=AVX2 ;;
-              *) set -- ;;
-            esac
-            env "$@" timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
+          for engine in faiss faiss-4k faiss-again; do
+            timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
             grep "^inc" "$T/inc.out" | tee -a results/inc.tsv || true
             grep -v "^inc" "$T/inc.out" | tail -5 >> results/inc.log || true
           done
+          cat results/pages.txt
           { echo '```'; cat results/inc.tsv; cat results/inc.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
