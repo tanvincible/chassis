@@ -379,5 +379,13 @@ Zen 3 on SIFT 1.052, Zen 3 on dbpedia 1.158.
 3. **Held.** `warm` made 0.979 to 1.030 of `huge`'s.
 
 **The decision: the cost is real.** On Zen 5 at 128 dimensions huge pages cost 3 to 5%, through
-`warm` or `huge_pages` alike, as ADR-0016 found (−2%, from −7 to +5%). #121 gets a way to warm on
-small pages before it merges. On Zen 3 and both Xeons they gained at 128 dimensions too, 3 to 7%.
+`warm` or `huge_pages` alike, as ADR-0016 found (−2%, from −7 to +5%). At 0.99 recall, scored
+after the decision, the cost was 2 to 3.5%: smaller, still there. #121 gets a way to warm on small
+pages before it merges. At 128 dimensions Zen 3 and the Xeon 8573C gained 2 to 7%; at 1,536, Zen 3
+and the Xeon 6973P-C gained 3 to 21%.
+
+The user chose a three-state `huge_pages` whose unset state leaves it to `warm`, which asks under
+vectors of 1 KB or more. A skeptic pass afterwards found the line less sure in half precision: in
+single runs (ADR-0018), huge pages gained 3 to 20% under 128-dimension vectors, Zen 5's included,
+and from 3% less to 8% more under long ones. A same-job run of `warm` in half precision would settle
+it.
