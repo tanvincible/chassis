@@ -260,10 +260,8 @@ class VectorIndex:
         explicit = options is not None
         options = self._options
 
-        # Encode path to UTF-8 bytes
         path_bytes = str(self._path).encode("utf-8")
 
-        # Open index with options
         if read_only:
             ptr = _ffi._lib.chassis_open_reader(
                 path_bytes,
@@ -272,10 +270,8 @@ class VectorIndex:
                 self._options.ef_search,
             )
         elif not explicit:
-            # Use default options
             ptr = _ffi._lib.chassis_open(path_bytes, dimensions)
         else:
-            # Use custom options
             ptr = _ffi._lib.chassis_open_with_precision(
                 path_bytes,
                 dimensions,
@@ -326,11 +322,9 @@ class VectorIndex:
         return {v: k for k, v in _PRECISIONS.items()}[_ffi._lib.chassis_precision(self._ptr)]
 
     def __del__(self) -> None:
-        """Clean up resources when index is garbage collected."""
         self.close()
 
     def __enter__(self) -> "VectorIndex":
-        """Context manager entry."""
         return self
 
     def __exit__(
@@ -361,7 +355,6 @@ class VectorIndex:
             self._closed = True
 
     def _check_closed(self) -> None:
-        """Check if index is closed and raise error if so."""
         if self._closed or not self._ptr:
             raise ChassisError(
                 f"The index at {self._path} is closed\nhelp: open it again with "

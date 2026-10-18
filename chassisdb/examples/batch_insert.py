@@ -1,11 +1,4 @@
-"""Batch insertion example for Chassis Python bindings.
-
-This script demonstrates:
-- Efficient batch insertion of vectors
-- Progress tracking
-- Memory-efficient processing
-- Performance measurement
-"""
+"""Add 10,000 vectors in rounds of 1,000, then time the searches."""
 
 import time
 
@@ -18,7 +11,6 @@ def main():
     print("Chassis Python Bindings - Batch Insertion Example")
     print("=" * 60)
 
-    # Configuration
     DIMENSIONS = 768
     NUM_VECTORS = 10_000
     BATCH_SIZE = 1000
@@ -82,7 +74,6 @@ def main():
             results = index.search(q, k=K)
             t1 = time.perf_counter()
 
-            # Touch results to prevent dead-code elimination
             _ = results[0].id
             search_times.append(t1 - t0)
 
