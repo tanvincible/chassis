@@ -215,7 +215,7 @@ to match); any number can search while one writer writes, in this process or oth
 - **`warm() -> None`**  
   Read the index into memory on another thread, so that searches stop waiting for the disk while
   its file is not in memory yet, as after a reboot. Returns at once; searches go on meanwhile. On
-  Linux it asks for huge pages too, under vectors of 1 KB or more, unless the index was opened with
+  Linux it asks for huge pages too, under vectors of 2 KB or more, unless the index was opened with
   `huge_pages=False`. `IndexOptions(warm=True)` does the same from the moment the
   index is opened.
 
