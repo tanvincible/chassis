@@ -103,3 +103,83 @@ together; each gives its own next step, in this order:
   a lab of FAISS's loop shape (one sum a vector) against Chassis's (four).
 * **None of these**, with `own-huge` still under 0.95 times `faiss`: the cost is outside the
   distance. Next: the search loop's other work (the heap, the visited list), counted.
+
+## Results
+
+Part 1, distbench RUN 1, [run 39139564685](https://github.com/tanvincible/chassis/actions/runs/39139564685);
+part 2, incumbents RUN 10, [run 39139564621](https://github.com/tanvincible/chassis/actions/runs/39139564621).
+Both built `lab/exp-dist` at 7430d30, with FAISS 1.15.1. Part 1 drew Zen 3 (EPYC 7763) five times,
+Zen 5 (9V45) twice and a Xeon Platinum 8370C once; part 2, Zen 3 five times and Zen 5 once. No
+Zen 4, so only Zen 3 is decided on. `dist_report.py` reads both runs' artifacts.
+
+**Checks.** All held, except one noise check in part 2.
+
+- Both kernels matched the f64 reference.
+- In part 1 the memories' shares on huge pages were exactly as designed in every job: `anon` and
+  `file-huge` 1.000, `anon-4k` and `file` 0.000.
+- In part 2, every `pfN-huge` arm had 575 to 578 MB of file on huge pages and every `pfN` none.
+  `faiss` had 606 to 616 MB of anonymous huge pages, and `faiss-4k` none.
+- `now-again` was within 5% of `now` everywhere.
+- `faiss-again` was within 5% of `faiss` on every job but one Zen 3 job, b, at 5.2%, which is left
+  out.
+- Every Chassis arm found the same recall at every `ef`. FAISS ran at AVX2 on Zen 3.
+
+**Part 1 on Zen 3**, nanoseconds a distance, the median of five jobs:
+
+| memory | `now` (8) | `pf0` | `pf16` | `pf32` | `pf96` | `faiss` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `cache` | 75.2 | 73.8 | 76.8 | 80.8 | 99.7 | 72.3 |
+| `anon` | 241.9 | 239.3 | 245.8 | 251.5 | 270.4 | 241.0 |
+| `anon-4k` | 280.2 | 294.0 | 289.9 | 315.6 | 361.4 | 287.1 |
+| `file` | 269.0 | 277.0 | 283.5 | 300.4 | 340.5 | 281.2 |
+| `file-huge` | 245.7 | 240.2 | 247.1 | 252.9 | 270.5 | 241.3 |
+
+**Part 2 on Zen 3**, queries a second at 0.95 recall, the median of four jobs:
+
+| `pf0` | `pf8` | `pf32` | `pf0-huge` | `pf8-huge` | `pf32-huge` | `faiss` | `faiss-4k` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2,884 | 2,889 | 2,762 | 3,452 | 3,404 | 3,298 | 3,427 | 2,732 |
+
+**Predictions.**
+
+1. **Held.** `now` took 1.158 times as long on `anon-4k` as on `anon`.
+2. **Held.** `now` on `file` was 0.960 of its time on `anon-4k`.
+3. **Held.** On `anon`, `pf0` took 0.993 of `faiss`'s time.
+4. **Failed.** In `cache`, `pf0` took 1.021 of `faiss`'s time, not 0.95 or less: the two kernels
+   are even.
+5. **Held.** `pf8-huge` made 1.178 times `pf8`'s queries a second.
+6. **Held.** `faiss` made 1.255 times `faiss-4k`'s.
+7. **Held.** `pf8-huge` made 0.993 times `faiss`'s.
+8. **Held.** With 4 KB pages, `pf0` made 0.998 and `pf32` 0.956 of `pf8`'s queries a second; with
+   huge pages, 1.014 and 0.969.
+
+**The decision: pages.**
+
+- `pf8-huge` made 0.993 times `faiss`'s queries a second, and `faiss` made 1.255 times
+  `faiss-4k`'s.
+- Prefetch: no setting reached 1.05 times `pf8`.
+- Kernel: `faiss` took 0.98 of `pf0`'s time in cache and 1.01 out of it.
+
+**Not decided on.**
+
+- **Zen 5, one job in part 2.** Huge pages gave Chassis 1.165, but `faiss` at AVX-512 still made
+  1.23 times `pf8-huge`'s queries a second, and `faiss-4k` 1.20 times `pf8`'s. In part 1, FAISS's
+  AVX2 kernel took 0.95 of Chassis's time out of cache and 1.13 in cache.
+- **The Xeon, one job in part 1.** Pages made no difference.
+
+## What it means
+
+- **FAISS's lead on Zen 3 is the pages.** On these runners the kernel gives anonymous memory huge
+  pages and leaves a mapped file on 4 KB pages. With `huge_pages` on, Chassis makes 0.99 times
+  FAISS's queries a second. With both on 4 KB pages, Chassis is ahead: FAISS makes 0.945 times
+  Chassis's.
+- **The kernel and the prefetch are not behind.** FAISS's own kernel and Chassis's take the same
+  time a distance, in cache and out of it. Eight lines is still Zen 3's best prefetch setting.
+- **A whole search gains more than one distance does**: 1.18 times, against 1.09 for one distance
+  in a file. The vectors' huge pages leave the TLB to the rest of the search. That share wasn't
+  measured on its own.
+- **Next, by the decision rule:** a plan for `huge_pages` on by default on Linux, which ADR-0016
+  kept opt-in. It needs a run on the cases where huge pages cost first: Zen 5 at 128 dimensions,
+  down to 0.93. Whether to change the default is the user's call.
+- **Zen 5 is open.** FAISS at AVX-512 leads there on one job, even with huge pages. It needs its
+  own run.
