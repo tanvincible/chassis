@@ -19,7 +19,20 @@ impl Prefetch {
     /// The policy for this machine, chosen once.
     pub(crate) fn detect() -> Self {
         static POLICY: OnceLock<Prefetch> = OnceLock::new();
-        *POLICY.get_or_init(Self::for_this_cpu)
+        *POLICY.get_or_init(|| {
+            // Lab builds: LAB_PF=<lines> asks for that many lines of each vector, into L2.
+            #[cfg(lab)]
+            if let Some(lines) = std::env::var("LAB_PF").ok().and_then(|v| v.parse().ok()) {
+                return Self::into_l2(lines);
+            }
+            Self::for_this_cpu()
+        })
+    }
+
+    /// The first `lines` of each vector, into L2.
+    #[cfg(lab)]
+    pub(crate) fn into_l2(lines: usize) -> Self {
+        Self { near: 0, lines }
     }
 
     /// A node has up to 32 neighbors, so a search asks for up to 256 lines at once. Into L2 that
