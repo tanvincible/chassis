@@ -31,6 +31,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # The runner's stable as it is; rust-toolchain.toml would make rustup update it first.
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
 
