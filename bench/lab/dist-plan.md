@@ -312,3 +312,34 @@ Queries a second at 0.95 recall. File on huge pages: `warm` 553 to 563 MB, `huge
 **The decision: the PR's claim stands.** `warm` keeps 15 to 20 MB fewer vectors on huge pages
 than `huge_pages`, which may be the 0.5 to 2% it gives up; why was not looked into. Huge pages
 were worth 1.16 on this Zen 3 and 1.26 to 1.29 on Zen 4.
+
+## Where huge pages cost: `warm` at 128 dimensions (incumbents RUN 12)
+
+Written before the run, after a review of PR #121. ADR-0016 found one case where huge pages didn't
+pay: Zen 5 at 128 dimensions, from 7% slower to 5% faster, −2% in the median. RUN 10's
+write-up said that case comes first, and #121 gives huge pages to every `warm` user without it.
+This run measures it.
+
+**What is measured.** `incumbents.yml` RUN 12, `feat/warm-huge-pages` at b5b4b37. SIFT, 1,000,000
+vectors of 128 dimensions, on ten jobs (for Zen 5 draws), and dbpedia (1,536) on four. One index
+per job, searched three ways, three rounds, the file put out of memory before each: `off`, `warm`
+and `huge`. Queries a second at 0.95 recall, the median of the three rounds, as in RUN 10. Each
+CPU's median over its jobs.
+
+**Checks.** As RUN 11: `warm` and `huge` with most of their vectors on huge pages, `off` with none.
+All arms have the same recall at every `ef`.
+
+**Predictions.**
+
+1. On Zen 5 at 128 dimensions, `warm` makes between 0.93 and 1.05 times `off`'s queries a second.
+2. On Zen 3 at 1,536 dimensions, `warm` makes at least 1.10 times `off`'s.
+3. `warm` is within 3% of `huge` on every job.
+
+**The decision.** On Zen 5 at 128 dimensions:
+
+- **`warm` at least 0.97 times `off`**: no cost worth an opt-out. #121 keeps `huge_pages` a plain
+  bool. The docs say that `warm` asks for huge pages, and Python's `options` reports it.
+- **`warm` under 0.97 times `off`**: the cost is real, and #121 gets a way to warm on small pages
+  before it merges. How (a three-state `huge_pages`, as the review proposes, or a rule by vector
+  size) is the user's call.
+- **No Zen 5 drawn**: run again.

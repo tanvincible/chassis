@@ -12,8 +12,9 @@ permissions:
   contents: read
 
 env:
-  RUN: 11
+  RUN: 12
   CHASSIS: feat/warm-huge-pages
+  SHA: b5b4b37c7f925c648a5a53f9e13f015db0ca29f6
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -22,10 +23,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [dbpedia-openai3-1536]
+        name: [sift-128, dbpedia-openai3-1536]
         runner: [ubuntu-latest]
-        shard: [a, b, c, d]
+        shard: [a, b, c, d, e, f, g, h, i, j]
+        exclude:
+          - { name: dbpedia-openai3-1536, shard: e }
+          - { name: dbpedia-openai3-1536, shard: f }
+          - { name: dbpedia-openai3-1536, shard: g }
+          - { name: dbpedia-openai3-1536, shard: h }
+          - { name: dbpedia-openai3-1536, shard: i }
+          - { name: dbpedia-openai3-1536, shard: j }
         include:
+          - { name: sift-128, n: 1000000 }
           - { name: dbpedia-openai3-1536, n: 99000 }
     env:
       DATA: bench/ann/data
@@ -90,7 +99,8 @@ jobs:
       - name: Build Chassis, its Python package and the other engines
         run: |
           git fetch -q origin "$CHASSIS"
-          git worktree add --detach "$RUNNER_TEMP/src" FETCH_HEAD
+          git worktree add --detach "$RUNNER_TEMP/src" "${SHA:-FETCH_HEAD}"
+          git -C "$RUNNER_TEMP/src" log --oneline -1 | tee results/sha.txt
           sed s/chassis_core/chassisdb/g chassis-core/examples/lab.rs > "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
           (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_warm" \
             cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t")
@@ -106,12 +116,10 @@ jobs:
           L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"; truth="$T/gt.u32"
           "$L" truth "$DATA" "$NAME" "$N" "$truth"
           "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N" | tee -a results/lab.tsv
-          # Each arm reads the index from disk under its own options, except warm-cached, which
-          # warms a file left in memory on small pages by the arm before it.
+          # Each arm reads the index from disk under its own options.
           search() { env "$@" "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" "$tag" 2>>results/pages.txt | grep -v first_pass | tee -a results/lab.tsv; }
           for round in 1 2 3; do
             "$T/pagetool" evict "$T/c.chassis"; tag=off search
-            tag=warm-cached search LAB_WARMOPT=1
             "$T/pagetool" evict "$T/c.chassis"; tag=warm search LAB_WARMOPT=1
             "$T/pagetool" evict "$T/c.chassis"; tag=huge search LAB_HUGE=1
           done
