@@ -5,37 +5,55 @@ the commands to measure it yourself.
 
 ## Summary
 
-Measured from 2026-10-08 to 2026-10-10, one thread searching, on GitHub's server runners (AMD EPYC
-Zen 3, 4 and 5, Intel Xeon, Arm Neoverse-N2) and an Apple M5. The decision records hold the
-details and the commands.
+On GitHub's server runners on 2026-10-19 (AMD EPYC Zen 3, 4 and 5, Intel Xeon, Arm Neoverse-N2),
+Chassis 0.10.0 as `pip` installs it against hnswlib 0.8.0 and FAISS 1.15.1, each through its
+Python package with every query in one call (Chassis's `search_batch`), on one thread. Queries a
+second for 0.95 recall@10, Chassis over the other engine, as the median of a CPU's jobs; the plan,
+the checks and every job are in
+[`bench/lab/compare-plan.md`](https://github.com/tanvincible/chassis/blob/lab/x86/bench/lab/compare-plan.md)
+on the `lab/x86` branch. In brackets, Chassis opened with `warm`, which put the vectors on huge
+pages where they are 2 KB or more.
 
-**Against hnswlib, at the same recall**: queries a second, Chassis over hnswlib
-([ADR-0017](https://github.com/tanvincible/chassis/blob/main/docs/adr/017-equal-recall-and-long-vectors.md), [ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)).
+**Full precision**
 
-| Vectors | x86 | Neoverse-N2 |
-| --- | --- | --- |
-| 128 dims × 1M | 1.2–2.6× | 3.1–4.4× |
-| 960 dims × 200k | 0.86–1.05×; in half precision 1.0–2.1× | 1.65–1.77×; half 2.3–2.5× |
-| 1,536 dims × 99k | 0.82–1.13×; in half precision 1.0–1.7× | 1.85–2.33×; half 2.45–2.93× |
+| Vectors | CPU (jobs) | Over hnswlib | Over FAISS's HNSW | Over FAISS with Panorama |
+| --- | --- | --- | --- | --- |
+| 128 dims × 1M | Zen 3 (4) | 1.12× | 1.00× | 1.28× |
+| | Zen 5 (1) | 2.49× | 2.05× | 2.72× |
+| | Neoverse-N2 (1) | 4.01× | 1.89× | 2.12× |
+| 960 dims × 200k | Zen 4 (1) | 1.18× (1.34×) | 0.85× (0.97×) | 0.63× (0.72×) |
+| | Neoverse-N2 (1) | 1.96× (2.10×) | 1.06× (1.14×) | 0.44× (0.48×) |
+| 1,536 dims × 99k | Zen 3 (3) | 1.15× (1.30×) | 0.86× (0.99×) | 0.95× (1.09×) |
+| | Xeon 6973P-C (1) | 1.05× (1.10×) | 0.93× (0.97×) | 0.97× (1.02×) |
+| | Neoverse-N2 (1) | 2.50× (2.79×) | 0.99× (1.11×) | 0.87× (0.97×) |
 
-These came before distances were computed in groups ([ADR-0021](https://github.com/tanvincible/chassis/blob/main/docs/adr/021-grouped-distances.md)),
-which made searches over vectors of a kilobyte or more another 11 to 60% faster out of cache.
+**Half precision**
 
-**Through Python**: each engine through its Python package on one thread, every query in one call
-(Chassis's `search_batch`), queries a second for 0.95 recall, Chassis over the other engine
-(2026-10-10, one run, one machine per CPU). With one call per query instead, Chassis lost a fifth to
-a third of its speed from Rust, 15 to 38 µs a query; in one call it is within 5% of it. Since #109
-`search` spends half as long outside the library: on 2026-10-17, against one call for all, it took
-13 to 26 µs a query where the package before took 30 to 61.
+| Vectors | CPU (jobs) | Over hnswlib | Over FAISS's HNSW | Over FAISS with Panorama |
+| --- | --- | --- | --- | --- |
+| 128 dims × 1M | Zen 3 (4) | 1.62× | 1.43× | 1.85× |
+| | Zen 5 (1) | 2.65× | 2.18× | 2.89× |
+| | Neoverse-N2 (1) | 4.22× | 1.99× | 2.23× |
+| 960 dims × 200k | Zen 4 (1) | 2.07× | 1.50× | 1.10× |
+| | Neoverse-N2 (1) | 2.71× | 1.47× | 0.61× |
+| 1,536 dims × 99k | Zen 3 (3) | 1.46× (1.57×) | 1.11× (1.20×) | 1.20× (1.30×) |
+| | Xeon 6973P-C (1) | 1.42× (1.70×) | 1.26× (1.50×) | 1.32× (1.57×) |
+| | Neoverse-N2 (1) | 3.10× (3.34×) | 1.23× (1.33×) | 1.08× (1.16×) |
 
-| Vectors | Over hnswlib | Over FAISS's HNSW |
-| --- | --- | --- |
-| 128 dims × 1M | Zen 3 1.13×, Xeon 1.33×, N2 3.46× | Zen 3 0.98×, Xeon 1.22×, N2 1.69× |
-| 128 dims × 1M, half | Zen 3 1.61×, Xeon 2.01×, N2 3.63× | Zen 3 1.40×, Xeon 1.85×, N2 1.77× |
-| 1,536 dims × 99k | Zen 4 1.26×, Xeon 1.05×, N2 2.92× | Zen 4 0.78×, Xeon 0.95×, N2 1.09× |
-| 1,536 dims × 99k, half | Zen 4 1.91×, Xeon 1.55×, N2 2.92× | Zen 4 1.19×, Xeon 1.40×, N2 1.09× |
+- **Huge pages are most of FAISS's lead at long vectors.** FAISS's memory gets them from Linux
+  without asking; Chassis's file gets them from `warm`, or from `huge_pages`
+  ([ADR-0016](https://github.com/tanvincible/chassis/blob/main/docs/adr/016-huge-pages-on-request.md)).
+- **Panorama** keeps vectors in PCA order and stops a distance once it can't win. It gained most
+  where a few components carry most of a vector, as in GIST's image descriptors. It was slower than
+  FAISS's plain HNSW at 128 dimensions, and on x86 with the text embeddings for 0.95 recall.
+- **Jobs where FAISS searched more than 5% faster or slower a second time are left out**, 8 of 21,
+  which leaves GIST one x86 job. Counting them, Panorama was ahead of Chassis's fastest setting on
+  GIST on Zen 3 (1.23×, three jobs) and on a Xeon 8370C (1.11×).
 
-The same run on the Xeon, across search settings:
+With one call per query instead of one for all, Chassis spends 13 to 26 µs a query outside the
+library on server CPUs (2026-10-17); in one call it is within 5% of Rust.
+
+Across search settings on a Xeon, in an earlier run (2026-10-10, without `warm` or Panorama):
 
 ![Recall@10 against queries a second on one thread, for Chassis in full and half precision, FAISS's HNSW, hnswlib and usearch, on SIFT and dbpedia](recall-qps.svg)
 
