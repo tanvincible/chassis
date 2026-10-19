@@ -106,6 +106,29 @@ final candidates: a sixteenth of half precision in what a search reads most.
 * **To validate**: a graph searched by these distances, which was not measured, and whether the
   re-ranking reads, one random page each, cost more than the smaller index saves. A second
   distance in Chassis, and the file gets larger, not smaller.
+* **Known elsewhere**: in VIBE (Jääsaari et al., DMLR 2026, arXiv 2505.17810; one core of a
+  Xeon Gold 6230), the fastest method at 95% recall on every embedding dataset was a graph
+  searched over quantized vectors: Glass (HNSW with scalar quantization), SymphonyQG (RaBitQ) or
+  NGT-QG (4-bit product quantization). Glass beat full-precision HNSW by a wide margin.
+
+### Rotate before eight bits
+
+The roadmap's eight-bit vectors (LVQ) scale each vector by its own range once a center is taken
+out. Extended RaBitQ first rotates every vector by one random orthogonal matrix, which spreads a
+vector's length over all its components, so its range wastes fewer of the 256 steps.
+
+* **Known**: LVQ-8 lost at most 0.008 recall@10 against half precision on seven sets of
+  embeddings, with nothing re-ranked (ROADMAP.md), so at eight bits a rotation has little recall
+  to win back.
+* **Known elsewhere**: above six bits, LVQ's average relative error in a distance was 1.3 to 3.1
+  times Extended RaBitQ's at the same bits, on datasets including OpenAI's 1,536 dimensions, and
+  further behind at four (Gao et al., arXiv 2409.09913).
+* **Cost**: each vector rotated when added and each query when searched: 2.4 million
+  multiply-adds at 1,536 dimensions as a matrix, far fewer as a fast Hadamard transform in
+  blocks, since 1,536 isn't a power of two. The file records the rotation.
+* **To validate**: a rotated arm in the LVQ lab, at eight and four bits: recall with nothing
+  re-ranked, and the kernel's time with the rotation in it. Four bits that hold up rotated would
+  be the cheap search for the entry above.
 
 ### Change an index's precision when compacting
 
@@ -173,6 +196,23 @@ vector, the more each distance skipped saves. M=12 did the same.
 * **To validate**: full precision, 768 and 3,072 dimensions and another dataset; if it holds, a
   default M that depends on the dimensions.
 
+## Distances that stop early
+
+Panorama keeps each vector's components in PCA order, so the first ones carry most of its length,
+and stops a distance as soon as a bound shows the candidate can't make the list. Results are
+exact.
+
+* **Known elsewhere**: on HNSW at 0.99 recall or more, 3.91 times the queries a second of FAISS's
+  HNSW at 1,536 dimensions (OpenAI Ada) and 2.91 times at 3,072, with no recall lost, on a Xeon
+  Gold 5416S with AVX-512 (Ramani et al., arXiv 2510.00566, a preprint). It is upstreamed into
+  FAISS. Chassis's runs against FAISS used `IndexHNSWFlat`, without it.
+* **Cost**: a format change: the vectors stored rotated, the PCA matrix (9.4 MB at 1,536
+  dimensions) and a few norms per vector. Each query is rotated, 2.4 million multiply-adds at
+  1,536. It gathers a vector's length into its first components where the rotation above spreads
+  it, so one index can't have both.
+* **To validate**: FAISS with Panorama in the next run against FAISS, to see whether its lead at
+  long vectors has grown; a prototype only if it has.
+
 ## Vectors out of reach
 
 `check()` (#102) lists live vectors no path through the graph reaches. On uniform random data in
@@ -188,6 +228,22 @@ of one vector leave some copies out of reach too: 323 of 800 with 40 copies each
   list, any neighbor that would lose its last way in.
 * **To validate**: how many the lab's real datasets have (SIFT, dbpedia), and recall and build
   time with a repair, before changing how the graph links.
+
+## Deletes without a rebuild
+
+Deleted vectors stay in the graph, which searches walk through, until `compact()` builds it again:
+with half the vectors deleted, searches ran at about 70% of their speed. hnswlib does the same,
+and FAISS's HNSW can't delete.
+
+* **Known elsewhere**, all preprints: FreshDiskANN mends deletes in batches, linking each list
+  that pointed at a deleted vector to that vector's own neighbors; IP-DiskANN (Xu et al., arXiv
+  2502.13826) does it on each delete, in place; MERIT (Wu et al., arXiv 2607.29173) deletes 3 to
+  19 times faster than earlier methods, near the cost of one add, with recall steady or better as
+  deletes build up; MN-RU (Xiao et al., arXiv 2407.07871) leaves fewer vectors out of reach after
+  updates in HNSW. hnswlib's `replace_deleted` reuses a deleted vector's slot for a new one.
+* **To validate**: a mending pass, cheaper than `compact()`, against compaction after 10, 50 and
+  90% of the vectors are deleted: search speed, recall, and the time it takes. It could also give
+  the vectors out of reach above a way in.
 
 ## Builds of long vectors on x86
 
