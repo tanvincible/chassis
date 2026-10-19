@@ -1,6 +1,6 @@
 {
   "name": "chassis",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Add local semantic search to an app with Chassis: vectors in one file, searched in-process, no server.",
   "author": {
     "name": "Chassis contributors",
