@@ -210,8 +210,16 @@ exact.
   dimensions) and a few norms per vector. Each query is rotated, 2.4 million multiply-adds at
   1,536. It gathers a vector's length into its first components where the rotation above spreads
   it, so one index can't have both.
-* **To validate**: FAISS with Panorama in the next run against FAISS, to see whether its lead at
-  long vectors has grown; a prototype only if it has.
+* **Known** (incumbents RUN 14, 2026-10-19, `bench/lab/compare-plan.md` on `lab/x86`; FAISS 1.15.1
+  through Python, one thread, with FAISS's own factory string): at 0.95 recall, Panorama over
+  FAISS's plain HNSW was 0.75 to 0.89 at 128 dimensions, 0.89 to 0.96 on x86 and 1.15 on N2 at
+  1,536 (OpenAI embeddings), and 1.36 to 2.40 at 960 (GIST). At 0.99 recall on the embeddings it
+  was 1.19 to 1.33 on x86 and 1.55 on N2. Against Chassis's fastest setting at 1,536 it made 0.64
+  to 0.86 at 0.95 recall. On GIST it led Chassis on N2 (1.63) and, in jobs the noise check left
+  out, on Zen 3 (1.23).
+* **To validate**: only where vectors put most of their length in a few components, as GIST's do.
+  Text embeddings at 0.95 recall don't gain: Chassis's half precision with `warm` was faster on
+  every x86 job.
 
 ## Vectors out of reach
 
@@ -477,8 +485,10 @@ checked against their code says so; the rest is the survey's.
   `bench/lab/dist-plan.md`): the runners give FAISS's anonymous memory huge pages and Chassis's file
   4 KB ones. With `huge_pages` on, Chassis makes 0.99 times FAISS's queries a second; with both on
   4 KB pages, FAISS makes 0.945 times Chassis's. The kernels are even and 8 lines stays the best
-  prefetch. **To validate next**: `huge_pages` on by default on Linux, after a run where it cost
-  (Zen 5 at 128 dimensions).
+  prefetch. **With `warm`** (RUN 14, 2026-10-19, v0.10.0): 0.99 times FAISS on Zen 3 and 0.97 on a
+  Xeon 6973P-C, against 0.86 and 0.93 without it. **To validate next**: asking for huge pages at
+  open under long vectors, after a run on an index larger than memory; Zen 4 and Zen 5 at 1,536
+  dimensions.
 * **FAISS at AVX-512 on Zen 5, at 1,536 dimensions**, made 1.23 times Chassis's queries a second with
   both on huge pages (RUN 10, one job).
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
