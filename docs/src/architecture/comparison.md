@@ -26,8 +26,8 @@ search setting that reached about 0.96 and 0.99. **First result, cold**: a fresh
 file after it was put out of memory, and searches once.
 
 Chassis was called once per query in this run, which costs it 15 to 38 µs a query in Python; the
-other engines were given all their queries at once. A later run that day, with every engine
-called the same way and Chassis's distances computed in groups, is on [Performance](./performance.md).
+other engines were given all their queries at once. A run of 0.10.0 on 2026-10-19, with every
+engine called the same way, is on [Performance](./performance.md).
 
 **SIFT**, 1M vectors of 128 dimensions, on an AMD EPYC 7763:
 
@@ -59,10 +59,10 @@ What these show:
 
 - **Search speed among the HNSW libraries.** Here, on SIFT, Chassis searched at 0.85 to 0.9 times
   FAISS's speed in full precision and 1.04 to 1.37 times in half precision. On dbpedia, FAISS was
-  about twice as fast as Chassis in full precision, and 1.3 times as fast in half. In the later
-  run, with Chassis's distances computed in groups and every engine called alike, Chassis ran at
-  0.98 to 1.69 times FAISS's speed on SIFT, and on dbpedia at 0.78 to 1.09 times in full precision
-  and 1.09 to 1.40 times in half ([Performance](./performance.md)).
+  about twice as fast as Chassis in full precision, and 1.3 times as fast in half. In the run of
+  0.10.0, with every engine called alike, Chassis ran at 1.00 to 2.05 times FAISS's speed on SIFT,
+  and on dbpedia at 0.86 to 0.99 times in full precision, 0.97 to 1.11 with `warm`, and 1.11 to
+  1.26 in half ([Performance](./performance.md)).
 - **First result from a cold file.** Chassis took 0.15 to 0.45 of the time the others did, since it
   reads only the pages a search touches instead of loading the index first.
 - **File size.** Segments double up to 256 MiB, and the length counted here includes the unused
