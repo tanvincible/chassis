@@ -379,8 +379,10 @@ slower.
 `Some(true)` asks from the moment the index is opened. A page not yet in memory is then read 2 MB at
 a time, which an index much larger than memory pays for on every miss. `Some(false)` never asks.
 `None`, the default, leaves it to `warm`, which asks under vectors of 2 KB or more: 512 dimensions
-at full precision, 1,024 at half. `use_huge_pages` and `keep_small_pages`, on `VectorIndex` and
-`IndexReader`, do the same after opening.
+at full precision, 1,024 at half. Shorter vectors in half precision may gain anyway: at 128
+dimensions, five CPUs, none of them a Zen 4, searched 3 to 20% faster on huge pages in one run, so
+`Some(true)` is worth measuring there. `use_huge_pages` and `keep_small_pages`, on `VectorIndex`
+and `IndexReader`, do the same after opening.
 
 Only pages read from the disk after asking go on huge pages. Vectors a writer added one at a time,
 and pages that a process which didn't ask read first, stay on 4 KB pages until they leave memory,
