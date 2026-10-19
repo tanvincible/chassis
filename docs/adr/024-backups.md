@@ -95,12 +95,18 @@ larger than hnswlib's, and a backup turned them into disk.
 
 - **On Linux**, the copy finds each run of data with `lseek`'s `SEEK_DATA` and `SEEK_HOLE`, and
   sends it through `io::copy`, as the whole file went before: the kernel copies it, and btrfs and
-  XFS share its blocks with the index.
+  XFS share its blocks with the index. A file system that can't say where its data is gets the copy
+  below instead of an error.
 - **Elsewhere**, it skips blocks of 64 KiB that are all zeros. macOS calls a file data from end to
   end while any process maps it, as one always does during a backup. APFS keeps a skipped range of
-  16 MiB or more as a hole.
+  16 MiB or more as a hole. NTFS keeps holes only in a file marked sparse, which neither the index
+  nor its backup is, so on Windows a backup takes the disk the index does, as before.
 
-The copy reads the same bytes as before, so what a backup holds doesn't change.
+The copy that skips zeros reads the same bytes as before. The one that asks for the holes trusts
+them only under what a commit holds, which a flush syncs before the header that commits it. A file
+system may report writes not yet synced as holes, as OpenZFS did for a file being appended to
+until 2.2.2 and 2.1.14; those writes lie past the commit, and opening the copy ignores them. A
+change that let a commit hold data not yet synced would break backups on such a file system.
 
 With `examples/backup_cost.rs` on the M5, before and after:
 

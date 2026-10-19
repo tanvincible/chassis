@@ -2060,7 +2060,12 @@ fn is_at(_file: &File, _path: &Path) -> Result<bool> {
 }
 
 /// Copies `file` into `out` one run of data at a time, so the holes between stay holes. Each run
-/// goes through `io::copy`, which has the kernel copy it, and btrfs and XFS share its blocks.
+/// goes through `io::copy`, which has the kernel copy it, and btrfs and XFS share its blocks. A
+/// file system that can't say where the data is gets `skip_zeros` instead.
+///
+/// The holes are trusted only under what a commit holds, which a flush syncs before the header that
+/// commits it. Writes not yet synced may be reported as holes (OpenZFS before 2.2.2 and 2.1.14 did
+/// so for a file being appended to), but those lie past the commit, and opening the copy ignores them.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn copy_sparse(mut file: &File, out: &mut File) -> Result<()> {
     use std::{io::Read, os::fd::AsRawFd};
@@ -2077,7 +2082,11 @@ fn copy_sparse(mut file: &File, out: &mut File) -> Result<()> {
         let data = match seek(at, libc::SEEK_DATA) {
             Ok(data) => data,
             Err(e) if e.raw_os_error() == Some(libc::ENXIO) => break,
-            Err(e) => return Err(e.into()),
+            Err(_) => {
+                file.seek(SeekFrom::Start(at))?;
+                out.seek(SeekFrom::Start(at))?;
+                return skip_zeros(file, out);
+            }
         };
         let hole = seek(data, libc::SEEK_HOLE)?;
         file.seek(SeekFrom::Start(data))?;
@@ -2089,10 +2098,16 @@ fn copy_sparse(mut file: &File, out: &mut File) -> Result<()> {
     Ok(())
 }
 
-/// Copies `file` into `out`, skipping blocks of zeros, which the file system may keep as holes
-/// (APFS from 16 MiB). macOS tells no holes in a file while it is mapped.
+/// macOS tells no holes in a file while it is mapped, as the index always is.
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn copy_sparse(mut file: &File, out: &mut File) -> Result<()> {
+fn copy_sparse(file: &File, out: &mut File) -> Result<()> {
+    skip_zeros(file, out)
+}
+
+/// Copies the rest of `file` into `out`, each from its offset, skipping blocks of zeros, which the
+/// file system may keep as holes: APFS from 16 MiB, NTFS only in a file marked sparse, which neither
+/// the index nor its backup is.
+fn skip_zeros(mut file: &File, out: &mut File) -> Result<()> {
     use std::io::Read;
     let mut block = vec![0; REGION_ALIGN as usize];
     loop {
