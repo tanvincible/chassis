@@ -486,11 +486,14 @@ checked against their code says so; the rest is the survey's.
   4 KB ones. With `huge_pages` on, Chassis makes 0.99 times FAISS's queries a second; with both on
   4 KB pages, FAISS makes 0.945 times Chassis's. The kernels are even and 8 lines stays the best
   prefetch. **With `warm`** (RUN 14, 2026-10-19, v0.10.0): 0.99 times FAISS on Zen 3 and 0.97 on a
-  Xeon 6973P-C, against 0.86 and 0.93 without it. **To validate next**: asking for huge pages at
-  open under long vectors, after a run on an index larger than memory; Zen 4 and Zen 5 at 1,536
-  dimensions.
-* **FAISS at AVX-512 on Zen 5, at 1,536 dimensions**, made 1.23 times Chassis's queries a second with
-  both on huge pages (RUN 10, one job).
+  Xeon 6973P-C, against 0.86 and 0.93 without it. **And AVX-512** (avx512 RUN 1, 2026-10-20,
+  `bench/lab/avx512-plan.md`): AVX-512 gives FAISS 4% on Zen 4, 8 to 9% on the Xeons and 15% on
+  Zen 5, and a lab AVX-512 kernel gives Chassis 6 to 20%. With it and `warm`, Chassis made 1.01 to
+  1.04 times FAISS's queries a second on Zen 4, Zen 5 and both Xeons. On the newer runner image
+  (Linux 7.0, THP at `madvise`) FAISS gets no huge pages, and Chassis led it even on small pages
+  (one Zen 3 job). **To validate next**: the AVX-512 kernel as a PR, with a run at 128 dimensions,
+  where Zen 5 has lost before; asking for huge pages at open under long vectors, after a run on an
+  index larger than memory.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
@@ -498,7 +501,10 @@ checked against their code says so; the rest is the survey's.
   1,536 dimensions, against two other jobs on the same CPU (`bytebench.yml`, 2026-10-12, job f).
   The same kernel called twice in a row took its usual time there, and so did the eight-bit
   kernels. On x86 a group of four keeps sixteen sums, all sixteen registers, and spills three to
-  the stack inside its loop; whether that is the cause was not looked into.
+  the stack inside its loop; whether that is the cause was not looked into. A Zen 4 did the same
+  with the full-precision group of four: 183 ns a distance in cache against 66 to 68 on three
+  others, while the AVX-512 kernel, whose eight sums leave registers free, took its usual 61
+  (avx512 RUN 1, job k).
 
 ## Not yet measured at all
 
