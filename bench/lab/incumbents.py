@@ -356,6 +356,8 @@ ENGINES = {
     "chassis-py-batch": ChassisPyBatch,
     "chassis-py-half-batch": ChassisPyHalfBatch,
     "chassis-py-batch-warm": ChassisPyBatchWarm,
+    "chassis-py-batch-warm-512": ChassisPyBatchWarm,
+    "chassis-py-batch-warm-again": ChassisPyBatchWarm,
     "chassis-py-half-batch-warm": ChassisPyHalfBatchWarm,
     "chassis-py-half": ChassisPyHalf,
     "chassis-py-warm": ChassisPyWarm,

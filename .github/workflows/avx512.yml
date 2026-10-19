@@ -1,0 +1,123 @@
+name: x86 avx512
+
+# Experiment branch only: Chassis's distance kernel at AVX-512 beside its AVX2 one, and FAISS at
+# each level, one distance alone and whole searches, in the same job. The plan and the decision
+# rule are in bench/lab/avx512-plan.md. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/avx512.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  CHASSIS: lab/exp-avx512
+  SHA: 3e011a7974f06d1703bd8a679245a81031d4af3f
+
+jobs:
+  avx512:
+    name: avx512 (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p]
+    env:
+      DATA: bench/ann/data
+      NAME: dbpedia-openai3-1536
+      N: 99000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(uname -m)"
+            echo '```'
+            lscpu | grep -E "L1d|L2|L3" || true
+            echo "AVX-512: $(grep -o -w 'avx512[a-z0-9_]*' /proc/cpuinfo | sort -u | tr '\n' ' ')"
+            echo "THP: $(cat /sys/kernel/mm/transparent_hugepage/enabled)  page $(getconf PAGESIZE)  kernel $(uname -r)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir results
+          lscpu > results/lscpu.txt
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.DATA }}
+          key: lab-data-${{ env.NAME }}-v1
+
+      - name: Prepare the data
+        run: |
+          pip install -q numpy h5py pyarrow
+          if [ ! -f "$DATA/$NAME.train.f32" ]; then
+            python bench/ann/prepare.py "$DATA"
+            rm -f "$DATA"/*.hdf5 "$DATA"/*.parquet "$DATA"/*.partial
+            find "$DATA" -type f ! -name "$NAME.*" -delete
+          fi
+          ls -la "$DATA"
+
+      - name: Build the branch, its Python package and FAISS
+        run: |
+          git fetch -q origin "$CHASSIS"
+          git worktree add --detach "$RUNNER_TEMP/src" "$SHA"
+          git -C "$RUNNER_TEMP/src" log --oneline -1 | tee results/sha.txt
+          sed s/chassis_core/chassisdb/g chassis-core/examples/lab.rs > "$RUNNER_TEMP/src/chassis-core/examples/lab.rs"
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab_hp --cfg lab_warm --cfg lab_half" \
+            cargo build -q --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t")
+          cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
+          (cd "$RUNNER_TEMP/src" && RUSTFLAGS="--cfg lab" \
+            cargo build -q --release -p chassisdb --example distbench --target-dir "$RUNNER_TEMP/t")
+          cp "$RUNNER_TEMP/t/release/examples/distbench" "$RUNNER_TEMP/distbench"
+          cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
+          pip install -q numpy faiss-cpu==1.15.1 "$RUNNER_TEMP/src/chassisdb"
+          pip list 2>/dev/null | grep -iE "numpy|faiss|chassis" | tee -a results/versions.txt
+          echo "FAISS=$(python -c 'import faiss, os; print(os.path.dirname(faiss.__file__))')/libfaiss.so" >> "$GITHUB_ENV"
+
+      - name: One distance alone
+        run: |
+          "$RUNNER_TEMP/distbench" "$RUNNER_TEMP" "$FAISS" | tee results/distbench.tsv
+          rm -f "$RUNNER_TEMP/vectors.f32"
+          { echo '```'; cat results/distbench.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Whole searches
+        env:
+          PAGETOOL_BIN: ${{ runner.temp }}/pagetool
+        run: |
+          L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"; truth="$T/gt.u32"
+          "$L" truth "$DATA" "$NAME" "$N" "$truth"
+          # Each engine in a process of its own; the warm arms open Chassis's file put out of memory.
+          for engine in chassis-py-batch chassis-py-batch-warm chassis-py-batch-warm-512 faiss faiss-avx2 \
+            faiss-again chassis-py-batch-warm-again; do
+            envs=()
+            case $engine in
+              chassis-py-batch-warm*) "$PAGETOOL_BIN" evict "$T/inc/chassis-full.chassis" || true ;;
+            esac
+            case $engine in
+              chassis-py-batch-warm-512) envs=(LAB_K=avx512) ;;
+              faiss-avx2) envs=(FAISS_SIMD_LEVEL=AVX2) ;;
+            esac
+            env "${envs[@]}" timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
+            grep "^inc" "$T/inc.out" | sed "s/^inc-kernel\t/inc-kernel\t$engine\t/" | tee -a results/inc.tsv || true
+            grep -v "^inc" "$T/inc.out" | tail -5 >> results/inc.log || true
+          done
+          { echo '```'; grep -hE "inc-(lib|pages|warmed|kernel|failed)" results/inc.tsv results/inc.log || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: avx512-${{ matrix.shard }}
+          path: results/
