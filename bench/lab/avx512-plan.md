@@ -124,3 +124,91 @@ These can hold together; each gives its own next step:
 Half precision, where Chassis already leads FAISS on every CPU (RUN 14); 960 dimensions; Arm. An
 AVX-512 search loop lets the compiler use AVX-512 elsewhere in the loop too, which is what shipping
 one would do.
+
+## Results
+
+[Run 39329804741](https://github.com/tanvincible/chassis/actions/runs/39329804741), `lab/exp-avx512`
+at 3e011a7, FAISS 1.15.1. The sixteen jobs drew eight Zen 3 (EPYC 7763), four Zen 4 (9V74), two
+Zen 5 (9V45), a Xeon 6973P-C and a Xeon Platinum 8573C. `avx512_report.py` reads the artifacts.
+
+**Two jobs drew another runner image**: Linux 7.0 with transparent huge pages at `madvise`, where
+every other job had Linux 6.17 at `always`. There FAISS's memory got no huge pages (2 to 4 MB of
+676), and in part 1 neither did `anon`. One was Zen 5 (e), the other Zen 3 (o).
+
+**Checks.**
+
+- Every arm matched the f64 reference in every job.
+- Part 1 left out: e and o, whose `anon` had no huge pages. `avx2-again` was within 2.7% of `avx2`
+  everywhere.
+- Part 2 left out for drift: e (FAISS 10.3%, Chassis 16.8%), b and m (Chassis 5.8%), n (Chassis
+  5.1%). That leaves Zen 5 one job (i), Zen 4 three, each Xeon one, Zen 3 six.
+- FAISS ran at `AVX512_VPOPCNT` on Zen 4 and 5, `AVX512_SPR` on both Xeons, `AVX2` on Zen 3, and
+  `faiss-avx2` at `AVX2` everywhere. `inc-kernel` said `avx512` on every AVX-512 CPU and `avx2, no
+  avx512f` on Zen 3.
+- The warm arms had 94.5% of the vectors on huge pages in every job, on 6.17 and 7.0 alike.
+- `chassis-py-batch-warm-512` found the same recall as `chassis-py-batch-warm` at every `ef` in every
+  job.
+- One Zen 4 job (k) took 183 ns a distance with `avx2` in `cache`, against 66 to 68 on the other
+  three, while its `avx512` took 61 like theirs. Unexplained; its part 2 is in line with the others.
+
+**Part 1**, nanoseconds a distance, the median of a CPU's jobs:
+
+| CPU (jobs) | memory | `avx2` | `avx512` | `faiss-avx2` | `faiss-avx512` |
+| --- | --- | --- | --- | --- | --- |
+| Zen 5 (1) | `cache` | 53.8 | 30.3 | 49.9 | 30.7 |
+| | `file-huge` | 201.6 | 148.9 | 182.2 | 151.4 |
+| Zen 4 (4) | `cache` | 67.9 | 61.2 | 59.8 | 57.0 |
+| | `file-huge` | 258.8 | 235.8 | 245.2 | 237.9 |
+| Xeon 8573C (1) | `cache` | 69.4 | 39.2 | 68.2 | 38.6 |
+| | `file-huge` | 371.7 | 335.9 | 364.0 | 335.7 |
+| Xeon 6973P-C (1) | `cache` | 72.5 | 48.1 | 64.9 | 45.7 |
+| | `file-huge` | 422.2 | 401.4 | 419.4 | 407.9 |
+| Zen 3 (7) | `cache` | 73.8 | | 70.6 | |
+| | `file-huge` | 243.6 | | 240.0 | |
+
+**Part 2**, queries a second at 0.95 recall, the median of a CPU's clean jobs on Linux 6.17:
+
+| CPU (jobs) | `warm` / `faiss` | `warm-512` / `faiss` | `warm-512` / `warm` | `faiss` / `faiss-avx2` | small pages / `faiss` |
+| --- | --- | --- | --- | --- | --- |
+| Zen 5 (1) | 0.853 | 1.026 | 1.203 | 1.151 | 0.819 |
+| Zen 4 (3) | 0.933 | 1.014 | 1.088 | 1.038 | 0.742 |
+| Xeon 8573C (1) | 0.936 | 1.039 | 1.110 | 1.088 | 0.946 |
+| Xeon 6973P-C (1) | 0.972 | 1.034 | 1.064 | 1.083 | 0.939 |
+| Zen 3 (5) | 0.978 | 0.976 | 0.998 | 1.003 | 0.861 |
+
+On Linux 7.0 at `madvise`, the Zen 3 job (o) had `warm` at 1.209 times `faiss` and Chassis on small
+pages at 1.029. The Zen 5 job there (e, left out for drift) had `warm-512` at 1.185 times `faiss`,
+and `warm-512` 1.251 times `warm`, as job i.
+
+**Predictions.** Seven of nine held.
+
+1. **Held.** On Zen 5 in `cache`, `avx512` took 0.563 of `avx2`'s time.
+2. **Held**, as a median: 0.915 on Zen 4. Two of its four jobs were under: 0.899, and k's 0.334.
+3. **Failed on Zen 5.** In `file-huge`, `avx512` took 0.739 of `avx2`'s time there; 0.90 to 0.95
+   elsewhere. On Zen 5 a distance out of cache still waits on the kernel.
+4. **Held.** In `cache`, `faiss-avx512` took 0.93 to 1.01 of `avx512`'s time.
+5. **Held.** On Zen 5, `warm` made 0.853 times `faiss`'s queries a second.
+6. **Held.** `faiss` made 1.151 times `faiss-avx2`'s on Zen 5.
+7. **Held.** `warm-512` made 1.203 times `warm`'s on Zen 5.
+8. **Held on Zen 4 (1.038), failed on both Xeons** (1.083 and 1.088).
+9. **Held.** On Zen 3, `warm` made 0.978 times `faiss`'s.
+
+**The decision: ours, on every AVX-512 CPU.** `warm-512` made 1.06 to 1.20 times `warm`'s queries
+a second on all four, and none was under 0.98. The Xeon 6973P-C also had no lead (0.972). Next: a
+PR with the AVX-512 kernel for full precision and an ADR. Its intrinsics need Rust 1.89, one past
+the crate's minimum, which is the user's call.
+
+## What it means
+
+- **FAISS's lead at long vectors was its pages and its AVX-512.** With both, Chassis makes 1.01 to
+  1.04 times FAISS's queries a second on every AVX-512 CPU drawn; on Zen 3, which has none, 0.98.
+- **RUN 8's "AVX-512 isn't why" held only for Zen 4**, where it is worth 4% to FAISS and 9% to
+  Chassis. It is worth 8 to 9% to FAISS on the Xeons and 15% on Zen 5.
+- **Chassis gained more from AVX-512 than FAISS on three of the four** (not on the Xeon 6973P-C,
+  6% against 8%), because its AVX2 kernel is the slower one there: 1.08 to 1.14 times FAISS's AVX2
+  time in cache on Zen 4, Zen 5 and the Xeon 6973P-C. At AVX-512 the two are within 8%.
+- **Where Linux keeps huge pages to those who ask** (`madvise`, the newer runner image), FAISS gets
+  none, and Chassis led it even on small pages in the one clean job.
+- **Not measured**: 128 and 960 dimensions, where the kernel would run too, and half precision,
+  whose widening AVX-512 has as well. The PR needs a run at 128 dimensions, where Zen 5 has lost
+  before (ADR-0016).
