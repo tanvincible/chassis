@@ -118,3 +118,35 @@ fn test_an_error_goes_into_anyhow_with_its_message() {
             .into();
     assert!(boxed.to_string().contains("\nhelp: "));
 }
+
+/// `u64::MAX` is reserved, so a slot that holds it was damaged: a slot header has no checksum.
+#[test]
+fn test_a_slot_holding_the_reserved_id_is_a_corrupt_file() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("index.chassis");
+    let id = 0x0123_4567_89ab_cdef_u64;
+    let mut index = VectorIndex::open(&path, 4, IndexOptions::default()).unwrap();
+    index.add_with_id(id, &[1.0, 2.0, 3.0, 4.0]).unwrap();
+    index.flush().unwrap();
+    drop(index);
+
+    let mut bytes = std::fs::read(&path).unwrap();
+    let at: Vec<usize> = bytes
+        .windows(8)
+        .enumerate()
+        .filter(|(_, w)| *w == id.to_le_bytes())
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(at.len(), 1, "the id is in one slot header and nowhere else");
+    bytes[at[0]..at[0] + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+    std::fs::write(&path, bytes).unwrap();
+
+    let index = VectorIndex::open(&path, 4, IndexOptions::default()).unwrap();
+    says(index.ids(), ErrorKind::Corrupt, "slot 0 holds the reserved id");
+    says(index.get(id), ErrorKind::Corrupt, "slot 0 holds the reserved id");
+    says(
+        index.search(&[1.0, 2.0, 3.0, 4.0], 1),
+        ErrorKind::Corrupt,
+        "slot 0 holds the reserved id",
+    );
+}

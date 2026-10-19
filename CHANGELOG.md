@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 - `backup()` leaves what the index never wrote as holes: a backup takes the disk the index does,
   not its whole length (#124).
+- A damaged slot that holds the reserved id `u64::MAX` is a `Corrupt` error. It was returned as an
+  id, and panicked in builds with overflow checks (#125).
 
 ## [v0.10.0](https://github.com/tanvincible/chassis/compare/v0.9.1...v0.10.0) - 19 October 2026
 
