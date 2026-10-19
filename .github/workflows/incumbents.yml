@@ -12,9 +12,9 @@ permissions:
   contents: read
 
 env:
-  RUN: 13
+  RUN: 14
   CHASSIS: main
-  SHA: 8676c4c671b501a2dbc300cf624d8198e2128884
+  SHA: 1672c7986bfae1d6df37a625f2d4f392e557f7a3
 jobs:
   dims:
     name: incumbents (${{ matrix.name }} ${{ matrix.runner }} ${{ matrix.shard }})
@@ -23,11 +23,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [dbpedia-openai3-1536]
+        name: [sift-128, gist-960, dbpedia-openai3-1536]
         runner: [ubuntu-latest]
-        shard: [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t]
+        shard: [a, b, c, d, e, f]
         include:
+          - { name: sift-128, n: 1000000 }
+          - { name: gist-960, n: 200000 }
           - { name: dbpedia-openai3-1536, n: 99000 }
+          - { name: sift-128, runner: ubuntu-24.04-arm, shard: a, n: 1000000 }
+          - { name: gist-960, runner: ubuntu-24.04-arm, shard: a, n: 200000 }
+          - { name: dbpedia-openai3-1536, runner: ubuntu-24.04-arm, shard: a, n: 99000 }
     env:
       DATA: bench/ann/data
       NAME: ${{ matrix.name }}
@@ -98,31 +103,28 @@ jobs:
             cargo build --release -p chassisdb --example lab --target-dir "$RUNNER_TEMP/t")
           cp "$RUNNER_TEMP/t/release/examples/lab" "$RUNNER_TEMP/lab"
           cc -O2 -o "$RUNNER_TEMP/pagetool" bench/lab/pagetool.c -lpthread
-          pip install -q numpy faiss-cpu==1.15.1
-          pip list 2>/dev/null | grep -iE "numpy|faiss" | tee -a results/versions.txt
+          pip install -q numpy chassisdb==0.10.0 faiss-cpu==1.15.1 hnswlib==0.8.0
+          pip list 2>/dev/null | grep -iE "numpy|faiss|hnswlib|chassis" | tee -a results/versions.txt
 
       - name: Every engine on the same vectors
         env:
           N: ${{ matrix.n }}
-          LAB_EFS: 16 32 64 128 256 512
+          PAGETOOL_BIN: ${{ runner.temp }}/pagetool
         run: |
-          L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"
-          # Each index, cut to its dimensions and in its precision, read from disk under each arm's options.
-          for dims in 384 768; do
-            export LAB_DIMS=$dims; truth="$T/gt-$dims.u32"
-            "$L" truth "$DATA" "$NAME" "$N" "$truth"
-            for precision in LAB_FULL LAB_HALF; do
-              out="results/$dims-$precision"; mkdir -p "$out"; cp results/lscpu.txt "$out/"
-              env "$precision=1" "$L" build "$DATA" "$NAME" "$T/c.chassis" "$N" | tee -a "$out/lab.tsv"
-              search() { env "$precision=1" "$@" "$L" search "$DATA" "$NAME" "$T/c.chassis" "$truth" "$tag" 2>>"$out/pages.txt" | grep -v first_pass | tee -a "$out/lab.tsv"; }
-              for round in 1 2 3; do
-                "$T/pagetool" evict "$T/c.chassis"; tag=off search
-                "$T/pagetool" evict "$T/c.chassis"; tag=warm search LAB_WARMOPT=1
-                "$T/pagetool" evict "$T/c.chassis"; tag=huge search LAB_HUGE=1
-              done
-            done
+          L="$RUNNER_TEMP/lab"; T="$RUNNER_TEMP"; truth="$T/gt.u32"
+          "$L" truth "$DATA" "$NAME" "$N" "$truth"
+          # Each engine in a process of its own; the warm arms open Chassis's files put out of memory.
+          for engine in chassis-py-batch chassis-py-half-batch hnswlib faiss faiss-pano faiss-again \
+            chassis-py-batch-warm chassis-py-half-batch-warm; do
+            case $engine in
+              chassis-py-batch-warm) "$PAGETOOL_BIN" evict "$T/inc/chassis-full.chassis" || true ;;
+              chassis-py-half-batch-warm) "$PAGETOOL_BIN" evict "$T/inc/chassis-half.chassis" || true ;;
+            esac
+            timeout 2400 python bench/lab/incumbents.py "$engine" "$DATA" "$NAME" "$N" "$truth" "$T/inc" > "$T/inc.out" 2>&1 || echo "inc-failed $engine" | tee -a results/inc.log
+            grep "^inc" "$T/inc.out" | tee -a results/inc.tsv || true
+            grep -v "^inc" "$T/inc.out" | tail -5 >> results/inc.log || true
           done
-          { echo '```'; cat results/*/pages.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; grep -hE "inc-(lib|pages|warmed|failed)" results/inc.tsv results/inc.log || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()

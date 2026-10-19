@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 K = 10
-EF = [32, 64, 128, 256]
+EF = [16, 32, 64, 128, 256, 512]
 
 
 def read(path: Path, dtype: str) -> np.ndarray:
@@ -113,6 +113,35 @@ class Faiss:
         stats = faiss.cvar.hnsw_stats
         self.counts = stats.ndis / len(queries), stats.nhops / len(queries)
         return found
+
+
+class FaissPano(Faiss):
+    """FAISS's HNSW with Panorama (arXiv 2510.00566): a PCA first, so the first components carry most
+    of a vector, then distances that stop once a bound rules the candidate out. The factory string
+    and the levels, 2 at 128 dimensions and 8 above, are those of FAISS's
+    benchs/bench_hnsw_flat_panorama.py."""
+
+    file = "faiss-pano.index"
+
+    def build(self, train, path):
+        import faiss
+
+        d = train.shape[1]
+        index = faiss.index_factory(d, f"PCA{d},HNSW16,FlatPanorama{2 if d <= 128 else 8}")
+        faiss.downcast_index(index.index).hnsw.efConstruction = 200
+        index.train(train)
+        index.add(train)
+        faiss.write_index(index, str(path))
+
+    def load(self, path, dims, n):
+        import faiss
+
+        super().load(path, dims, n)
+        self.hnsw = faiss.downcast_index(self.index.index).hnsw
+
+    def search(self, queries, ef):
+        self.hnsw.efSearch = ef
+        return self.index.search(queries, K)[1]
 
 
 class Annoy:
@@ -272,6 +301,34 @@ class ChassisPyHalfBatch(ChassisPyBatch):
     file, precision = "chassis-half.chassis", "half"
 
 
+class ChassisPyBatchWarm(ChassisPyBatch):
+    """chassis-py-batch's file, put out of memory before this runs, opened with `warm`, which asks for
+    huge pages under vectors of 2 KB or more. Searching starts once warm has read the file in."""
+
+    warm = True
+
+    def load(self, path, dims, n):
+        super().load(path, dims, n)
+        # The pages the file has on disk; warm leaves its holes out.
+        target = 0.99 * path.stat().st_blocks * 512 / os.sysconf("SC_PAGE_SIZE")
+        start = last_change = time.perf_counter()
+        last = -1
+        while time.perf_counter() - start < 120:
+            out = subprocess.run([os.environ["PAGETOOL_BIN"], "resident", str(path)], capture_output=True, text=True)
+            resident = int(out.stdout.split("\t")[2])
+            now = time.perf_counter()
+            if resident != last:
+                last, last_change = resident, now
+            if resident >= target or now - last_change > 2:
+                break
+            time.sleep(0.1)
+        print(f"inc-warmed\t{self.file}\t{resident} pages of {target / 0.99:.0f}\t{time.perf_counter() - start:.2f} s", flush=True)
+
+
+class ChassisPyHalfBatchWarm(ChassisPyBatchWarm):
+    file, precision = "chassis-half.chassis", "half"
+
+
 class ChassisPyWarm(ChassisPy):
     """The same file as chassis-py, opened with `warm`: only its cold run means anything new."""
 
@@ -290,6 +347,7 @@ ENGINES = {
     "faiss-avx2": Faiss,
     "faiss-again": Faiss,
     "faiss-4k": Faiss,
+    "faiss-pano": FaissPano,
     "annoy": Annoy,
     "sqlitevec": SqliteVec,
     "lancedb": Lance,
@@ -297,6 +355,8 @@ ENGINES = {
     "chassis-py-old": ChassisPy,
     "chassis-py-batch": ChassisPyBatch,
     "chassis-py-half-batch": ChassisPyHalfBatch,
+    "chassis-py-batch-warm": ChassisPyBatchWarm,
+    "chassis-py-half-batch-warm": ChassisPyHalfBatchWarm,
     "chassis-py-half": ChassisPyHalf,
     "chassis-py-warm": ChassisPyWarm,
     "chassis-py-half-warm": ChassisPyHalfWarm,
@@ -360,7 +420,8 @@ def main() -> None:
         level = config.get_level_name() if config else "no SIMDConfig"
         print(f"inc-lib\t{name}\tfaiss {faiss.__version__} {build}, level {level}", flush=True)
     if "chassisdb" in sys.modules:
-        print(f"inc-lib\t{name}\t{sys.modules['chassisdb'].__file__}", flush=True)
+        chassisdb = sys.modules["chassisdb"]
+        print(f"inc-lib\t{name}\tchassisdb {chassisdb.__version__} {chassisdb.__file__}", flush=True)
     for setting in engine.settings:
         engine.search(test[:10], setting)
         rates = []
@@ -377,7 +438,8 @@ def main() -> None:
     rollup = Path("/proc/self/smaps_rollup")
     if rollup.exists():
         fields = dict(l.split(":", 1) for l in rollup.read_text().splitlines()[1:])
-        print(f"inc-pages\t{name}\tRss {fields['Rss'].strip()} AnonHuge {fields['AnonHugePages'].strip()}", flush=True)
+        pages = " ".join(f"{k} {fields[k].strip()}" for k in ("Rss", "AnonHugePages", "FilePmdMapped") if k in fields)
+        print(f"inc-pages\t{name}\t{pages}", flush=True)
 
     pagetool = os.environ.get("PAGETOOL")
     if pagetool:
