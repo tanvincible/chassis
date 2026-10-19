@@ -419,6 +419,20 @@ impl HnswGraph {
         match self.storage.precision() {
             Precision::Full => {
                 #[cfg(target_arch = "x86_64")]
+                if crate::distance::lab_avx512() {
+                    // SAFETY: the CPU has AVX-512F, AVX2 and FMA.
+                    return unsafe {
+                        self.search_layer_avx512::<FILTERED, W>(
+                            query,
+                            entry,
+                            ef,
+                            layer,
+                            skip_deleted,
+                            filter,
+                        )
+                    };
+                }
+                #[cfg(target_arch = "x86_64")]
                 if crate::distance::has_avx2() {
                     // SAFETY: the CPU has AVX2 and FMA.
                     return unsafe {
@@ -483,6 +497,29 @@ impl HnswGraph {
         filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
     ) -> Result<Option<Vec<SearchResult>>> {
         self.search_layer_with::<f32, crate::distance::Avx2, FILTERED, W>(
+            query,
+            entry,
+            ef,
+            layer,
+            skip_deleted,
+            filter,
+        )
+    }
+
+    /// Lab only: `search_layer_avx2` with the `Avx512` kernel, compiled for AVX-512F too.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx512f", enable = "avx2", enable = "fma")]
+    #[allow(clippy::type_complexity)]
+    unsafe fn search_layer_avx512<const FILTERED: bool, const W: usize>(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+        skip_deleted: bool,
+        filter: Option<(&dyn Fn(NodeId) -> Result<bool>, usize)>,
+    ) -> Result<Option<Vec<SearchResult>>> {
+        self.search_layer_with::<f32, crate::distance::Avx512, FILTERED, W>(
             query,
             entry,
             ef,

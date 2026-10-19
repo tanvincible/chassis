@@ -263,6 +263,75 @@ pub(crate) fn has_f16c() -> bool {
     has_avx2() && is_x86_feature_detected!("f16c")
 }
 
+/// Lab only (`bench/lab/avx512-plan.md`): AVX-512 for vectors in full precision.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct Avx512;
+
+#[cfg(target_arch = "x86_64")]
+impl Kernel for Avx512 {
+    #[inline(always)]
+    unsafe fn squared(a: &[f32], b: &[f32]) -> f32 {
+        // SAFETY: the caller vouches for the CPU and the lengths.
+        let [total] = unsafe { squared_group_avx512::<1>(a, [b]) };
+        total
+    }
+
+    #[inline(always)]
+    unsafe fn squared_group<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32; W] {
+        // SAFETY: as above.
+        unsafe { squared_group_avx512(a, b) }
+    }
+}
+
+/// Lab only: whether searches use `Avx512`, as `LAB_K=avx512` asks on a CPU that has it. Says which
+/// once, on stderr, for the lab's harness.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn lab_avx512() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let asked = std::env::var("LAB_K").is_ok_and(|k| k == "avx512");
+        let on = asked && has_avx2() && is_x86_feature_detected!("avx512f");
+        if asked {
+            eprintln!("inc-kernel\t{}", if on { "avx512" } else { "avx2, no avx512f" });
+        }
+        on
+    })
+}
+
+/// `squared` with AVX-512 to `W` vectors at once: two sums of sixteen a vector, so that eight
+/// vectors' sums fit in the 32 registers, and the components past the last 32 one at a time.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn squared_group_avx512<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32; W] {
+    use std::arch::x86_64::*;
+    // SAFETY: the loop below calls it within `a`.
+    let query = |i: usize| unsafe { _mm512_loadu_ps(a.as_ptr().add(i)) };
+    // SAFETY: and within each of `b`, which all have `a`'s length.
+    let stored = |j: usize, i: usize| unsafe { _mm512_loadu_ps(b[j].as_ptr().add(i)) };
+    let mut sums = [[_mm512_setzero_ps(); 2]; W];
+    let mut i = 0;
+    while i + 32 <= a.len() {
+        for k in 0..2 {
+            let q = query(i + 16 * k);
+            for (j, sum) in sums.iter_mut().enumerate() {
+                let diff = _mm512_sub_ps(q, stored(j, i + 16 * k));
+                sum[k] = _mm512_fmadd_ps(diff, diff, sum[k]);
+            }
+        }
+        i += 32;
+    }
+    let mut totals: [f32; W] =
+        std::array::from_fn(|j| _mm512_reduce_add_ps(_mm512_add_ps(sums[j][0], sums[j][1])));
+    for (total, b) in totals.iter_mut().zip(b) {
+        for i in i..a.len() {
+            let diff = a[i] - b[i];
+            *total += diff * diff;
+        }
+    }
+    totals
+}
+
 /// The kernel `euclidean_distance` runs on this machine, as a pointer: for code that computes
 /// many distances but isn't compiled per kernel.
 ///

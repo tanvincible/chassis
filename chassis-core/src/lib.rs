@@ -64,6 +64,9 @@ mod legacy;
 mod prefetch;
 mod storage;
 
+#[cfg(all(lab, target_os = "linux", target_arch = "x86_64"))]
+pub mod distbench;
+
 #[cfg(test)]
 mod power_loss;
 
