@@ -1,7 +1,7 @@
 # ADR-0024: Backups
 
 **Date:** 2026-10-16, accepted 2026-10-18
-**Status:** Accepted
+**Status:** Accepted, amended 2026-10-19 (see [Amendment](#amendment-2026-10-19))
 
 ## Context
 
@@ -59,6 +59,7 @@ sequence number, before it removes the undo file.
   backups would be the first.
 - **Keeping the file's holes.** The space past each region's last write is a hole; a backup writes
   it out as zeros. It costs disk, not correctness. Revisit if a backup's size becomes a complaint.
+  Done in the [amendment](#amendment-2026-10-19).
 
 ## Measured
 
@@ -86,3 +87,32 @@ header check, the copy order or the rollback's header taken out, a test fails.
 - A backup keeps `user_version`, so an index restored next to a restored database tells the app
   whether to mend, whenever each backup was taken.
 - Restoring is copying the backup into place while nothing has the index open.
+
+## Amendment (2026-10-19)
+
+**A backup keeps the file's holes** (#124). The holes were most of what made Chassis's file look
+larger than hnswlib's, and a backup turned them into disk.
+
+- **On Linux**, the copy finds each run of data with `lseek`'s `SEEK_DATA` and `SEEK_HOLE`, and
+  sends it through `io::copy`, as the whole file went before: the kernel copies it, and btrfs and
+  XFS share its blocks with the index.
+- **Elsewhere**, it skips blocks of 64 KiB that are all zeros. macOS calls a file data from end to
+  end while any process maps it, as one always does during a backup. APFS keeps a skipped range of
+  16 MiB or more as a hole.
+
+The copy reads the same bytes as before, so what a backup holds doesn't change.
+
+With `examples/backup_cost.rs` on the M5, before and after:
+
+| Index | File, on disk | Backup, writer | Backup, reader | Backup on disk |
+| --- | --- | --- | --- | --- |
+| 100,000 × 384 | 221 MB, 175 MB | 0.38 → 0.20 s | 0.32 → 0.20 s | 221 → 175 MB |
+| 1,000,000 × 128 | 713 MB, 688 MB | 0.91 → 0.60 s | 0.78 → 0.44 s | 713 → 688 MB |
+
+On Linux 6.12 in Docker on the same machine, 20,000 × 1,536, a file of 201 MB:
+
+| File system | Index on disk | Backup on disk | Backup, writer |
+| --- | --- | --- | --- |
+| ext4 (overlay) | 126 MB | 201 → 126 MB | 0.34 → 0.22 s |
+| XFS | 126 MB | 126 → 126 MB, shared both times | 0.009 → 0.009 s |
+| btrfs | 126 MB | 126 → 126 MB, shared both times | 0.011 → 0.014 s |

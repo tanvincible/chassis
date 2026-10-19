@@ -553,3 +553,29 @@ fn test_user_version_is_committed_with_the_data() {
     let index = VectorIndex::open(&path, 4, IndexOptions::default()).unwrap();
     assert_eq!((index.user_version(), index.len()), (9, 0), "compaction carried it over");
 }
+
+/// The second segment is a vector and 32 MiB of holes, in the index and in its backup; APFS keeps
+/// holes of 16 MiB or more.
+#[cfg(unix)]
+#[test]
+fn test_a_backup_takes_no_disk_for_what_was_never_written() {
+    use std::os::unix::fs::MetadataExt;
+    let sizes = |path: &std::path::Path| {
+        let metadata = std::fs::metadata(path).unwrap();
+        (metadata.len(), metadata.blocks() * 512)
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (path, backup) = (dir.path().join("index.chassis"), dir.path().join("backup.chassis"));
+    let options = IndexOptions { max_connections: 4, ef_construction: 8, ..Default::default() };
+    let mut index = VectorIndex::open(&path, 4096, options.clone()).unwrap();
+    let vectors: Vec<f32> = (0..1025 * 4096).map(|i| (i % 4099) as f32).collect();
+    index.add_batch(&vectors).unwrap();
+    index.backup(&backup).unwrap();
+
+    let (len, disk) = sizes(&backup);
+    assert!(disk < len / 2, "the backup takes {disk} bytes on disk of its {len}");
+    #[cfg(target_os = "linux")]
+    assert!(sizes(&path).1 < len / 2, "so does the index: {:?}", sizes(&path));
+    let copy = VectorIndex::open(&backup, 4096, options).unwrap();
+    assert_eq!(copy.get(1024).unwrap().unwrap(), vectors[1024 * 4096..]);
+}

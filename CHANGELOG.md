@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.10.0...HEAD)
 
+### Fixed
+
+- `backup()` leaves what the index never wrote as holes: a backup takes the disk the index does,
+  not its whole length (#124).
+
 ## [v0.10.0](https://github.com/tanvincible/chassis/compare/v0.9.1...v0.10.0) - 19 October 2026
 
 Copy an index while it is in use, and search long vectors on huge pages after `warm`. Rust code

@@ -80,9 +80,10 @@ about 4 bytes per vector on average. For 1M vectors with 768 dimensions that is 
 and 0.16 GB of everything else; half precision halves the vectors. Built as above, SIFT-1M's file is
 713 MB and dbpedia's 821 MB.
 
-Segments double in size up to 256 MiB, so the file can be up to one segment larger than the data
-written. That unused end is never written; whether it stays sparse depends on the file system (on
-APFS, ranges above about 16 MiB did and smaller ones sometimes didn't; ext4 is untested).
+Segments double in size up to 256 MiB, so the file can be up to one segment longer than the data
+written. That unused end is never written, and takes no disk where the file system keeps holes:
+ext4, XFS and btrfs keep all of them, and APFS those of 16 MiB or more. On APFS, files as long as
+SIFT-1M's and dbpedia's took 688 and 630 MB of disk. A backup keeps the holes too.
 
 ## Deletes
 

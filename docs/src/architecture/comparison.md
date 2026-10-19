@@ -65,9 +65,10 @@ What these show:
   and 1.09 to 1.40 times in half ([Performance](./performance.md)).
 - **First result from a cold file.** Chassis took 0.15 to 0.45 of the time the others did, since it
   reads only the pages a search touches instead of loading the index first.
-- **File size.** Segments double up to 256 MiB, and the size counted here includes the unused end
-  of the last one, which the file system may keep sparse ([Performance](./performance.md#size)):
-  8% more than hnswlib on SIFT, a third more on dbpedia. Half precision halves the vectors.
+- **File size.** Segments double up to 256 MiB, and the length counted here includes the unused
+  end of the last one, which takes no disk on ext4, XFS and btrfs, nor on APFS from 16 MiB
+  ([Performance](./performance.md#size)). On disk on APFS, Chassis's files took 4% more than
+  hnswlib's on SIFT and 1% more on dbpedia. Half precision halves the vectors.
 - **LanceDB and sqlite-vec are databases**, not just indexes: they keep your columns and filter in
   their queries, and here they searched one to three orders of magnitude more slowly. sqlite-vec
   checks every vector, so its results are exact.
