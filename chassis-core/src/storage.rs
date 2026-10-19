@@ -1418,7 +1418,15 @@ impl Storage {
     /// The caller's id stored in `slot`.
     pub(crate) fn slot_id(&self, slot: u64) -> Result<u64> {
         let (segment, i) = self.segment(slot)?;
-        Ok(segment.region.u64_at(i * SLOT_HEADER).load(Ordering::Relaxed))
+        match segment.region.u64_at(i * SLOT_HEADER).load(Ordering::Relaxed) {
+            // Adds refuse the reserved id, and a slot header has no checksum.
+            u64::MAX => fail!(
+                Corrupt,
+                "Corrupt file: slot {slot} holds the reserved id {}\nhelp: restore the index from a backup, or rebuild it from its vectors",
+                u64::MAX
+            ),
+            id => Ok(id),
+        }
     }
 
     /// The flush epoch that deleted `slot`, or 0 while it is live.
