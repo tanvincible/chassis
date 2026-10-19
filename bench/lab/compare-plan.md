@@ -93,3 +93,78 @@ it, as in RUNs 6 to 8. Each ratio is taken within a job; a CPU's figure is the m
     9 and 10, before any default changes.
   - The plain arm already at least 0.97 on every CPU: nothing to do.
 - **No Zen 3 or Zen 4 among a dataset's x86 jobs:** that dataset is run once more.
+
+## Results
+
+RUN 14, [run 39238399993](https://github.com/tanvincible/chassis/actions/runs/39238399993), all 21
+jobs green. `compare_report.py` reads the artifacts. The x86 jobs drew:
+- **SIFT:** five Zen 3 (EPYC 7763) and one Zen 5 (EPYC 9V45).
+- **GIST:** three Zen 3, two Zen 4 (EPYC 9V74) and a Xeon Platinum 8370C.
+- **dbpedia:** five Zen 3 and a Xeon 6973P-C.
+
+FAISS ran at AVX2 on Zen 3, at AVX-512 on the others (AVX2 on one Zen 4, GIST a), and at SVE on N2.
+
+**Checks.**
+- Every job loaded `chassisdb` 0.10.0, `faiss-cpu` 1.15.1 and `hnswlib` 0.8.0.
+- **`faiss-again` was off by more than 5% at some `ef` on 8 jobs, which are left out:**
+  - dbpedia d and f;
+  - GIST a, b, c, e and f;
+  - SIFT e.
+
+  That leaves GIST with one x86 job, a Zen 4.
+- **Huge pages took where `warm` asks and nowhere else.** `warm` put 94.5% of the vectors on huge
+  pages at 1,536 dimensions in full precision, 91.0% in half, and 94.8% at 960 in full, on every
+  job. No arm had any where it doesn't ask. Each file was in memory before searching, 0.5 to 2.9 s
+  after opening.
+- **The control failed on Zen 3 at SIFT.** Where `warm` doesn't ask, its arms ran 5 to 9% slower
+  than the plain ones on four of five Zen 3 jobs (warm half 0.906, 0.934 and 0.948 times; warm full
+  0.944). They ran within 5% on Zen 5, N2 and in GIST's half precision. The warm arms run last, and
+  their pages come from reading, not from the build's writes; which of the two it is wasn't looked
+  into. It counts against `warm`, so the gains below are if anything low.
+- **FAISS and hnswlib reached at most 0.986 and 0.988 recall on GIST at `ef` 512**, so GIST has no
+  figure at 0.99.
+
+**Each CPU's median at 0.95 recall** (jobs). Chassis over the other engine; "warm" is Chassis with
+`warm`, on huge pages at 960 and 1,536 dimensions.
+
+| Vectors | CPU | Full / hnswlib | Full / FAISS | Warm full / FAISS | Half / FAISS | Warm half / FAISS | Panorama / FAISS | Panorama / Chassis's fastest |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 128 × 1M | Zen 3 (4) | 1.118 | 0.999 | 0.960 | 1.435 | 1.349 | 0.772 | 0.541 |
+| | Zen 5 (1) | 2.494 | 2.047 | 2.057 | 2.178 | 2.167 | 0.752 | 0.345 |
+| | N2 (1) | 4.011 | 1.891 | 1.828 | 1.987 | 1.951 | 0.891 | 0.449 |
+| 960 × 200k | Zen 4 (1) | 1.180 | 0.852 | 0.971 | 1.495 | 1.479 | 1.357 | 0.907 |
+| | N2 (1) | 1.958 | 1.059 | 1.138 | 1.465 | 1.472 | 2.396 | 1.628 |
+| 1,536 × 99k | Zen 3 (3) | 1.153 | 0.864 | 0.990 | 1.112 | 1.202 | 0.922 | 0.769 |
+| | Xeon 6973P-C (1) | 1.046 | 0.926 | 0.973 | 1.260 | 1.501 | 0.955 | 0.637 |
+| | N2 (1) | 2.497 | 0.993 | 1.111 | 1.234 | 1.328 | 1.146 | 0.863 |
+
+At 0.99 recall on dbpedia, Panorama over FAISS was 1.198 on Zen 3, 1.334 on the Xeon and 1.552 on
+N2. Over Chassis's fastest it was 0.980, 0.858 and 1.098. Counting the noisy jobs too, Panorama on
+GIST made 1.23 times Chassis's fastest on Zen 3 (three jobs) and 1.11 times on the Xeon 8370C.
+
+**Predictions.**
+
+1. **Failed, by one job.** Chassis over hnswlib on SIFT was 1.09 on one Zen 3 job (a). It was 1.12
+   to 1.15 on the other Zen 3 jobs, 2.49 on Zen 5 and 4.01 on N2.
+2. **Held:** 0.85 to 0.93.
+3. **Failed on the Xeon.** `warm` gained 1.12 to 1.18 on Zen 3 but 1.05 on the Xeon 6973P-C. Warm
+   over FAISS was 0.96 to 1.00 on Zen 3, so that half held.
+4. **Failed.** At 1,536 dimensions Panorama made 1.19 to 1.33 times FAISS's speed at 0.99, under
+   1.2 on two Zen 3 jobs. At 0.95 it was slower than plain FAISS on every x86 job (0.89 to 0.96).
+   It gained most where a few components carry most of each vector: 1.36 to 2.40 times on GIST.
+5. **Held:** 1.05 to 1.26.
+6. **Failed.** At 128 dimensions Panorama was 11 to 25% slower than plain FAISS, not within 10%.
+
+**Decisions.**
+
+- **The docs** get one table from this run. The claim of beating hnswlib at 128 dimensions stays:
+  1.12 on Zen 3, 2.49 on Zen 5 and 4.01 on N2.
+- **Panorama stays an idea.** At 1,536 dimensions no x86 CPU's median beat Chassis's fastest setting
+  by more than 1.10 (0.64 and 0.77). IDEAS.md gets these numbers, including GIST, where it led on N2
+  (1.63) and, counting noisy jobs, on Zen 3.
+- **The rest of the gap is the pages.** At 1,536 dimensions in full precision, `warm` brought Chassis
+  to 0.99 of FAISS on Zen 3 and 0.97 on the Xeon, against 0.86 and 0.93 without it. Next is a plan
+  for asking at open under long vectors. It first needs a run on an index larger than memory, the
+  case that kept that off by default. Zen 4 and Zen 5 were not drawn at 1,536 dimensions. At 960,
+  `warm` brought one Zen 4 job to 0.97 of FAISS.
+- **No reruns.** Every dataset drew Zen 3, and GIST drew Zen 4 too.
