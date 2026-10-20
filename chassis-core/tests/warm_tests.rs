@@ -160,8 +160,12 @@ fn test_warming_reads_the_file_into_memory() {
         }
     };
     for writer in [false, true] {
-        // Opening it without asking brings in little, however long it stays open.
+        // Opening it without asking brings in little, however long it stays open. XFS and Btrfs
+        // read well ahead of what opening touches; advice to drop the file keeps mapped pages, so
+        // what is left after it is what opening read and anything read since.
         let index = open(writer, false);
+        #[cfg(target_os = "linux")]
+        put_out_of_memory(&path);
         std::thread::sleep(Duration::from_millis(200));
         let (unasked, _) = in_memory(&path);
         assert!(unasked < 0.5, "{unasked} of the file in memory without asking");

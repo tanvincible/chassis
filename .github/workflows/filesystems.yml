@@ -1,0 +1,142 @@
+name: Filesystems
+
+# The core's tests with their files on the filesystems users keep indexes on besides ext4, APFS and
+# NTFS: other Linux filesystems, exFAT drives, network shares and ReFS.
+on:
+  push:
+    branches: [main]
+    paths: [chassis-core/**, Cargo.lock, .github/workflows/filesystems.yml]
+  pull_request:
+    branches: [main]
+    paths: [chassis-core/**, Cargo.lock, .github/workflows/filesystems.yml]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.fs }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { fs: tmpfs, packages: "" }
+          - { fs: xfs, packages: xfsprogs }
+          - { fs: btrfs, packages: btrfs-progs }
+          # Azure's kernel has no exFAT driver; FUSE's, as older distributions use.
+          - { fs: exfat, packages: "exfatprogs exfat-fuse", type: fuseblk }
+          - { fs: nfs4, packages: nfs-kernel-server }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: filesystems
+
+      - name: Mount ${{ matrix.fs }} as the temporary directory
+        run: |
+          if [ -n "${{ matrix.packages }}" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.packages }}
+          fi
+          dir="$RUNNER_TEMP/fs" img="$RUNNER_TEMP/fs.img"
+          mkdir "$dir"
+          case ${{ matrix.fs }} in
+            tmpfs) sudo mount -t tmpfs -o size=8g tmpfs "$dir" ;;
+            exfat)
+              truncate -s 20G "$img" && sudo mkfs.exfat "$img"
+              dev=$(sudo losetup -f --show "$img")
+              sudo mount.exfat-fuse -o uid="$(id -u)",gid="$(id -g)" "$dev" "$dir" ;;
+            nfs4)
+              sudo mkdir /srv/chassis && sudo chown "$USER" /srv/chassis
+              echo "/srv/chassis 127.0.0.1(rw,sync,no_subtree_check)" | sudo tee /etc/exports
+              sudo exportfs -ra && sudo mount -t nfs4 127.0.0.1:/srv/chassis "$dir" ;;
+            *)
+              truncate -s 20G "$img" && sudo mkfs.${{ matrix.fs }} -q "$img"
+              sudo mount -o loop "$img" "$dir" && sudo chown "$USER" "$dir" ;;
+          esac
+          test "$(findmnt -n -o FSTYPE -T "$dir")" = ${{ matrix.type || matrix.fs }}
+          echo "TMPDIR=$dir" >> "$GITHUB_ENV"
+
+      # compile_fail_tests builds in target/, which isn't on the mount; CI runs it.
+      - name: Run the core's tests
+        run: cargo test -p chassisdb --all-features --no-fail-fast -- --skip compile_fail_tests
+
+  macos:
+    name: macOS (exFAT)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: filesystems
+
+      - name: Mount an exFAT disk image as the temporary directory
+        run: |
+          hdiutil create -size 20g -fs ExFAT -volname CHASSIS "$RUNNER_TEMP/fs.dmg"
+          hdiutil attach "$RUNNER_TEMP/fs.dmg"
+          diskutil info /Volumes/CHASSIS | grep -q "Personality: *ExFAT"
+          echo "TMPDIR=/Volumes/CHASSIS" >> "$GITHUB_ENV"
+
+      - name: Run the core's tests
+        run: cargo test -p chassisdb --all-features --no-fail-fast -- --skip compile_fail_tests
+
+  windows:
+    name: Windows (${{ matrix.fs }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fs: [smb, exfat, refs]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: filesystems
+
+      # A share on this machine, reached by its UNC path as a network drive would be; or a virtual
+      # disk formatted as exFAT or ReFS (Dev Drive's filesystem).
+      - name: Use ${{ matrix.fs }} as the temporary directory
+        shell: pwsh
+        run: |
+          if ("${{ matrix.fs }}" -eq "smb") {
+            New-Item -ItemType Directory C:\chassis-share | Out-Null
+            New-SmbShare -Name chassis -Path C:\chassis-share -FullAccess Everyone | Out-Null
+            $dir = "\\localhost\chassis"
+          } else {
+            $vhd = "$env:RUNNER_TEMP\fs.vhdx"
+            @(
+              "create vdisk file=`"$vhd`" maximum=20480 type=expandable",
+              "select vdisk file=`"$vhd`"",
+              "attach vdisk",
+              "create partition primary",
+              "format fs=${{ matrix.fs }} quick",
+              "assign letter=X"
+            ) | Set-Content "$env:RUNNER_TEMP\diskpart.txt"
+            diskpart /s "$env:RUNNER_TEMP\diskpart.txt"
+            if ((Get-Volume -DriveLetter X).FileSystem -ne "${{ matrix.fs }}") { exit 1 }
+            $dir = "X:\"
+          }
+          "TMP=$dir" >> $env:GITHUB_ENV
+          "TEMP=$dir" >> $env:GITHUB_ENV
+
+      - name: Run the core's tests
+        run: cargo test -p chassisdb --all-features --no-fail-fast -- --skip compile_fail_tests

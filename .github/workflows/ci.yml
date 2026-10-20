@@ -235,3 +235,37 @@ jobs:
           header:: hnsw::node:: hnsw::search::tests distance:: half::
           storage::tests::test_store_list storage::tests::test_readers_walking
           --skip test_distances_in_groups --skip test_ef_less_than_k
+
+  avx512:
+    name: AVX-512 (Intel SDE)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SDE: sde-external-10.13.1-2026-07-28
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # About half of GitHub's x86 runners have AVX-512, so its tests skip on the rest. Intel's
+      # emulator gives every runner a Sapphire Rapids. Intel moves its download links; this is
+      # ispc's copy, checked against the SHA-256 Intel publishes.
+      - name: Install Intel SDE
+        run: |
+          curl -sSfL -o sde.tar.xz \
+            "https://github.com/ispc/ispc.dependencies/releases/download/$SDE/$SDE-lin.tar.xz"
+          echo "94e97d623fec54385686e1e7ba65ebc9941748c05ee451423948334892bf2b50  sde.tar.xz" \
+            | sha256sum -c
+          mkdir "$RUNNER_TEMP/sde"
+          tar -xJf sde.tar.xz -C "$RUNNER_TEMP/sde" --strip-components=1
+
+      # The ignored test fails if the emulator doesn't give AVX-512, which would skip the rest.
+      - name: Run the distance and search tests under it
+        run: |
+          tests=$(cargo test -p chassisdb --lib --no-run --message-format=json \
+            | jq -r 'select(.executable != null) | .executable')
+          "$RUNNER_TEMP/sde/sde64" -spr -- "$tests" --include-ignored distance:: hnsw::search::

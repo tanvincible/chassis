@@ -903,7 +903,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_avx512_gives_the_bits_of_avx2() {
-        // About half of CI's x86 runners have it, so CI can't require it.
+        // About half of CI's x86 runners have it, and CI runs this under Intel's emulator too.
         if !has_avx512() {
             return;
         }
@@ -925,6 +925,14 @@ mod tests {
             };
             assert_eq!(wide.map(f32::to_bits), narrow.map(f32::to_bits), "{len} components");
         }
+    }
+
+    /// Fails without AVX-512, so that CI's run under Intel's emulator can't skip the tests above.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    #[ignore = "needs a CPU that searches with AVX-512"]
+    fn test_searches_here_use_avx512() {
+        assert!(has_avx512() && crate::prefetch::avx512_pays());
     }
 
     #[test]

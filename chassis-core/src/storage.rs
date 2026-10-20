@@ -1610,7 +1610,7 @@ impl Storage {
             self.sync()?;
         }
         // If it can't be removed it is applied again, to no effect, or no longer matches.
-        let _ = std::fs::remove_file(&path);
+        remove_undo(&path);
         Ok(())
     }
 
@@ -1681,7 +1681,7 @@ impl Storage {
             return;
         }
         if undo.file.get_mut().unwrap_or_else(PoisonError::into_inner).take().is_some() {
-            let _ = std::fs::remove_file(&undo.path);
+            remove_undo(&undo.path);
         }
         *undo = Undo::new(std::mem::take(&mut undo.path), &self.committed);
     }
@@ -2200,6 +2200,25 @@ fn same_file(a: &Path, b: &Path) -> bool {
         Some(std::fs::canonicalize(dir).ok()?.join(p.file_name()?))
     };
     full(a).is_some_and(|a| Some(a) == full(b))
+}
+
+/// Removes an undo file, whose name the next change creates again. On Windows a file another
+/// handle has open, such as a reader's backup copying it, keeps its name until that handle closes,
+/// and creating it meanwhile is refused: local NTFS frees the name at once, network shares don't.
+/// So it is renamed away first.
+fn remove_undo(path: &Path) {
+    #[cfg(windows)]
+    {
+        static REMOVED: AtomicU64 = AtomicU64::new(0);
+        let n = REMOVED.fetch_add(1, Ordering::Relaxed);
+        // ponytail: a crash between the two leaves the renamed file, which nothing reads.
+        let away = sibling(path, &format!("{}-{n}", std::process::id()));
+        if std::fs::rename(path, &away).is_ok() {
+            let _ = std::fs::remove_file(away);
+            return;
+        }
+    }
+    let _ = std::fs::remove_file(path);
 }
 
 fn remove_if_present(path: &Path) -> Result<()> {
