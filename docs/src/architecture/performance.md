@@ -114,6 +114,36 @@ and space but not recall. With half the vectors deleted, searches ran at about 7
 and with 90% deleted at a fifth. `compact()` gives the speed back
 ([ADR-0011](https://github.com/tanvincible/chassis/blob/main/docs/adr/011-compaction.md)).
 
+## Scale
+
+Ten million vectors of 128 dimensions with the default options, on one GitHub runner (AMD EPYC
+Zen 4, 4 vCPUs, 15 GB) on 2026-10-20: a file of 6.9 GB. The vectors were made up, points around
+1,000 centers in 16 dimensions projected to 128, so their recall says nothing about real
+embeddings'. Every step ran without an error, and `check` found one vector that no path reaches.
+
+| Step | Took |
+| --- | --- |
+| Build, on every core | 20 minutes; each million took longer, 52 s the first and 149 s the tenth |
+| Search, one thread | `ef` 64: recall@10 0.988 at 8,859 queries a second; `ef` 256: 0.999 at 3,015 |
+| Open | under 0.01 s as a reader or a writer; 6 s after a writer was killed mid-add |
+| `check` | 4 s |
+| Delete 100,000; add 99,000 | 0.9 s; 67 s, 10,000 at a time, each flushed |
+| `backup` | 17 s, keeping the file's holes |
+| `compact` | 18.5 minutes; at its peak 12.5 GB in memory, nearly all of it the two files |
+
+Memory besides the file's pages, sampled after each million added, peaked at 534 MB, 512 MB of
+it the million vectors being added.
+
+The same index in a cgroup with 2 GB of memory, a third of the file, gave the same results, but
+at 5 queries a second, and took 2 adds a second, with most of the index on the runner's disk.
+`warm` didn't help, as it can't keep more than fits. How much a faster disk helps wasn't
+measured. Keep an index within the memory it has, or halve it with half precision
+([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)).
+Building or compacting one larger than memory is out of reach at that rate: a million adds would
+take nearly a week. The plan, the predictions and every number are in
+[`bench/lab/scale-plan.md`](https://github.com/tanvincible/chassis/blob/lab/x86/bench/lab/scale-plan.md)
+on the `lab/x86` branch.
+
 ## History
 
 Measurements of file format 2, before v0.7.0, are in the decision records that each change came
