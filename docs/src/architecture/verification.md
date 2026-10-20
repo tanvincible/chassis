@@ -68,7 +68,7 @@ first segment. Each has to show what the release that wrote it showed, and take 
 ## Platforms
 
 Every pull request runs the tests on Linux (x86-64 and ARM64), macOS and Windows, with the newest
-Rust and with 1.88, the oldest supported; the Python package on Python 3.11 with numpy 1.26 and on
+Rust and with 1.89, the oldest supported; the Python package on Python 3.11 with numpy 1.26 and on
 3.14; and clippy with warnings as errors.
 
 ## Limits

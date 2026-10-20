@@ -55,7 +55,7 @@ Chassis is one repository with five parts:
 
 #### Rust
 
-You will need Rust 1.88 or later.
+You will need Rust 1.89 or later.
 
 ```bash
 # Build the entire workspace

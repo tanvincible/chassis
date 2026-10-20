@@ -237,6 +237,34 @@ pub(crate) fn has_avx2() -> bool {
     is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
 }
 
+/// `Avx2` on 512-bit registers, giving its bits (ADR-0025). A loop that uses it has to be compiled
+/// for AVX-512F too.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct Avx512;
+
+#[cfg(target_arch = "x86_64")]
+impl Kernel for Avx512 {
+    #[inline(always)]
+    unsafe fn squared(a: &[f32], b: &[f32]) -> f32 {
+        // SAFETY: the caller vouches for the CPU and the lengths.
+        let [total] = unsafe { squared_group_avx512(a, [b]) };
+        total
+    }
+
+    #[inline(always)]
+    unsafe fn squared_group<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32; W] {
+        // SAFETY: as above.
+        unsafe { squared_group_avx512(a, b) }
+    }
+}
+
+/// Whether this CPU can run `Avx512`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn has_avx512() -> bool {
+    has_avx2() && is_x86_feature_detected!("avx512f")
+}
+
 /// `Avx2` for vectors in half precision, which F16C widens. Its loops are compiled for F16C too.
 #[cfg(target_arch = "x86_64")]
 pub(crate) struct F16c;
@@ -594,6 +622,22 @@ fn group_sums_avx2<const W: usize>(
         }
         i += 32;
     }
+    group_sums_avx2_from(sums, i, len, query, stored)
+}
+
+/// `group_sums_avx2` past its main loop, whose `sums` cover the components before `i`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx2", enable = "fma")]
+fn group_sums_avx2_from<const W: usize>(
+    mut sums: [[std::arch::x86_64::__m256; 4]; W],
+    mut i: usize,
+    len: usize,
+    query: impl Fn(usize) -> std::arch::x86_64::__m256,
+    stored: impl Fn(usize, usize) -> std::arch::x86_64::__m256,
+) -> ([f32; W], usize) {
+    use std::arch::x86_64::*;
+
     while i + 8 <= len {
         let q = query(i);
         for (j, sum) in sums.iter_mut().enumerate() {
@@ -624,6 +668,48 @@ unsafe fn squared_group_avx2<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32;
     // SAFETY: and within each of `b`, which all have `a`'s length.
     let stored = |j: usize, i: usize| unsafe { _mm256_loadu_ps(b[j].as_ptr().add(i)) };
     let (mut totals, done) = group_sums_avx2::<W>(a.len(), query, stored);
+    for (total, b) in totals.iter_mut().zip(b) {
+        for i in done..a.len() {
+            let diff = a[i] - b[i];
+            *total += diff * diff;
+        }
+    }
+    totals
+}
+
+/// `squared_group_avx2` with its main loop sixteen components at a time: each register holds two
+/// of its sums lane for lane, so every sum is added in the same order, to the same bits.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn squared_group_avx512<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f32; W] {
+    use std::arch::x86_64::*;
+    // SAFETY: the main loop calls it within `a`.
+    let query16 = |i: usize| unsafe { _mm512_loadu_ps(a.as_ptr().add(i)) };
+    // SAFETY: and within each of `b`, which all have `a`'s length.
+    let stored16 = |j: usize, i: usize| unsafe { _mm512_loadu_ps(b[j].as_ptr().add(i)) };
+    let mut wide = [[_mm512_setzero_ps(); 2]; W];
+    let mut i = 0;
+    while i + 32 <= a.len() {
+        for k in 0..2 {
+            let q = query16(i + 16 * k);
+            for (j, sum) in wide.iter_mut().enumerate() {
+                let diff = _mm512_sub_ps(q, stored16(j, i + 16 * k));
+                sum[k] = _mm512_fmadd_ps(diff, diff, sum[k]);
+            }
+        }
+        i += 32;
+    }
+    // `_mm512_extractf32x8_ps` would need AVX-512DQ.
+    let high = |s: __m512| _mm256_castpd_ps(_mm512_extractf64x4_pd::<1>(_mm512_castps_pd(s)));
+    let sums = wide.map(|[s01, s23]| {
+        [_mm512_castps512_ps256(s01), high(s01), _mm512_castps512_ps256(s23), high(s23)]
+    });
+    // SAFETY: as in `squared_group_avx2`.
+    let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
+    // SAFETY: as in `squared_group_avx2`, within each of `b`.
+    let stored = |j: usize, i: usize| unsafe { _mm256_loadu_ps(b[j].as_ptr().add(i)) };
+    let (mut totals, done) = group_sums_avx2_from(sums, i, a.len(), query, stored);
     for (total, b) in totals.iter_mut().zip(b) {
         for i in done..a.len() {
             let diff = a[i] - b[i];
@@ -806,6 +892,38 @@ mod tests {
                 check_groups::<f32, Avx2>(|v| v.to_vec());
                 check_groups::<u16, F16c>(half);
             }
+            if has_avx512() {
+                check_groups::<f32, Avx512>(|v| v.to_vec());
+            }
+        }
+    }
+
+    /// `Avx512` keeps `Avx2`'s sums in wider registers, so it must give its bits: a search finds
+    /// the same on a CPU with AVX-512 as on one without, and agrees with code that uses `Avx2`.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_avx512_gives_the_bits_of_avx2() {
+        // About half of CI's x86 runners have it, so CI can't require it.
+        if !has_avx512() {
+            return;
+        }
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 40) as f32 / (1 << 20) as f32 - 8.0
+        };
+        for len in (0..=100).chain([128, 960, 1536]) {
+            let query: Vec<f32> = (0..len).map(|_| next()).collect();
+            let vectors: Vec<Vec<f32>> =
+                (0..8).map(|_| (0..len).map(|_| next()).collect()).collect();
+            let group: [&[f32]; 8] = std::array::from_fn(|j| vectors[j].as_slice());
+            // SAFETY: the CPU has both kernels, and the slices are the same length.
+            let (wide, narrow) = unsafe {
+                (Avx512::squared_group(&query, group), Avx2::squared_group(&query, group))
+            };
+            assert_eq!(wide.map(f32::to_bits), narrow.map(f32::to_bits), "{len} components");
         }
     }
 

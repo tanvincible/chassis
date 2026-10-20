@@ -48,8 +48,9 @@ candidates it has seen. In that loop:
 - a candidate is its slot and squared distance packed into one integer;
 - distances are computed several neighbors at a time, with the next neighbors' vectors fetched
   ahead;
-- the distance code is chosen when the program runs: AVX2 and FMA on x86-64 (with F16C for half
-  precision), NEON on ARM, and portable code elsewhere.
+- the distance code is chosen when the program runs: on x86-64, AVX-512 for vectors in full
+  precision where the CPU has it, and AVX2 and FMA otherwise (with F16C for half precision); NEON
+  on ARM; portable code elsewhere.
 
 A search with `allowed` ids walks the graph past the others, or, when that would cost more, as when
 few vectors match, checks every allowed vector instead and returns exact results

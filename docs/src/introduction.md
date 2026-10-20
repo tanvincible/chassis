@@ -75,7 +75,7 @@ changed. Files from older releases open, and opening one for writing converts it
 
 ## Requirements
 
-- Python 3.11 or later with numpy 1.26 or later, or Rust 1.88 or later.
+- Python 3.11 or later with numpy 1.26 or later, or Rust 1.89 or later.
 - Linux, macOS or Windows, on a file system that supports memory mapping and `fsync`. Wheels and
   the C library are built for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64).
 
