@@ -677,6 +677,16 @@ fn main() -> anyhow::Result<()> {
                     })
                     .sum();
                 let recall = hits as f64 / (queries.len() * K) as f64;
+                // LAB_DIGEST=1 prints an FNV-1a digest of every result's id and distance bits, so
+                // two builds of the library can be shown to return the same.
+                if std::env::var_os("LAB_DIGEST").is_some() {
+                    let digest = results.iter().flatten().fold(0xcbf2_9ce4_8422_2325u64, |h, r| {
+                        [r.id as u64, u64::from(r.distance.to_bits())]
+                            .iter()
+                            .fold(h, |h, &x| (h ^ x).wrapping_mul(0x100_0000_01b3))
+                    });
+                    println!("chassis\t{tag}\t{n}\tdigest\t{ef_search}\t{digest:016x}");
+                }
                 println!(
                     "chassis\t{tag}\t{n}\tsearch\t{ef_search}\t{recall:.4}\t{:.0}\t{per_query:.0}\t{hops:.0}\t{scans:.0}",
                     passes[passes_wanted / 2]
