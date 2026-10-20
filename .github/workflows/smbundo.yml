@@ -1,0 +1,58 @@
+name: windows smbundo
+
+# Experiment branch only: whether #135 stops adds failing on an SMB share while a reader backs up.
+# The plan is in bench/lab/smbundo-plan.md. Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/smbundo.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  MAIN: a620e65a39ecdf61efc22da3d6c7f1f18958fe3a
+  FIX: 849fe83a79b77980f473156fb464fa6c6c25a35e
+  TEST: tests::test_backups_from_a_reader_while_the_writer_adds_and_flushes_hold_one_flush_each
+
+jobs:
+  smb:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Share a directory over SMB
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory C:\chassis-share | Out-Null
+          New-SmbShare -Name chassis -Path C:\chassis-share -FullAccess Everyone | Out-Null
+
+      - name: The test 30 times on each
+        run: |
+          git fetch -q origin main fix/undo-on-shares
+          for name in MAIN FIX; do
+            sha=${!name}
+            git worktree add -q --detach "../$name" "$sha"
+            bin=$(cd "../$name" && cargo test -q -p chassisdb --lib --no-run --message-format=json \
+              | jq -r 'select(.executable != null) | .executable')
+            failed=0 denied=0
+            for i in $(seq 30); do
+              if ! TMP='\\localhost\chassis' TEMP='\\localhost\chassis' "$bin" --exact "$TEST" > out.txt 2>&1; then
+                failed=$((failed + 1))
+                grep -q "Access is denied" out.txt && denied=$((denied + 1))
+                grep -m1 "Can't\|panicked" out.txt || true
+              fi
+            done
+            echo "$name ${sha:0:7}: failed $failed of 30, $denied with Access is denied" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
