@@ -419,7 +419,9 @@ impl HnswGraph {
         match self.storage.precision() {
             Precision::Full => {
                 #[cfg(target_arch = "x86_64")]
-                if crate::distance::has_avx512() && crate::prefetch::avx512_pays() {
+                // Only where distances are grouped, from 1 KB a vector: below, AVX-512 lost on a
+                // Xeon 6973P-C (ADR-0025).
+                if W > 1 && crate::distance::has_avx512() && crate::prefetch::avx512_pays() {
                     // SAFETY: the CPU has AVX-512F, AVX2 and FMA.
                     return unsafe {
                         self.search_layer_avx512::<FILTERED, W>(
