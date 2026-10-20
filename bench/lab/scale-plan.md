@@ -109,3 +109,86 @@ Not measured: the disk's latency, a real laptop, macOS, an index past 7 GB, half
 A recurring job on `main`: not now. At 55 minutes it would fit a weekly run, but it would put this
 harness on `main` to recheck a result nothing has changed since; this lab is run again after any
 change to the file format or storage instead (IDEAS.md). Docs: #136.
+
+## RUN 2
+
+Plan written 2026-10-21, before the run, after a review of RUN 1 and #136. Code:
+`chassis-core/examples/scale.rs` on `lab/exp-scale` (d342450, `main` at 12963b0 plus the harness).
+
+### Why
+
+- **The crash step checked too little.** A length and `check` can pass after a partial undo. On a
+  300,000-vector index on a Mac, a planted bug that left 2% of the saved lists unrestored passed
+  `check` and left 1,000 searches' digest unchanged; only a digest of the graph caught it. The
+  same run, unplanted, found the graph's lists back as sets, 0.26% of them in another order:
+  `store_list` keeps an entry that is in both lists where it is, so a reader never misses it,
+  and rollback goes through it. ADR-0012 promises the neighbors, not their order.
+- **1,800 times slower is a number, not a model.** Faults per query and the disk's latency would
+  predict another disk's speed.
+- **Linux may read around each fault**, up to 128 KB, filling the 2 GB with pages no search asked
+  for. `MADV_RANDOM` stops that; the core doesn't use it.
+- **Adds slowed 2.8 times from the first million to the tenth.** One guess: page tables. The
+  file's are about 1.4 MB at a million vectors and 13.5 MB at ten, past what the caches hold, so a
+  TLB miss costs a trip to memory. Huge pages make them 512 times smaller.
+- **What compaction needs.** It peaked at 12.5 GB with both files mapped: does it need the memory
+  of one file or two?
+- **Longer vectors.** Users have 768 to 1,536 dimensions, not 128, often at half precision; nothing
+  has run past 7 GB.
+
+### What
+
+Three jobs on `ubuntu-latest`, each its own runner, in parallel.
+
+**`main`**: RUN 1's steps at 10M, with these changes.
+
+1. Before the build, `fio` reads 4 KB at random from a 4 GB file on the index's disk for 30 s,
+   one at a time, bypassing the cache: the disk's latency.
+2. The build also records the writer's page tables (`VmPTE`) after each million.
+3. After the build and `check`, `graph` digests every slot's id and lists, in order and as sets.
+4. Under the 2 GB cap: 200 queries at `ef` 64 four times, the page cache dropped before each,
+   alternating no advice and `MADV_RANDOM` (A B A B). Each pass records major faults and bytes
+   read from the disk (`/proc/self/io`). Then, uncapped, the same pair with 1,000 queries, the
+   cache dropped before each: what the advice costs a first pass that fits.
+5. Churn as before; no backup.
+6. **Crash**: `graph` before the kill; after `verify`, `graph` again and 1,000 queries at `ef` 64,
+   whose digest is compared with the churned index's. The undo file's size at the kill.
+7. **Compaction under a cap**: a cgroup of 1.2 times the file, the cache dropped, `compact` with an
+   hour's limit. Then `check` and searches, or, if it ran out of time, `graph` and `check` to
+   show the index is as it was.
+
+**`pages`**: two builds of 10M on one runner, the default first, then `huge_pages` on
+(`SCALE_HUGE=1`): time per million, page tables, and the file's memory mapped on huge pages
+(`FilePmdMapped`) at the end.
+
+**`long`**: 3M vectors of 1,536 dimensions at half precision, 100,000 at a time (`SCALE_DIMS`,
+`SCALE_HALF`, `SCALE_CHUNK`), the same generator: build, exact, search at `ef` 64 and 256,
+`check`, `compact` uncapped on the 16 GB runner (two files of about 10 GB), `check` and search.
+
+### Predictions
+
+| # | Prediction |
+| --- | --- |
+| 1 | After the kill, the graph's set digest is the one from before it, and so is the search digest. The order digest differs. The undo file isn't empty. |
+| 2 | Under the cap, queries a second are within 2 times of 1 ÷ (major faults per query × `fio`'s mean latency + the uncapped time per query). |
+| 3 | With no advice, bytes read per major fault are 32 KB or more; with `MADV_RANDOM`, 8 KB or less. |
+| 4 | `MADV_RANDOM` makes capped searches at least 1.5 times faster, in both pairs. |
+| 5 | `MADV_RANDOM` makes the uncapped first pass at least 1.5 times slower. |
+| 6 | Each default build's last million takes 2.3 to 3.3 times its first. Page tables at 10M are 13.5 MB, give or take 30%. |
+| 7 | With `huge_pages`, at least half the file is on huge pages at 10M, page tables are under 2 MB, the last million takes at most 2 times the first, and the build at most 0.85 times the default's on the same runner. |
+| 8 | Compaction in 1.2 times the file's memory finishes in under 1.5 times RUN 1's 1,109 s, with no OOM kill; recall at `ef` 256 within 0.02 of the churned index's. |
+| 9 | `long`: a file of 9.5 to 11 GB; recall@10 at `ef` 256 of 0.95 or more; `check` finds nothing not finite and at most 300 unreachable; compaction finishes in under 2 times the build. |
+
+### Decision rule
+
+- A set digest that differs after the kill, an error, a panic, an OOM kill, or a `check` finding
+  past prediction 9 is a bug: find it, fix it on `main` with a test, run again.
+- A search digest that differs while the set digest matches is the order: ADR-0012 and the docs
+  then say a rollback can change results in rare ties.
+- If prediction 2 holds, the formula and the faults per query go to the docs, for estimating
+  other disks. If not, the gap is reported unexplained.
+- If predictions 4 and 5 both hold, the advice is a trade, and a plan for when to give it
+  (an index larger than the memory it has) comes before any change on `main`. If 4 holds and 5
+  doesn't, a plan to advise random access on `main`. If 4 fails, it goes to IDEAS.md as tried.
+- If prediction 7 holds, the slowdown is the page tables, and asking for huge pages while
+  building joins the plan for huge pages at open. If the huge-page build slows as much, it isn't.
+- Prediction 8's answer, either way, and the bytes per vector from `long` go to a Limits page.
