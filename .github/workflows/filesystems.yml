@@ -53,7 +53,7 @@ jobs:
             tmpfs) sudo mount -t tmpfs -o size=8g tmpfs "$dir" ;;
             exfat)
               truncate -s 20G "$img" && sudo mkfs.exfat "$img"
-              sudo mount.exfat-fuse -o uid="$(id -u)",gid="$(id -g)" "$img" "$dir" ;;
+              sudo mount.exfat-fuse -o uid="$(id -u)",gid="$(id -g)" "$(sudo losetup -f --show "$img")" "$dir" ;;
             nfs4)
               sudo mkdir /srv/chassis && sudo chown "$USER" /srv/chassis
               echo "/srv/chassis 127.0.0.1(rw,sync,no_subtree_check)" | sudo tee /etc/exports
