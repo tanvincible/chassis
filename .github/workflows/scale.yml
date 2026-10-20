@@ -1,0 +1,165 @@
+name: x86 scale
+
+# Experiment branch only: Chassis at ten million vectors, and in a cgroup with a third of the
+# file's size in memory. The plan, predictions and decision rule are in bench/lab/scale-plan.md.
+# Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/scale.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  SHA: 090500608caca92d32c798b09134c3421aea937c
+  N: 10000000
+  ADDED: 100000
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  scale:
+    name: scale
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build the harness
+        run: |
+          git fetch -q origin lab/exp-scale
+          git worktree add --detach "$RUNNER_TEMP/src" "$SHA"
+          cargo build -q --release --example scale --manifest-path "$RUNNER_TEMP/src/Cargo.toml"
+          cp "$RUNNER_TEMP/src/target/release/examples/scale" "$RUNNER_TEMP/scale"
+          rm -rf "$RUNNER_TEMP/src/target"
+
+      - name: Make room and describe the machine
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          dir=$(df --output=avail,target / /mnt 2>/dev/null | tail -n +2 | sort -n | tail -1 | awk '{print $2}')
+          dir="${dir%/}/scale"
+          sudo mkdir -p "$dir" && sudo chown "$USER" "$dir"
+          echo "DIR=$dir" >> "$GITHUB_ENV"
+          mkdir results
+          # Each command's lines go to results/scale.tsv with its label as the step.
+          cat > "$RUNNER_TEMP/run.sh" <<'EOF'
+          set -euo pipefail
+          run() {
+            local label=$1; shift
+            /usr/bin/time -o "$RUNNER_TEMP/time" -f "scale\t-\twall_s\t%e\nscale\t-\tmax_rss_kb\t%M" \
+              "$RUNNER_TEMP/scale" "$@" > "$RUNNER_TEMP/out" || { cat "$RUNNER_TEMP/out"; return 1; }
+            cat "$RUNNER_TEMP/out" "$RUNNER_TEMP/time" \
+              | awk -v l="$label" 'BEGIN { FS = OFS = "\t" } { $2 = l; print }' \
+              | tee -a results/scale.tsv
+          }
+          value() { awk -F'\t' -v l="$1" -v w="$2" '$2 == l && $3 == w { print $4 }' results/scale.tsv; }
+          EOF
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(free -g | awk '/Mem:/ {print $2}') GB"
+            echo '```'
+            echo "kernel $(uname -r); index in $dir"
+            df -h / /mnt 2>/dev/null || true
+            swapon --show || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build, search and check
+        timeout-minutes: 150
+        run: |
+          source "$RUNNER_TEMP/run.sh"
+          I="$DIR/index.chassis"
+          run build build "$I" "$N"
+          echo -e "scale\tbuild\tallocated_kb\t$(du -k "$I" | cut -f1)" | tee -a results/scale.tsv
+          run exact exact "$N" built "$DIR/exact1"
+          run built64 search "$I" 64 "$DIR/exact1" cold 1000
+          run built256 search "$I" 256 "$DIR/exact1" cold 1000
+          run built64_200 search "$I" 64 "$DIR/exact1" cold 200
+          run check check "$I"
+
+      # The page cache is dropped first: pages already cached stay charged to the cgroup that read
+      # them, outside the cap.
+      - name: In 2 GB of memory
+        if: ${{ !cancelled() }}
+        timeout-minutes: 90
+        run: |
+          source "$RUNNER_TEMP/run.sh"
+          I="$DIR/index.chassis" cg=/sys/fs/cgroup/scale
+          echo +memory | sudo tee /sys/fs/cgroup/cgroup.subtree_control > /dev/null
+          sudo mkdir "$cg"
+          echo 2G | sudo tee "$cg/memory.max" > /dev/null
+          echo 0 | sudo tee "$cg/memory.swap.max" > /dev/null
+          sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
+          echo $$ | sudo tee "$cg/cgroup.procs" > /dev/null
+          grep -q ":/scale$" /proc/self/cgroup
+          run capped_cold search "$I" 64 "$DIR/exact1" cold 200
+          run capped_warm search "$I" 64 "$DIR/exact1" warm 200
+          run capped_add add "$I" "$N" $((N + 1000))
+          echo -e "scale\tcapped\tpeak_bytes\t$(cat "$cg/memory.peak")" | tee -a results/scale.tsv
+          echo -e "scale\tcapped\toom_kills\t$(awk '$1 == "oom_kill" { print $2 }' "$cg/memory.events")" \
+            | tee -a results/scale.tsv
+
+      - name: Churn, backup, kill and compact
+        if: ${{ !cancelled() }}
+        run: |
+          source "$RUNNER_TEMP/run.sh"
+          I="$DIR/index.chassis"
+          run delete delete "$I" "$N"
+          run add add "$I" $((N + 1000)) $((N + ADDED))
+          run churned_check check "$I"
+          run exact2 exact "$N" churned "$DIR/exact2"
+          run churned64 search "$I" 64 "$DIR/exact2" cold 1000
+          run churned256 search "$I" 256 "$DIR/exact2" cold 1000
+
+          run backup backup "$I" "$DIR/backup.chassis"
+          echo -e "scale\tbackup\tallocated_kb\t$(du -k "$DIR/backup.chassis" | cut -f1)" | tee -a results/scale.tsv
+          echo -e "scale\tbackup\tsource_allocated_kb\t$(du -k "$I" | cut -f1)" | tee -a results/scale.tsv
+          run backup64 search "$DIR/backup.chassis" 64 "$DIR/exact2" cold 1000
+          rm "$DIR/backup.chassis"
+
+          "$RUNNER_TEMP/scale" crash "$I" "$N" > "$DIR/crash.out" 2>&1 &
+          pid=$!
+          until grep -q adding "$DIR/crash.out" || ! kill -0 "$pid" 2> /dev/null; do sleep 1; done
+          sleep 20
+          kill -9 "$pid" || true
+          wait "$pid" || true
+          awk 'BEGIN { FS = OFS = "\t" } /^scale/ { $2 = "crash"; print }' "$DIR/crash.out" | tee -a results/scale.tsv
+          run verify verify "$I" "$(value crash flushed_len)"
+
+          run compact compact "$I"
+          run compacted64 search "$I" 64 "$DIR/exact2" cold 1000
+          run compacted256 search "$I" 256 "$DIR/exact2" cold 1000
+
+      - name: Compare
+        if: ${{ !cancelled() }}
+        run: |
+          source "$RUNNER_TEMP/run.sh"
+          set +e
+          same() { [ -n "$2" ] && [ "$2" = "$3" ] && echo "ok: $1" || echo "PROBLEM: $1 ($2 against $3)"; }
+          {
+            echo '```'
+            same "capped cold gives the uncapped results" "$(value capped_cold pass1_digest)" "$(value built64_200 pass2_digest)"
+            same "capped warm gives the uncapped results" "$(value capped_warm pass2_digest)" "$(value built64_200 pass2_digest)"
+            same "the backup gives its index's results" "$(value backup64 pass1_digest)" "$(value churned64 pass1_digest)"
+            [ "$(value capped oom_kills)" = 0 ] && echo "ok: no OOM kill under the cap" || echo "PROBLEM: OOM kills"
+            grep -q finished_before_the_kill "$DIR/crash.out" && echo "PROBLEM: the add finished before the kill" || echo "ok: killed mid-add"
+            echo '```'
+            echo '```'
+            cat results/scale.tsv
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scale-${{ env.RUN }}
+          path: results/
