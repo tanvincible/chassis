@@ -28,7 +28,8 @@ jobs:
           - { fs: tmpfs, packages: "" }
           - { fs: xfs, packages: xfsprogs }
           - { fs: btrfs, packages: btrfs-progs }
-          - { fs: exfat, packages: "exfatprogs linux-modules-extra-$(uname -r)" }
+          # Azure's kernel has no exFAT driver; FUSE's, as older distributions use.
+          - { fs: exfat, packages: "exfatprogs exfat-fuse", type: fuseblk }
           - { fs: nfs4, packages: nfs-kernel-server }
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +53,7 @@ jobs:
             tmpfs) sudo mount -t tmpfs -o size=8g tmpfs "$dir" ;;
             exfat)
               truncate -s 20G "$img" && sudo mkfs.exfat "$img"
-              sudo mount -o loop,uid="$(id -u)",gid="$(id -g)" "$img" "$dir" ;;
+              sudo mount.exfat-fuse -o uid="$(id -u)",gid="$(id -g)" "$img" "$dir" ;;
             nfs4)
               sudo mkdir /srv/chassis && sudo chown "$USER" /srv/chassis
               echo "/srv/chassis 127.0.0.1(rw,sync,no_subtree_check)" | sudo tee /etc/exports
@@ -61,7 +62,7 @@ jobs:
               truncate -s 20G "$img" && sudo mkfs.${{ matrix.fs }} -q "$img"
               sudo mount -o loop "$img" "$dir" && sudo chown "$USER" "$dir" ;;
           esac
-          test "$(findmnt -n -o FSTYPE -T "$dir")" = ${{ matrix.fs }}
+          test "$(findmnt -n -o FSTYPE -T "$dir")" = ${{ matrix.type || matrix.fs }}
           echo "TMPDIR=$dir" >> "$GITHUB_ENV"
 
       # compile_fail_tests builds in target/, which isn't on the mount; CI runs it.
