@@ -215,3 +215,34 @@ lost. Measured, that line lies between 512 bytes and 1.5 KB (384 dimensions, whe
 puts it at 1 KB, where distances are grouped (ADR-0021), at 8af0d41. The RUN 2 the rule asks for,
 at the size that lost, would now compare `main` with itself: below 1 KB the loop is `main`'s. What
 is still open is the 6973P-C between 1 and 6 KB, which only a draw of it can measure.
+
+## RUN 2: sizes that aren't a multiple of sixteen
+
+Written and committed before RUN 2 runs, after a review of #131.
+
+**The question.** A stored vector starts on a 64-byte boundary only when its dimension count is a
+multiple of 16: the vectors' region starts on one, and each vector is `dims × 4` bytes. At 1,000
+dimensions every other vector starts 32 bytes into a cache line, so each of its 64-byte AVX-512
+loads spans two lines, where AVX2's 32-byte loads span none. Every size in RUN 1 was a multiple of
+16. Does AVX-512 still pay where its loads split?
+
+**What is measured.** `avx512ship.yml` RUN 2: as RUN 1, with #131 at 8af0d41 against `main` at
+b009f39, ten jobs on `ubuntu-latest`, dbpedia cut with `LAB_DIMS` to 300, 1,000 and 1,008
+dimensions, 99,000 vectors each. 1,008 is a multiple of 16 and 0.8% longer than 1,000: the control.
+300 (1,200 bytes, as fastText's vectors) is a size people use whose vectors start at four offsets
+in a line. Same arms (`warm` at 1,000 and 1,008), checks and report.
+
+**Predictions.**
+
+1. The same bits: every digest matches.
+2. On each AVX-512 CPU, the branch's ratio over `main` at 1,000 is within 0.03 of its ratio at
+   1,008, in the same job: a split load costs little beside the wait for memory.
+3. At 300, the branch is at least 0.98 of `main` on every AVX-512 CPU.
+
+**The decision.**
+
+- **Splits cost.** On some AVX-512 CPU, `full` at 1,000 under 0.98 while 1,008 isn't: AVX-512 only
+  for vectors whose length is a multiple of 64 bytes, a commit on #131.
+- **Note only.** Otherwise: a line in ADR-0025 that a size off the 64-byte line was measured, and
+  how it did.
+- **No AVX-512 CPU** among the clean jobs: RUN 3 once.

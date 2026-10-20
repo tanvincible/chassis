@@ -13,10 +13,10 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
+  RUN: 2
   MAIN: b009f3918b95b739adf8edda55c80672d6524def
   BRANCH: feat/avx512
-  SHA: 8a8d5c4192f79c02d965ae2ca795b6f305d42ca6
+  SHA: 8af0d41e913e4a8c3e0db9be5fbaedf51fd74315
 
 jobs:
   ship:
@@ -26,19 +26,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [dbpedia-openai3-1536, gist-960, sift-128]
+        # RUN 1: dbpedia at 384, 768 and 1,536 × 99,000 and 1,536 × 2,000; gist 960 × 200,000;
+        # sift 128 × 1,000,000. RUN 2: sizes off the 64-byte line (avx512ship-plan.md).
+        name: [dbpedia-openai3-1536]
         shard: [a, b, c, d, e, f, g, h, i, j]
         include:
-          - { name: dbpedia-openai3-1536, configs: "384:99000 768:99000 1536:99000 1536:2000" }
-          - { name: gist-960, configs: "960:200000" }
-          - { name: sift-128, configs: "128:1000000" }
-        exclude:
-          - { name: dbpedia-openai3-1536, shard: i }
-          - { name: dbpedia-openai3-1536, shard: j }
-          - { name: gist-960, shard: g }
-          - { name: gist-960, shard: h }
-          - { name: gist-960, shard: i }
-          - { name: gist-960, shard: j }
+          - { name: dbpedia-openai3-1536, configs: "300:99000 1000:99000 1008:99000" }
     env:
       DATA: bench/ann/data
       NAME: ${{ matrix.name }}
