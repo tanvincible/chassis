@@ -246,3 +246,29 @@ in a line. Same arms (`warm` at 1,000 and 1,008), checks and report.
 - **Note only.** Otherwise: a line in ADR-0025 that a size off the 64-byte line was measured, and
   how it did.
 - **No AVX-512 CPU** among the clean jobs: RUN 3 once.
+
+### RUN 2 results
+
+[Run 39422165066](https://github.com/tanvincible/chassis/actions/runs/39422165066), #131 at 8af0d41.
+Ten jobs: five Zen 3, two Zen 4, two Xeon 8573C, one Zen 5. Left out for the A/A arm: 300 on two
+Zen 3 jobs and 1,008 on one. Every digest matched; the distance tests passed in every job.
+
+The branch over `main`, the median of a CPU's clean jobs (jobs); after the comma, with `warm`:
+
+| CPU | 300 | 1,000 | 1,008 |
+| --- | --- | --- | --- |
+| Zen 5 (1) | 1.08 | 1.13, 1.23 | 1.21, 1.22 |
+| Xeon 8573C (2) | 1.07 | 1.08, 1.09 | 1.13, 1.10 |
+| Zen 4 (2) | 1.05 | 1.03, 1.08 | 1.04, 1.09 |
+| Zen 3 (3 to 5) | 0.99 | 1.00, 1.00 | 1.01, 1.00 |
+
+**Predictions.** Two of three held.
+
+1. **Held.** The same bits everywhere.
+2. **Failed on Zen 5 and the Xeon 8573C.** On small pages, 1,000 trailed 1,008 by 0.08 on Zen 5
+   and 0.05 on the 8573C (0.06 and 0.04 in its two jobs); 0.02 on Zen 4. With `warm` the two were
+   within 0.02 everywhere.
+3. **Held.** At 300, 1.05 to 1.08.
+
+**The decision: note only.** No AVX-512 CPU was under 0.98 at 1,000; the split loads take a third
+to two fifths of the gain there on small pages, and at most a tenth of it after `warm`.
