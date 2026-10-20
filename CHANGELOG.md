@@ -23,6 +23,8 @@ Building Chassis takes Rust 1.89 or later, one release newer than before.
   not its whole length (#124).
 - A damaged slot that holds the reserved id `u64::MAX` is a `Corrupt` error. It was returned as an
   id, and panicked in builds with overflow checks (#125).
+- On a Windows network share, an add no longer fails with "Access is denied" while a reader
+  backs the index up (#135).
 
 ## [v0.10.0](https://github.com/tanvincible/chassis/compare/v0.9.1...v0.10.0) - 19 October 2026
 
