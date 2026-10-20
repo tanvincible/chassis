@@ -188,3 +188,9 @@ leaves more to the eight-wide tail. **Prediction**: on every job with AVX-512F, 
 `test_avx512_gives_the_bits_of_avx2` and the kernel as it is passes; on jobs without, all four
 pass. A mutant that survives on an AVX-512 job means the test doesn't pin the bits, and #131 waits
 for a better one. A mutant that doesn't build counts as nothing.
+
+**Mutation run, results** ([run 39416894837](https://github.com/tanvincible/chassis/actions/runs/39416894837)).
+**Held.** The two jobs with AVX-512F, a Zen 5 and a Zen 4, caught all three mutants, each only by
+`test_avx512_gives_the_bits_of_avx2`: the group test can't, since both sides of its comparison
+change alike. The kernel as it is passed. The four Zen 3 jobs passed all four, as a CI job on Zen 3
+would. Over this run, avx512ship RUN 1 and avx512 RUN 1, 24 of 46 x86 jobs had AVX-512F.
