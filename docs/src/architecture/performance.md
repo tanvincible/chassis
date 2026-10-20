@@ -119,7 +119,9 @@ and with 90% deleted at a fifth. `compact()` gives the speed back
 Ten million vectors of 128 dimensions with the default options, on one GitHub runner (AMD EPYC
 Zen 4, 4 vCPUs, 15 GB) on 2026-10-20: a file of 6.9 GB. The vectors were made up, points around
 1,000 centers in 16 dimensions projected to 128, so their recall says nothing about real
-embeddings'. Every step ran without an error, and `check` found one vector that no path reaches.
+embeddings'. Every step ran without an error, and `check` found one vector that no path reaches,
+which a search through the graph can't return until `compact` builds the graph again, as it did
+here.
 
 | Step | Took |
 | --- | --- |
@@ -137,8 +139,10 @@ it the million vectors being added.
 The same index in a cgroup with 2 GB of memory, a third of the file, gave the same results, but
 at 5 queries a second, and took 2 adds a second, with most of the index on the runner's disk.
 `warm` didn't help, as it can't keep more than fits. How much a faster disk helps wasn't
-measured. Keep an index within the memory it has, or halve it with half precision
-([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)).
+measured. Keep an index within the memory it has, or shrink it with half precision
+([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)): each
+vector also takes about 164 bytes for its links and header at the default `M`, so half precision
+takes 62% of the room at 128 dimensions, and nearly half from 768.
 Building or compacting one larger than memory is out of reach at that rate: a million adds would
 take nearly a week. The plan, the predictions and every number are in
 [`bench/lab/scale-plan.md`](https://github.com/tanvincible/chassis/blob/lab/x86/bench/lab/scale-plan.md)
