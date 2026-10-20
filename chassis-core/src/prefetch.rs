@@ -144,18 +144,50 @@ fn is_zen_4(model: u32) -> bool {
     matches!(model, 0x10..=0x1f | 0x60..=0xaf)
 }
 
+/// Whether the search loop should use AVX-512 on this CPU, if it has it (ADR-0025): not on Intel's
+/// from before Sapphire Rapids.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn avx512_pays() -> bool {
+    static PAYS: OnceLock<bool> = OnceLock::new();
+    *PAYS.get_or_init(|| !intel().is_some_and(|(family, model)| is_early_avx512(family, model)))
+}
+
+/// Whether an Intel processor has AVX-512 from before Sapphire Rapids: Skylake-SP to Cooper Lake,
+/// Cannon Lake, Ice Lake, Tiger Lake, Rocket Lake or Xeon Phi. On the one measured, an Ice Lake,
+/// AVX-512 lost; Skylake-SP and Cascade Lake slow their clocks more for it.
+#[cfg(any(target_arch = "x86_64", test))]
+fn is_early_avx512(family: u32, model: u32) -> bool {
+    family == 6
+        && matches!(
+            model,
+            0x55 | 0x57 | 0x66 | 0x6a | 0x6c | 0x7d | 0x7e | 0x85 | 0x8c | 0x8d | 0xa7
+        )
+}
+
 /// The CPUID family and model of an AMD processor.
 #[cfg(target_arch = "x86_64")]
-#[allow(unused_unsafe)] // `__cpuid` is safe from Rust 1.89 on.
 fn amd() -> Option<(u32, u32)> {
+    // "AuthenticAMD", in EBX, EDX, ECX.
+    family_and_model((0x6874_7541, 0x6974_6e65, 0x444d_4163))
+}
+
+/// The CPUID family and model of an Intel processor.
+#[cfg(target_arch = "x86_64")]
+fn intel() -> Option<(u32, u32)> {
+    // "GenuineIntel".
+    family_and_model((0x756e_6547, 0x4965_6e69, 0x6c65_746e))
+}
+
+/// The CPUID family and model, if the vendor is `vendor`.
+#[cfg(target_arch = "x86_64")]
+#[allow(unused_unsafe)] // `__cpuid` is safe in later Rust.
+fn family_and_model(vendor: (u32, u32, u32)) -> Option<(u32, u32)> {
     use std::arch::x86_64::__cpuid;
     // SAFETY: every x86-64 processor has CPUID.
-    let (vendor, version) = unsafe { (__cpuid(0), __cpuid(1).eax) };
-    // "AuthenticAMD", in EBX, EDX, ECX.
-    let amd = (vendor.ebx, vendor.edx, vendor.ecx) == (0x6874_7541, 0x6974_6e65, 0x444d_4163);
+    let (id, version) = unsafe { (__cpuid(0), __cpuid(1).eax) };
     let family = ((version >> 8) & 0xf) + ((version >> 20) & 0xff);
     let model = ((version >> 4) & 0xf) | ((version >> 12) & 0xf0);
-    amd.then_some((family, model))
+    ((id.ebx, id.edx, id.ecx) == vendor).then_some((family, model))
 }
 
 #[cfg(test)]
@@ -219,10 +251,22 @@ mod tests {
         assert_eq!(group_width(1024), group_width(6144));
     }
 
+    #[test]
+    fn test_intel_before_sapphire_rapids_keeps_avx2() {
+        // Xeon 8370C (Ice Lake), which lost, and Cascade Lake.
+        assert!(is_early_avx512(6, 0x6a));
+        assert!(is_early_avx512(6, 0x55));
+        // Xeon 8573C (Emerald Rapids) and 6973P-C (Granite Rapids), which gained; Sapphire Rapids.
+        assert!(!is_early_avx512(6, 0xcf));
+        assert!(!is_early_avx512(6, 0xad));
+        assert!(!is_early_avx512(6, 0x8f));
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn test_amd_family_and_model_are_real() {
-        let real = |(family, model)| (0xf..0x100).contains(&family) && model < 0x100;
+    fn test_family_and_model_are_real() {
+        let real = |(family, model)| (0x6..0x100).contains(&family) && model < 0x100;
         assert!(amd().is_none_or(real));
+        assert!(intel().is_none_or(real));
     }
 }

@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.10.0...HEAD)
 
+### Changed
+
+- Rust 1.89 or later, for AVX-512 (#131).
+
+### Performance
+
+- Searches in full precision use AVX-512 on Zen 4, Zen 5 and Intel from Sapphire Rapids: 3 to 24%
+  faster at 384 dimensions and up, with the same results (#131).
+
 ### Fixed
 
 - `backup()` leaves what the index never wrote as holes: a backup takes the disk the index does,

@@ -419,7 +419,7 @@ impl HnswGraph {
         match self.storage.precision() {
             Precision::Full => {
                 #[cfg(target_arch = "x86_64")]
-                if crate::distance::has_avx512() {
+                if crate::distance::has_avx512() && crate::prefetch::avx512_pays() {
                     // SAFETY: the CPU has AVX-512F, AVX2 and FMA.
                     return unsafe {
                         self.search_layer_avx512::<FILTERED, W>(

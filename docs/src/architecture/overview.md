@@ -49,8 +49,9 @@ candidates it has seen. In that loop:
 - distances are computed several neighbors at a time, with the next neighbors' vectors fetched
   ahead;
 - the distance code is chosen when the program runs: on x86-64, AVX-512 for vectors in full
-  precision where the CPU has it, and AVX2 and FMA otherwise (with F16C for half precision); NEON
-  on ARM; portable code elsewhere.
+  precision where it pays
+  ([ADR-0025](https://github.com/tanvincible/chassis/blob/main/docs/adr/025-avx-512.md)), and AVX2
+  and FMA otherwise (with F16C for half precision); NEON on ARM; portable code elsewhere.
 
 A search with `allowed` ids walks the graph past the others, or, when that would cost more, as when
 few vectors match, checks every allowed vector instead and returns exact results
