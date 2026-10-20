@@ -194,3 +194,24 @@ for a better one. A mutant that doesn't build counts as nothing.
 `test_avx512_gives_the_bits_of_avx2`: the group test can't, since both sides of its comparison
 change alike. The kernel as it is passed. The four Zen 3 jobs passed all four, as a CI job on Zen 3
 would. Over this run, avx512ship RUN 1 and avx512 RUN 1, 24 of 46 x86 jobs had AVX-512F.
+
+## The pull request's benchmark
+
+`bench.yml` on #131, one runner a case, `main` and the pull request in turns over five rounds, at
+128 dimensions × 100,000 (each before the 1 KB line below):
+
+| Commit | CPU | `ef` 32 | 64 | 128 |
+| --- | --- | --- | --- | --- |
+| 8a8d5c4 | Xeon 8573C | 1.025 | 1.017 | 1.029 |
+| 8e141cf | Zen 5 | 0.999 | 0.988 | 0.989 |
+| 39651ab | Xeon 6973P-C | 0.923 | 0.943 | 0.926 |
+
+The ARM job beside the 6973P-C, whose code doesn't change, was 0.97 to 0.99. At 1,536 × 20,000 a
+Zen 5 made 1.22 to 1.23 times `main`'s queries a second.
+
+**Read by the rule's "by size"**: the 6973P-C lost at 512 bytes a vector and gained at 6 KB (avx512
+RUN 1, 1.064), so AVX-512 starts at the smallest size at and above which no AVX-512 CPU measured
+lost. Measured, that line lies between 512 bytes and 1.5 KB (384 dimensions, where none lost); #131
+puts it at 1 KB, where distances are grouped (ADR-0021), at 8af0d41. The RUN 2 the rule asks for,
+at the size that lost, would now compare `main` with itself: below 1 KB the loop is `main`'s. What
+is still open is the 6973P-C between 1 and 6 KB, which only a draw of it can measure.
