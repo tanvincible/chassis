@@ -74,6 +74,7 @@ which they run: the agent skill's Python blocks and the examples.
 | MSRV | `cargo check` and `cargo test` on Rust 1.89 |
 | Coverage | `cargo llvm-cov` on Linux |
 | Fuzz | Damaged files and any bytes, opened and changed: a minute per target on each pull request, half an hour each night |
+| Filesystems | The core's tests with their files on tmpfs, XFS, Btrfs, exFAT and NFS on Linux, exFAT on macOS, and an SMB share, exFAT and ReFS on Windows |
 | Build | The C library and the Python wheels for Linux x86-64 and ARM64, macOS and Windows |
 | Benchmark | Each pull request against main, on Linux x86-64 and ARM64 ([Benchmarking](./benchmarking.md)) |
 
