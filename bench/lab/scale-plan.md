@@ -64,4 +64,44 @@ Steps, in order, each a process of its own:
 
 ## Results
 
-Not yet run.
+Run 39443115926, 2026-10-20: AMD EPYC 9V74 (Zen 4), 4 vCPUs, 15 GB, Linux 6.17, the index on the
+runner's root disk (ext4). 55 minutes in all. Raw lines: the `scale-1` artifact.
+
+| Step | Found |
+| --- | --- |
+| Build | 10M in 1,192 s; a million took 52 s first and 149 s last, 148 to 149 s from 9M; flushes 0.1 to 2.8 s |
+| File | 6,936,985,600 bytes, 6.3 GiB on disk |
+| Memory | RssAnon peak 534 MB, 512 MB of it the harness's million vectors |
+| Search | `ef` 64: recall 0.988, 8,859 queries a second in memory (2,902 the first pass); `ef` 256: 0.999, 3,015 |
+| Open, check | reader and writer under 0.01 s; `check` 4.0 s: 1 unreachable, none not finite |
+| In 2 GB | 5 queries a second at `ef` 64, cold or after `warm`, both with the uncapped digest; 1,000 adds in 478 s (2.1 a second); peak 2 GiB, no OOM kill |
+| Churn | 100,000 deletes in 0.94 s; 99,000 adds in 66.6 s (1,490 a second); `check` 1 unreachable; recall 0.988 and 0.999 |
+| Backup | 16.8 s; the same 6.3 GiB on disk as the index; the index's digest |
+| Kill | killed mid-add of a million; a writer opened in 6.0 s to 10,000,000 vectors; `check` 1 unreachable |
+| Compact | 1,109 s (0.93 of the build); max RSS 12.5 GB, both files mapped; 0 unreachable; recall 0.988 and 0.9945 |
+
+| # | Prediction | Held? |
+| --- | --- | --- |
+| 1 | No error, panic or OOM kill; within six hours | yes: 55 minutes |
+| 2 | 6.5 to 9 GB; last million at most twice the first | **no**: 6.9 GB, but 2.8 times |
+| 3 | RssAnon under 2 GB | yes: 534 MB |
+| 4 | Reader under 1 s, writer under 5 s, `check` under 5 minutes | yes |
+| 5 | None not finite, at most 1,000 unreachable | yes: 1 |
+| 6 | Recall at `ef` 256 of 0.9 or more | yes: 0.999, 0.9945 after compaction |
+| 7 | Capped digests match, no OOM kill | yes |
+| 8 | Capped searches 5 to 100 times slower | **no**: 1,800 times slower than in memory (5 against 8,859 a second) |
+| 9 | Backup has the digest, under 3 minutes | yes: 16.8 s |
+| 10 | After the kill: flushed length, open under 30 s, `check` passes | yes: 6.0 s |
+| 11 | Compaction under 1.5 times the build, recall within 0.02 | yes: 0.93, 0.0045 |
+
+**Decision:** no bug, so the envelope goes to the docs. Two predictions failed:
+
+- Adds slow as the index grows, 2.8 times from the first million to the tenth, then level from 9M:
+  more than log n, so likely the graph outgrowing the caches. Not followed up here.
+- An index 3.5 times the memory it gets searches at 5 queries a second and adds 2 vectors a second
+  on this runner's disk, whose latency wasn't measured. A laptop's NVMe would do better by an
+  unmeasured amount. `warm` doesn't help there, as documented. Compaction, which builds the graph
+  again, would take months at that rate: an index has to fit in memory to be compacted in useful
+  time.
+
+Not measured: the disk's latency, a real laptop, macOS, an index past 7 GB, half precision.
