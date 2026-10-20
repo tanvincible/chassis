@@ -18,4 +18,13 @@ shown to fix it, and the cause is looked at again.
 
 ## Results
 
-Not yet run.
+Run 39445706846, 2026-10-20, one `windows-latest` runner.
+
+| Code | Failed | With "Access is denied" |
+| --- | --- | --- |
+| `main` a620e65 | 6 of 30 | 6 |
+| #135 849fe83 | 0 of 30 | 0 |
+
+Both predictions held. Five of the six failures on `main` were the reader's `backup` returning
+"Access is denied" (lib.rs:2161), opening the undo file while its removal was pending; one was the
+writer's add creating it (lib.rs:2144). The rename frees the name for both.
