@@ -1,0 +1,80 @@
+name: x86 mutants512
+
+# Experiment branch only: whether #131's tests catch an AVX-512 kernel that adds its sums in another
+# order. Three mutants of feat/avx512's kernel and the kernel as it is, each through the distance
+# tests, on whatever x86 CPUs GitHub gives. The prediction is in bench/lab/avx512ship-plan.md,
+# "Skeptic pass". Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/mutants512.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  SHA: 39651abe71ac4809b391b8757c2dad767fce4537
+
+jobs:
+  mutants:
+    name: mutants512 (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [a, b, c, d, e, f]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Each mutant through the distance tests
+        run: |
+          mkdir results
+          { lscpu | sed -n 's/^Model name: *//p'; grep -c -w avx512f /proc/cpuinfo | sed 's/^/avx512f cpus: /'; } | tee results/cpu.txt
+          git fetch -q origin feat/avx512
+          git worktree add --detach "$RUNNER_TEMP/src" "$SHA"
+          cd "$RUNNER_TEMP/src"
+          cp chassis-core/src/distance.rs "$RUNNER_TEMP/distance.rs"
+          for mutant in none assoc lab stride; do
+            cp "$RUNNER_TEMP/distance.rs" chassis-core/src/distance.rs
+            python3 - "$mutant" <<'PY'
+          import sys
+          p, m = "chassis-core/src/distance.rs", sys.argv[1]
+          s = open(p).read()
+          old, new = {
+              "none": ("", ""),
+              "assoc": (
+                  "[_mm512_castps512_ps256(s01), high(s01), _mm512_castps512_ps256(s23), high(s23)]",
+                  "[_mm512_castps512_ps256(s01), _mm512_castps512_ps256(s23), high(s01), high(s23)]",
+              ),
+              "lab": (
+                  "let (mut totals, done) = group_sums_avx2_from(sums, i, a.len(), query, stored);",
+                  "let _ = (sums, &query, &stored); let (mut totals, done): ([f32; W], usize) = "
+                  "(std::array::from_fn(|j| _mm512_reduce_add_ps(_mm512_add_ps(wide[j][0], wide[j][1]))), i);",
+              ),
+              "stride": ("while i + 32 <= a.len() {", "while i + 64 <= a.len() {"),
+          }[m]
+          if old:
+              assert s.count(old) == 1, m
+              s = s.replace(old, new)
+          open(p, "w").write(s)
+          PY
+            if cargo test -q -p chassisdb --lib distance > "$RUNNER_TEMP/out.txt" 2>&1; then verdict=pass; else verdict=fail; fi
+            failed=$(grep -oE "^    distance::tests::[a-z0-9_]+" "$RUNNER_TEMP/out.txt" | sed 's/^ *distance::tests:://' | sort -u | tr '\n' ' ')
+            built=$(grep -c "test result" "$RUNNER_TEMP/out.txt" || true)
+            printf 'mutant\t%s\t%s\tbuilt %s\t%s\n' "$mutant" "$verdict" "$built" "$failed" | tee -a "$GITHUB_WORKSPACE/results/mutants.tsv"
+          done
+          cat "$GITHUB_WORKSPACE/results/cpu.txt" "$GITHUB_WORKSPACE/results/mutants.tsv" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants512-${{ matrix.shard }}
+          path: results/

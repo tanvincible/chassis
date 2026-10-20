@@ -123,7 +123,9 @@ clean jobs (jobs), with `warm` after the comma; builds as `main`'s time over the
 | Builds | 1.01 to 1.10 | 1.03 to 1.11 | 1.04, 1.05 | 0.92 to 0.97 | 0.99 to 1.00 |
 
 The Xeon 8370C took 3, 6 and 9% longer in both of its builds at 384, 768 and 1,536, and lost in
-searches at every `ef`, by 3 to 6% at 768, where its A/A arm drifted 2% the same way.
+searches at every `ef`, by 3 to 6% at 768, where its A/A arm drifted 2% the same way. At 384, left
+out for its A/A arm (0.85 to 1.10 by round), its searches gained in all twelve rounds and `ef`s, by
+9% at the median; in cache at 1,536, also left out, they were even with the A/A arm.
 
 **Predictions.** Three of eight held.
 
@@ -138,8 +140,9 @@ searches at every `ef`, by 3 to 6% at 768, where its A/A arm drifted 2% the same
 7. **Held.** Zen 5's builds at 1,536 took 0.94 of the time.
 8. **Held** for `full`, `warm` and builds (0.99 to 1.01); the A/A arm reached 1.023 in cache.
 
-**The decision.** The rule didn't foresee a CPU that loses at every size: **ship** needs every
-AVX-512 CPU at 0.98 or more, and **by size** has no size above which the Xeon 8370C stops losing.
+**The decision.** The rule didn't foresee a CPU that loses at the longest sizes: **ship** needs
+every AVX-512 CPU at 0.98 or more, and **by size** has no size above which the Xeon 8370C stops
+losing.
 Read per CPU, as the plan decides each AVX-512 CPU by itself: AVX-512 on Zen 4, Zen 5, the Xeon
 8573C and, from avx512 RUN 1, the Xeon 6973P-C; not on the Xeon 8370C. Its flags are the same as
 the 8573C's (neither shows `avx512_fp16`, which Emerald Rapids has), so #131 tells them apart by CPUID model: Intel's
@@ -152,7 +155,36 @@ there with `warm`.
 
 - **AVX-512 pays most on Zen 5**: 13 to 24% at 384 dimensions and up, and builds take 6 to 10%
   less time. At 128 dimensions it is even there and gains a little elsewhere.
-- **On Ice Lake it costs**, 2 to 9% in searches and builds. One job; the other Intel CPUs drawn
-  gained, and nothing in the flags tells the two apart.
+- **On Ice Lake it costs** 2 to 8% in searches at 768 dimensions and up and 3 to 9% in builds on
+  every core, and gained 9% in searches at 384. One job; the other Intel CPUs drawn gained, and
+  nothing in the flags tells the two apart.
 - **Results don't change**, by construction and by every digest: a CPU with AVX-512 finds exactly
   what one without it does.
+
+## Skeptic pass
+
+Run on #131 at 8e141cf and on this write-up, 2026-10-20, each attack executed.
+
+- **Measured is shipped**: `distance.rs` is the same at 8a8d5c4 and 8e141cf; `search.rs` differs only
+  in the gate's condition.
+- **The digests aren't vacuous**: all 472 (job, size, arm, `ef`) cells have six digests, three
+  rounds of each binary, all equal; no search line lacks one.
+- **No order bias**: the A/A arm's per-round ratio over all 576 pairs has median 1.0004; Zen 3's,
+  over every arm, 1.004.
+- **Pre-registered**: committed 10:41:28Z, the run created 10:41:32Z by that push; "each AVX-512
+  CPU is decided on by itself" was in it.
+- **Flags**: the Xeon 8370C's and 8573C's lists differ only in `ept_ad`, a hypervisor flag.
+- **Weakened, now fixed**: "loses at every size" (above: it gained at 384); Linux's
+  `intel-family.h` also lists Ice Lake NNPI (0x9D), now in the gate; a wrong letter in the gate's
+  Intel vendor id failed no test, and now one does; the changelog claimed speed for Intel CPUs
+  never measured, and the performance page's comparison with FAISS was the lab's kernel.
+- **Not rare**: the 8370C was three of twenty jobs in a dist run, so Ice Lake can be measured
+  again.
+
+**Mutation run** (`mutants512.yml` RUN 1, six jobs, #131 at 39651ab), written before it runs.
+Three mutants of the AVX-512 kernel, each through `cargo test --lib distance`: `assoc` adds its
+four sums as (s0 + s2) + (s1 + s3); `lab` is the lab's reduction, `_mm512_reduce_add_ps`; `stride`
+leaves more to the eight-wide tail. **Prediction**: on every job with AVX-512F, all three fail
+`test_avx512_gives_the_bits_of_avx2` and the kernel as it is passes; on jobs without, all four
+pass. A mutant that survives on an AVX-512 job means the test doesn't pin the bits, and #131 waits
+for a better one. A mutant that doesn't build counts as nothing.
