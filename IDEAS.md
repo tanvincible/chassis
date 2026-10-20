@@ -45,11 +45,16 @@ each other would mean fewer page faults on a cold file and fewer TLB misses on a
 
 ### An index larger than memory
 
-Nothing has been measured with one. Reading only what a query touches is the design's claim
-there, and huge pages and `warm()` are both wrong for it.
+Reading only what a query touches is the design's claim there, and huge pages and `warm()` are
+both wrong for it.
 
-* **To validate**: build an index several times the size of memory (or cap the page cache), and
-  measure search speed, what the system reads per query, and what it keeps resident.
+* **Known** (scale RUN 1, `bench/lab/scale-plan.md`): ten million vectors of 128 dimensions, 6.9
+  GB, in a cgroup with 2 GB on a GitHub runner, gave the same results at 5 queries a second against
+  8,859 in memory, and took 2 adds a second. `warm` didn't help.
+* **To validate**: what the system reads per query (faults, bytes) and the disk's latency, to tell
+  waiting on the disk from reading 128 KB around each fault; `MADV_RANDOM` on the mapping, against
+  the kernel's own turning off of read-around after many misses; a laptop's NVMe. Asking for a
+  node's neighbors' pages at once (above) is the case this is for.
 
 ## Doing more at once
 
@@ -508,9 +513,14 @@ checked against their code says so; the rest is the survey's.
   others, while the AVX-512 kernel, whose eight sums leave registers free, took its usual 61
   (avx512 RUN 1, job k).
 
+* **Adds slow as an index grows** (scale RUN 1): a million took 52 s into an empty index and 149
+  s into one of nine million, level from there. Search cost grows with the log of the size, so
+  most of that is something else, perhaps the graph outgrowing the caches; not looked into.
+
 ## Not yet measured at all
 
-* Anything past a million vectors, or a file past about a gigabyte.
+* Past ten million vectors or a 7 GB file; half precision or macOS at that size. Run the scale
+  lab again after any change to the file format or storage, as eight-bit vectors will be.
 * A consumer x86 laptop or desktop. Every x86 figure is from a server CPU.
 * Apple silicon out of Low Power Mode, and more than one machine of it.
 * AVX-512 in half precision, which widens sixteen halves at a time, and for the kernels called
