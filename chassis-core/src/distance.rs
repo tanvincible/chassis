@@ -703,7 +703,7 @@ unsafe fn squared_group_avx512<const W: usize>(a: &[f32], b: [&[f32]; W]) -> [f3
     // `_mm512_extractf32x8_ps` would need AVX-512DQ.
     let high = |s: __m512| _mm256_castpd_ps(_mm512_extractf64x4_pd::<1>(_mm512_castps_pd(s)));
     let sums = wide.map(|[s01, s23]| {
-        [_mm512_castps512_ps256(s01), _mm512_castps512_ps256(s23), high(s01), high(s23)]
+        [_mm512_castps512_ps256(s01), high(s01), _mm512_castps512_ps256(s23), high(s23)]
     });
     // SAFETY: as in `squared_group_avx2`.
     let query = |i: usize| unsafe { _mm256_loadu_ps(a.as_ptr().add(i)) };
