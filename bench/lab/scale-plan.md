@@ -105,3 +105,7 @@ runner's root disk (ext4). 55 minutes in all. Raw lines: the `scale-1` artifact.
   time.
 
 Not measured: the disk's latency, a real laptop, macOS, an index past 7 GB, half precision.
+
+A recurring job on `main`: not now. At 55 minutes it would fit a weekly run, but it would put this
+harness on `main` to recheck a result nothing has changed since; this lab is run again after any
+change to the file format or storage instead (IDEAS.md). Docs: #136.
