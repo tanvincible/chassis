@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        rust: [stable, "1.88"]
+        rust: [stable, "1.89"]
     # rust-toolchain.toml pins stable for local work; without this, every job would build with it.
     env:
       RUSTUP_TOOLCHAIN: ${{ matrix.rust }}

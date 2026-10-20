@@ -43,6 +43,10 @@ pages where they are 2 KB or more.
 - **Huge pages are most of FAISS's lead at long vectors.** FAISS's memory gets them from Linux
   without asking; Chassis's file gets them from `warm`, or from `huge_pages`
   ([ADR-0016](https://github.com/tanvincible/chassis/blob/main/docs/adr/016-huge-pages-on-request.md)).
+  On CPUs with AVX-512 the rest was AVX-512, which Chassis uses after 0.10.0: with both, a lab
+  version of its kernel made 1.01 to 1.04 times FAISS's queries a second at 1,536 dimensions on Zen
+  4, Zen 5 and two Xeons
+  ([ADR-0025](https://github.com/tanvincible/chassis/blob/main/docs/adr/025-avx-512.md)).
 - **Panorama** keeps vectors in PCA order and stops a distance once it can't win. It gained most
   where a few components carry most of a vector, as in GIST's image descriptors. It was slower than
   FAISS's plain HNSW at 128 dimensions, and on x86 with the text embeddings for 0.95 recall.

@@ -4,7 +4,7 @@ This page shows how to build Chassis from a checkout, on Linux, macOS or Windows
 
 ## Requirements
 
-- Rust 1.88 or later
+- Rust 1.89 or later
 - A C compiler (for some dependencies)
 - Git
 
