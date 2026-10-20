@@ -51,10 +51,17 @@ both wrong for it.
 * **Known** (scale RUN 1, `bench/lab/scale-plan.md`): ten million vectors of 128 dimensions, 6.9
   GB, in a cgroup with 2 GB on a GitHub runner, gave the same results at 5 queries a second against
   8,859 in memory, and took 2 adds a second. `warm` didn't help.
-* **To validate**: what the system reads per query (faults, bytes) and the disk's latency, to tell
-  waiting on the disk from reading 128 KB around each fault; `MADV_RANDOM` on the mapping, against
-  the kernel's own turning off of read-around after many misses; a laptop's NVMe. Asking for a
-  node's neighbors' pages at once (above) is the case this is for.
+* **Known** (scale RUN 2): a search there took 757 major faults, each reading 114 KiB around it,
+  17.7 GB for 200 queries, 2.5 to 4.5 a second on a disk that reads 4 KB in 0.19 ms.
+  **`MADV_RANDOM` tried**: 1,050 faults of 4 KiB a search, 860 MB for the 200; no reliable gain on
+  that first pass (1.6 to 1.8 times in one pair, 0.8 to 1.05 in the other), and 8.7 times slower
+  on a first pass that fits in memory. But its 860 MB stayed in the 2 GB, so the same queries again
+  ran at 9,000 a second, where without it they stayed at 4. Faults times the disk's latency
+  predicted the speed within 1.4 times at 4 KiB a fault and missed by up to 2.8 at 114 KiB.
+* **To validate**: a stream of different queries in a cap, with and without the advice, to see
+  whether random reads settle into what the cache holds for real traffic; the disk's throughput,
+  to explain the 114 KiB faults; a laptop's NVMe. Asking for a node's neighbors' pages at once
+  (above) is the case this is for.
 
 ## Doing more at once
 
@@ -515,12 +522,17 @@ checked against their code says so; the rest is the survey's.
 
 * **Adds slow as an index grows** (scale RUN 1): a million took 52 s into an empty index and 149
   s into one of nine million, level from there. Search cost grows with the log of the size, so
-  most of that is something else, perhaps the graph outgrowing the caches; not looked into.
+  most of that is something else. **Not the page tables** (scale RUN 2): on one runner, huge pages
+  put 71% of the file on them and cut the page tables from 13.8 to 4.7 MiB, and the last million
+  still took 2.96 times the first, against 2.87 without. At 1,536 dimensions in half precision the
+  last 100,000 of 3M took 2.2 times the first. **To validate next**: a profile of adds at 1M and
+  10M.
 
 ## Not yet measured at all
 
-* Past ten million vectors or a 7 GB file; half precision or macOS at that size. Run the scale
-  lab again after any change to the file format or storage, as eight-bit vectors will be.
+* Past ten million vectors or a 10 GB file; macOS at that size; real embeddings at that size, as
+  every scale run's vectors were made up. Run the scale lab again after any change to the file
+  format or storage, as eight-bit vectors will be.
 * A consumer x86 laptop or desktop. Every x86 figure is from a server CPU.
 * Apple silicon out of Low Power Mode, and more than one machine of it.
 * AVX-512 in half precision, which widens sixteen halves at a time, and for the kernels called
