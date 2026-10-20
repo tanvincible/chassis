@@ -192,3 +192,62 @@ Three jobs on `ubuntu-latest`, each its own runner, in parallel.
 - If prediction 7 holds, the slowdown is the page tables, and asking for huge pages while
   building joins the plan for huge pages at open. If the huge-page build slows as much, it isn't.
 - Prediction 8's answer, either way, and the bytes per vector from `long` go to a Limits page.
+
+### Results
+
+Run 39481476879, 2026-10-20: three runners of 4 vCPUs and 15 GB, Linux 7.0 (Azure), THP on
+`madvise`, the index on the root disk (ext4); `main` on an AMD EPYC 9V74, `pages` on an Intel Xeon
+6973P-C, `long` on an Intel Xeon Platinum 8573C. 34 to 55 minutes. Raw lines: the
+`scale-2-main`, `scale-2-pages` and `scale-2-long` artifacts. `fio` read 4 KB at random in 0.19 ms
+on average (0.13 p50, 0.51 p99).
+
+The harness prints queries a second as whole numbers, so the capped first passes are bounded by
+each step's wall time less its second pass: `cold1` 2.5 to 2.9, `cold2` 3.5 to 4.5, `random1` 4.5,
+`random2` 3.7.
+
+| Step | Found |
+| --- | --- |
+| Build | 10M in 1,145 s; a million took 46 s first and 141 s last; page tables 2.4 MiB at 1M, 13.8 MiB at 10M |
+| Kill | killed mid-add of a million into 9,999,000; undo file 203 MB; a writer opened in 8.4 s; the set digest and 1,000 searches' digest as before, the order digest not |
+| 2 GB, no advice | 757 major faults a query, 114 KiB read by each, 17.7 GB a pass of 200 queries; the second pass as slow as the first |
+| 2 GB, random | 1,050 major faults a query, 4 KiB read by each, 860 MB a pass; the second pass at 9,042 and 9,191 queries a second, with no faults |
+| First pass, uncapped | no advice: 55 queries a second, 6.5 GB read, nearly the file; random: 6.3, 3.1 GB read |
+| Compact | in 9.17 GB, 1.2 times the 7.64 GB file: 1,185 s, memory at the cap, no OOM kill; 0 unreachable; recall 0.997 and 0.9985 |
+| Huge pages | on one runner, default then huge: 1,280 s and 1,195 s; the last million 2.87 and 2.96 times the first; page tables 13.8 and 4.7 MiB; 71% of the file on huge pages |
+| Long | 3M × 1,536 at half precision in 988 s, 100,000 took 15.7 s first and 34.1 s last; a 9.76 GB file; recall 0.9825 at `ef` 64 and 0.9985 at 256; `check` clean; compaction 789 s, max RSS 14.3 GiB of the runner's 15, with two files of nearly 10 GB; recall 0.9875 and 0.9985 |
+
+On disk, a vector took its numbers plus 164.3 bytes both times: 676.3 bytes at 128 dimensions in
+full precision, 3,236.3 at 1,536 in half. The file's length ran 2.6% and 0.5% ahead.
+
+| # | Prediction | Held? |
+| --- | --- | --- |
+| 1 | Sets and searches as before the kill; order not; an undo file | yes |
+| 2 | Capped speed within 2 times of the faults and `fio`'s latency | **no**: 1.1 and 1.4 times with random advice; 1.6 to 2.0 and 2.4 to 2.8 without |
+| 3 | 32 KB or more a fault with no advice; 8 KB or less with random | yes: 114 KiB; 4 KiB |
+| 4 | Random 1.5 times faster capped, in both pairs | **no**: 1.6 to 1.8 times in the first pair, 0.8 to 1.05 in the second |
+| 5 | Random 1.5 times slower on an uncapped first pass | yes: 8.7 times |
+| 6 | Last million 2.3 to 3.3 times the first; page tables 13.5 MB ± 30% | yes: 3.03 and 2.87; 13.8 MiB |
+| 7 | Huge pages: half the file, page tables under 2 MB, at most 2 times, 0.85 of the build | **no**: 71%, but 4.7 MiB, 2.96 times, 0.93 |
+| 8 | Compaction in 1.2 times the file under 1,664 s, no OOM kill, recall within 0.02 | yes: 1,185 s; 0.9985 against 0.9995 |
+| 9 | `long`: 9.5 to 11 GB, recall 0.95, `check` clean, compaction under 2 times the build | yes: 9.76 GB, 0.9985, clean, 0.80 |
+
+**Decision:** no bug. Three predictions failed:
+
+- **The formula.** It held within 1.4 times where each fault read 4 KiB, as `fio` did, and was off
+  by up to 2.8 times where each read 114 KiB. The bytes read around each fault may be the gap; it is
+  unexplained until a run measures the disk's throughput too. The formula stays out of the docs;
+  the measured speeds go in.
+- **`MADV_RANDOM`.** No reliable gain on a first pass in 2 GB, and 8.7 times slower on one that
+  fits: IDEAS.md, as tried. Not predicted: with random advice the 860 MB the 200 queries read
+  stayed within the 2 GB, so their second pass ran at memory speed; without it, 17.7 GB went
+  through the cache and the second pass was as slow as the first. Whether a stream of different
+  queries settles the same way is the question for a next run, not a change on `main`.
+- **Page tables.** Huge pages cut them to a third and left the slowdown as it was, so it isn't the
+  page tables, and huge pages while building doesn't join the plan. The slowdown stays
+  unexplained; a profile at 1M and 10M is next, in IDEAS.md.
+
+The rollback restored every list's neighbors and changed the order of some, and 1,000 searches
+gave the same results, so ADR-0012 stands as written. Compaction's memory and the bytes per vector
+go to a Limits page.
+
+Not measured: real embeddings, a laptop, macOS, a faster disk.
