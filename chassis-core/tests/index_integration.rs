@@ -565,6 +565,12 @@ fn test_a_backup_takes_no_disk_for_what_was_never_written() {
         (metadata.len(), metadata.blocks() * 512)
     };
     let dir = tempfile::tempdir().unwrap();
+    let probe = dir.path().join("probe");
+    std::fs::File::create(&probe).unwrap().set_len(64 << 20).unwrap();
+    if sizes(&probe).1 > 32 << 20 {
+        eprintln!("this filesystem keeps no holes, as exFAT doesn't: nothing to test");
+        return;
+    }
     let path = dir.path().join("index.chassis");
     let (writers, readers) = (dir.path().join("writer.chassis"), dir.path().join("reader.chassis"));
     let options = IndexOptions { max_connections: 4, ef_construction: 8, ..Default::default() };
