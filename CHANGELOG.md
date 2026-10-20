@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.10.0...HEAD)
 
+Building Chassis takes Rust 1.89 or later, one release newer than before.
+
 ### Changed
 
 - Rust 1.89 or later, for AVX-512 (#131).
