@@ -491,9 +491,11 @@ checked against their code says so; the rest is the survey's.
   Zen 5, and a lab AVX-512 kernel gives Chassis 6 to 20%. With it and `warm`, Chassis made 1.01 to
   1.04 times FAISS's queries a second on Zen 4, Zen 5 and both Xeons. On the newer runner image
   (Linux 7.0, THP at `madvise`) FAISS gets no huge pages, and Chassis led it even on small pages
-  (one Zen 3 job). **To validate next**: the AVX-512 kernel as a PR, with a run at 128 dimensions,
-  where Zen 5 has lost before; asking for huge pages at open under long vectors, after a run on an
-  index larger than memory.
+  (one Zen 3 job). **Shipping** (#131, avx512ship RUN 1, `bench/lab/avx512ship-plan.md`): 3 to
+  24% at 384 dimensions and up on Zen 4, Zen 5 and a Xeon 8573C, even at 128, the same bits. It
+  lost 2 to 9% on a Xeon 8370C (Ice Lake), so Intel's AVX-512 before Sapphire Rapids stays on AVX2.
+  **To validate next**: asking for huge pages at open under long vectors, after a run on an index
+  larger than memory.
 * **Zen 5 with huge pages at 128 dimensions** gained nothing or lost up to 7% (ADR-0016).
 * **On a Xeon 6973P-C, hints into L1 beat L2 by 2 to 10%** up to 100,000 vectors (ADR-0014's
   runs): one machine, and nothing at a million.
@@ -511,4 +513,7 @@ checked against their code says so; the rest is the survey's.
 * Anything past a million vectors, or a file past about a gigabyte.
 * A consumer x86 laptop or desktop. Every x86 figure is from a server CPU.
 * Apple silicon out of Low Power Mode, and more than one machine of it.
+* AVX-512 in half precision, which widens sixteen halves at a time, and for the kernels called
+  through a pointer: builds' choice of neighbors, exact scans, `euclidean_distance` (ADR-0025).
+* AVX-512 on a second Ice Lake, or any Intel before Sapphire Rapids: one job decided all of them.
 * Real power loss; it is only simulated.
