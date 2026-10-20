@@ -11,8 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) 
 
 ### Performance
 
-- Searches in full precision use AVX-512 on Zen 4, Zen 5 and Intel from Sapphire Rapids: 3 to 24%
-  faster at 384 dimensions and up, with the same results (#131).
+- Searches in full precision use AVX-512 on Zen 4, Zen 5 and Intel from Sapphire Rapids, with the
+  same results: 3 to 24% faster at 384 dimensions and up on those measured (#131).
 
 ### Fixed
 

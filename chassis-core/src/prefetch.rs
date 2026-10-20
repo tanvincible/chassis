@@ -152,30 +152,35 @@ pub(crate) fn avx512_pays() -> bool {
     *PAYS.get_or_init(|| !intel().is_some_and(|(family, model)| is_early_avx512(family, model)))
 }
 
-/// Whether an Intel processor has AVX-512 from before Sapphire Rapids: Skylake-SP to Cooper Lake,
-/// Cannon Lake, Ice Lake, Tiger Lake, Rocket Lake or Xeon Phi. On the one measured, an Ice Lake,
-/// AVX-512 lost; Skylake-SP and Cascade Lake slow their clocks more for it.
+/// Whether an Intel processor has AVX-512 from before Sapphire Rapids, by Linux's `intel-family.h`:
+/// Skylake-SP to Cooper Lake, Cannon Lake, Ice Lake, Tiger Lake, Rocket Lake or Xeon Phi. On the
+/// one measured, an Ice Lake, AVX-512 lost; Skylake-SP and Cascade Lake slow their clocks more for
+/// it.
 #[cfg(any(target_arch = "x86_64", test))]
 fn is_early_avx512(family: u32, model: u32) -> bool {
     family == 6
         && matches!(
             model,
-            0x55 | 0x57 | 0x66 | 0x6a | 0x6c | 0x7d | 0x7e | 0x85 | 0x8c | 0x8d | 0xa7
+            0x55 | 0x57 | 0x66 | 0x6a | 0x6c | 0x7d | 0x7e | 0x85 | 0x8c | 0x8d | 0x9d | 0xa7
         )
 }
+
+/// "AuthenticAMD" and "GenuineIntel" as CPUID leaf 0 gives them, in EBX, EDX and ECX.
+#[cfg(any(target_arch = "x86_64", test))]
+const AMD: (u32, u32, u32) = (0x6874_7541, 0x6974_6e65, 0x444d_4163);
+#[cfg(any(target_arch = "x86_64", test))]
+const INTEL: (u32, u32, u32) = (0x756e_6547, 0x4965_6e69, 0x6c65_746e);
 
 /// The CPUID family and model of an AMD processor.
 #[cfg(target_arch = "x86_64")]
 fn amd() -> Option<(u32, u32)> {
-    // "AuthenticAMD", in EBX, EDX, ECX.
-    family_and_model((0x6874_7541, 0x6974_6e65, 0x444d_4163))
+    family_and_model(AMD)
 }
 
 /// The CPUID family and model of an Intel processor.
 #[cfg(target_arch = "x86_64")]
 fn intel() -> Option<(u32, u32)> {
-    // "GenuineIntel".
-    family_and_model((0x756e_6547, 0x4965_6e69, 0x6c65_746e))
+    family_and_model(INTEL)
 }
 
 /// The CPUID family and model, if the vendor is `vendor`.
@@ -260,6 +265,14 @@ mod tests {
         assert!(!is_early_avx512(6, 0xcf));
         assert!(!is_early_avx512(6, 0xad));
         assert!(!is_early_avx512(6, 0x8f));
+    }
+
+    /// A wrong letter would leave the gate open on every Intel processor, and nothing else fails.
+    #[test]
+    fn test_vendor_ids_spell_the_vendors() {
+        let spell = |(b, d, c): (u32, u32, u32)| [b, d, c].map(u32::to_le_bytes).concat();
+        assert_eq!(spell(AMD), b"AuthenticAMD");
+        assert_eq!(spell(INTEL), b"GenuineIntel");
     }
 
     #[cfg(target_arch = "x86_64")]
