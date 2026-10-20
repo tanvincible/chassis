@@ -161,7 +161,11 @@ fn test_compaction_through_a_symlink_replaces_the_file_it_points_to() {
     let dir = tempdir().unwrap();
     let (file, link) = (dir.path().join("file.chassis"), dir.path().join("link.chassis"));
     build(&file, 300).flush().unwrap();
-    std::os::unix::fs::symlink(&file, &link).unwrap();
+    if let Err(e) = std::os::unix::fs::symlink(&file, &link) {
+        assert_eq!(e.kind(), std::io::ErrorKind::Unsupported, "{e}");
+        eprintln!("this filesystem has no symlinks, as exFAT doesn't: nothing to test");
+        return;
+    }
 
     let mut index = VectorIndex::open(&link, DIMS as u32, options()).unwrap();
     for key in 0..200 {
