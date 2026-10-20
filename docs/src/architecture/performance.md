@@ -131,7 +131,7 @@ here.
 | `check` | 4 s |
 | Delete 100,000; add 99,000 | 0.9 s; 67 s, 10,000 at a time, each flushed |
 | `backup` | 17 s, keeping the file's holes |
-| `compact` | 18.5 minutes; at its peak 12.5 GB in memory, nearly all of it the two files |
+| `compact` | 18.5 minutes; at its peak 12.5 GB in memory, nearly all of it the two files, though a later run held it to 1.2 times one file at the build's speed |
 
 Memory besides the file's pages, sampled after each million added, peaked at 534 MB, 512 MB of
 it the million vectors being added.
@@ -142,7 +142,7 @@ at 5 queries a second, and took 2 adds a second, with most of the index on the r
 measured. Keep an index within the memory it has, or shrink it with half precision
 ([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)): each
 vector also takes about 164 bytes for its links and header at the default `M`, so half precision
-takes 62% of the room at 128 dimensions, and nearly half from 768.
+takes 62% of the room at 128 dimensions, and nearly half from 768 ([Limits](../guide/limits.md)).
 Building or compacting one larger than memory is out of reach at that rate: a million adds would
 take nearly a week. The plan, the predictions and every number are in
 [`bench/lab/scale-plan.md`](https://github.com/tanvincible/chassis/blob/lab/x86/bench/lab/scale-plan.md)
