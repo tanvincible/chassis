@@ -11,12 +11,12 @@ Building Chassis takes Rust 1.89 or later, one release newer than before.
 
 - Rust 1.89 or later, for AVX-512 (#131).
 - Opening an index takes its dimensions, metric, precision and `max_connections` from the file
-  unless they're given, and checks any that are (ADR-0026, #PR).
+  unless they're given, and checks any that are (ADR-0026, #140).
 - Rust: `IndexOptions`' `metric`, `precision` and `max_connections` are `Option`s; wrap values in
-  `Some`. Dimensions of 0 take the file's (#PR).
+  `Some`. Dimensions of 0 take the file's (#140).
 - C: dimensions and `max_connections` of 0, and `CHASSIS_FROM_FILE` for a metric or precision,
-  take the file's (#PR).
-- Python: `dimensions`, `metric`, `precision` and `max_connections` default to `None` (#PR).
+  take the file's (#140).
+- Python: `dimensions`, `metric`, `precision` and `max_connections` default to `None` (#140).
 
 ### Performance
 

@@ -1,7 +1,7 @@
 # ADR-0026: Options from the file
 
 **Date:** 2026-10-21
-**Status:** Accepted
+**Status:** Accepted (#140)
 
 ## Context
 
