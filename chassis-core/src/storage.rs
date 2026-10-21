@@ -48,6 +48,7 @@ mod sizes {
     pub const HEAP_BASE_MIN_LOG2: u8 = 16;
     pub const MAX_CHUNK_LOG2: u8 = 28;
     pub const TABLE_PAGE_LOG2: u8 = 13;
+    pub const RESERVE_BYTES: usize = 16 << 20;
 }
 /// Small in unit tests, so short workloads cross segment, heap chunk and table page boundaries.
 #[cfg(test)]
@@ -57,11 +58,56 @@ mod sizes {
     pub const HEAP_BASE_MIN_LOG2: u8 = 10;
     pub const MAX_CHUNK_LOG2: u8 = 13;
     pub const TABLE_PAGE_LOG2: u8 = 2;
+    pub const RESERVE_BYTES: usize = 4 << 10;
 }
 use sizes::*;
 
 const fn align(n: u64, to: u64) -> u64 {
     n.div_ceil(to) * to
+}
+
+/// Allocates the disk under `len` bytes of `file` at `offset`, so writing them through a mapping
+/// can't meet a full disk, which on Linux ends the process with SIGBUS (ADR-0008). Elsewhere it
+/// does nothing: Windows allocates as the file grows, and macOS reports a full disk when a flush
+/// syncs. So does a file system that can't allocate ahead, such as exFAT through FUSE.
+fn reserve(file: &File, offset: u64, len: usize) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    loop {
+        use std::os::fd::AsRawFd;
+        let (at, len) = (offset as libc::off_t, len as libc::off_t);
+        // SAFETY: fallocate reads only its arguments, and `file` is open for the call.
+        if unsafe { libc::fallocate(file.as_raw_fd(), 0, at, len) } == 0 {
+            break;
+        }
+        let e = std::io::Error::last_os_error();
+        if is_full(&e) {
+            return Err(full_disk(len as u64));
+        }
+        match e.raw_os_error() {
+            Some(libc::EINTR) => {}
+            Some(libc::EOPNOTSUPP | libc::ENOSYS) => break,
+            _ => return Err(e).context("Failed to allocate disk space for the index"),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (file, offset, len);
+    Ok(())
+}
+
+/// Whether `e` says the disk, or the user's quota on it, is full.
+fn is_full(e: &std::io::Error) -> bool {
+    matches!(e.kind(), std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded)
+}
+
+/// The error for `bytes` more of the index that the disk had no room for, before an add wrote any.
+fn full_disk(bytes: u64) -> anyhow::Error {
+    raised(
+        ErrorKind::Io,
+        format!(
+            "The disk is full: {bytes} more bytes of the index didn't fit\nhelp: free space on the \
+             disk and add again; the index is as it was before this add"
+        ),
+    )
 }
 
 /// Where things are, derived from the header.
@@ -428,6 +474,8 @@ struct Segment {
     region: Region,
     vectors: usize,
     level0: usize,
+    /// Slots below this have their disk allocated, or were written before this writer opened.
+    reserved: usize,
     /// The file offset up to which huge pages were asked for under this segment's vectors.
     huge: u64,
 }
@@ -557,6 +605,8 @@ pub struct Storage {
     _replaced: Option<File>,
     /// In a writer, where committed nodes' lists are saved before they change.
     undo: Option<Undo>,
+    /// The heap chunk being written, and how far into it its disk is allocated.
+    heap_reserved: (u64, u64),
     /// With `IndexOptions::huge_pages`, the slots whose vectors may be on huge pages: those
     /// written for good, and those a batch is about to write.
     huge_slots: Option<u64>,
@@ -668,6 +718,7 @@ impl Storage {
     ) -> Result<Self> {
         let header = Geometry::initial_header(dims, params, metric, precision)?;
         file.set_len(REGIONS_START)?;
+        reserve(&file, 0, REGIONS_START as usize)?;
         let headers = Region::map(&file, 0, REGIONS_START as usize, true)?;
         headers.store_words(0, &FileHeader { sequence: 1, ..header.clone() }.to_bytes());
         headers.store_words(HEADER_STRIDE, &header.to_bytes());
@@ -707,6 +758,7 @@ impl Storage {
             poisoned: false,
             _replaced: None,
             undo: None,
+            heap_reserved: (0, 0),
             huge_slots: None,
         })
     }
@@ -950,6 +1002,7 @@ impl Storage {
                     region,
                     vectors: layout.vectors,
                     level0: layout.level0,
+                    reserved: 0,
                     huge: 0,
                 });
             }
@@ -1238,13 +1291,16 @@ impl Storage {
             let layout = g.segment_layout(g.segment_slots(self.segments.len() as u64));
             let region = self.push_region(Table::Segments, layout.bytes)?;
             let (vectors, level0) = (layout.vectors, layout.level0);
-            self.segments.push(Segment { region, vectors, level0, huge: 0 });
+            self.segments.push(Segment { region, vectors, level0, reserved: 0, huge: 0 });
             self.state.segments += 1;
             self.publish_regions();
             self.ask_for_huge_pages();
         }
 
         let (k, i) = g.locate(slot);
+        if i >= self.segments[k].reserved {
+            self.reserve_slots(k, i)?;
+        }
         let segment = &mut self.segments[k];
         // The whole slot header, so a crashed flush's delete mark never survives in a reused slot.
         let mut header = [0u8; SLOT_HEADER];
@@ -1262,6 +1318,29 @@ impl Storage {
         }
         self.count += 1;
         Ok(slot)
+    }
+
+    /// Allocates the disk under segment `k`'s slots from `from`, `RESERVE_BYTES` of them at most: a
+    /// step ahead of the writes, so the segment's unused end stays sparse.
+    fn reserve_slots(&mut self, k: usize, from: usize) -> Result<()> {
+        let g = self.geometry;
+        let per_slot = SLOT_HEADER + g.vector_bytes() + g.level0_bytes();
+        let to = (from + (RESERVE_BYTES / per_slot).max(1)).min(g.segment_slots(k as u64) as usize);
+        let segment = &self.segments[k];
+        let arrays = [
+            (0, SLOT_HEADER),
+            (segment.vectors, g.vector_bytes()),
+            (segment.level0, g.level0_bytes()),
+        ];
+        for (start, size) in arrays {
+            reserve(
+                &self.file,
+                segment.region.offset + (start + from * size) as u64,
+                (to - from) * size,
+            )?;
+        }
+        self.segments[k].reserved = to;
+        Ok(())
     }
 
     /// Allocates a region, recorded in `table`, and maps it.
@@ -1284,6 +1363,7 @@ impl Storage {
                 );
             }
             let region = self.allocate(8 << log2)?;
+            reserve(&self.file, region.offset, 8 << log2)?;
             let (pages, offsets) = match table {
                 Table::Segments => (&mut self.segment_pages, &mut self.state.segment_table),
                 Table::Chunks => (&mut self.chunk_pages, &mut self.state.heap_table),
@@ -1307,8 +1387,12 @@ impl Storage {
         let end =
             offset.checked_add(align(bytes as u64, REGION_ALIGN)).context("File too large")?;
         // Never shrink: bytes past `end` were left by a crashed flush and are simply reused.
-        if self.file.metadata()?.len() < end {
-            self.file.set_len(end)?;
+        let len = self.file.metadata()?.len();
+        if len < end {
+            // Windows allocates the disk here, so a full one shows here.
+            self.file
+                .set_len(end)
+                .map_err(|e| if is_full(&e) { full_disk(end - len) } else { e.into() })?;
         }
         let region = Region::map(&self.file, offset, bytes, true)?;
         self.state.file_end = end;
@@ -1335,7 +1419,14 @@ impl Storage {
             self.state.heap_chunks += 1;
             self.publish_regions();
         }
-        self.state.heap_used = chunk << 32 | (offset + bytes as u64);
+        let end = offset + bytes as u64;
+        if (chunk, end) > self.heap_reserved {
+            let to =
+                (offset as usize + bytes.max(RESERVE_BYTES)).min(self.geometry.chunk_bytes(chunk));
+            reserve(&self.file, self.chunks[chunk as usize].offset + offset, to - offset as usize)?;
+            self.heap_reserved = (chunk, to as u64);
+        }
+        self.state.heap_used = chunk << 32 | end;
         Ok(chunk << 32 | offset)
     }
 
@@ -1779,15 +1870,28 @@ impl Storage {
             crate::power_loss::after_fsync(&self.file_bytes());
             return Ok(());
         }
-        self.headers.map.flush()?;
-        let regions = self.segments.iter().map(|s| &s.region);
-        for region in
-            regions.chain(&self.chunks).chain(&self.segment_pages).chain(&self.chunk_pages)
-        {
-            region.map.flush()?;
+        let synced = (|| {
+            self.headers.map.flush()?;
+            let regions = self.segments.iter().map(|s| &s.region);
+            for region in
+                regions.chain(&self.chunks).chain(&self.segment_pages).chain(&self.chunk_pages)
+            {
+                region.map.flush()?;
+            }
+            // sync_all, not sync_data: the file length must be durable too.
+            self.file.sync_all()
+        })();
+        // macOS writes back pages a full disk has no room for only when synced, and says so then.
+        if let Err(e) = synced {
+            if is_full(&e) {
+                fail!(
+                    Io,
+                    "The disk is full: the flush didn't fit\nhelp: free space on the disk and open \
+                     the index again; it keeps everything up to its last flush"
+                );
+            }
+            return Err(e.into());
         }
-        // sync_all, not sync_data: the file length must be durable too.
-        self.file.sync_all()?;
         Ok(())
     }
 
