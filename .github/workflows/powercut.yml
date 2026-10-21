@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  RUN: 1
-  SHA: e93cdccd4f751c7c15278fd0666b50528a8ff8c9
+  RUN: 2
+  SHA: 87bc990d8f69cbb5922cd75a8fa3001bee39b58d
   XFSTESTS: 22348afe338c0f6d540c0d7ef0db749eaa51b218
 
 defaults:
@@ -103,7 +103,7 @@ jobs:
           line=
           cp --sparse=always "$T/replay.img" "$T/snap.img"
           if sudo mount -o loop "$T/snap.img" /mnt/snap 2>/dev/null; then
-            line=$(timeout 120 "$T/scale" state /mnt/snap/idx 2>&1 | awk -F'\t' '$2 == "state" { print $4 }')
+            line=$(timeout 120 "$T/scale" state /mnt/snap/idx $STATE 2>&1 | awk -F'\t' '$2 == "state" { print $4 }')
             sudo umount /mnt/snap
           else
             line="mount failed"
@@ -113,58 +113,67 @@ jobs:
           chmod +x "$T/point.sh"
           fresh() { rm -f "$T/replay.img"; truncate -s 256M "$T/replay.img"; }
           replay() { "$T/replay-log" --log "$T/log.img" --replay "$T/replay.img" "$@" > /dev/null; }
-          for k in $(seq 0 9); do
+          # Each mark's lists, saved for the points to be compared with.
+          mkdir "$T/dumps"
+          for m in s0 s1 s2 s3 s4a s4 s5 s6 s7 s8 s9; do
             fresh
-            replay --end-mark "s$k"
-            PASS="mark$k" "$T/point.sh"
+            replay --end-mark "$m"
+            PASS="mark_$m" STATE="dump $T/dumps/$m" "$T/point.sh"
           done
           fresh
           replay --end-mark s0
-          replay --start-mark s0 --check flush --fsck "env PASS=flush $T/point.sh"
+          replay --start-mark s0 --check flush --fsck "env PASS=flush STATE=$T/dumps $T/point.sh"
           first=$("$T/replay-log" --log "$T/log.img" --find --end-mark s0 | cut -d@ -f1)
           total=$("$T/replay-log" --log "$T/log.img" --num-entries)
           step=$(( (total - first + 1499) / 1500 ))
           echo "write points every $step writes from write $first of $total" | tee -a "$GITHUB_STEP_SUMMARY"
           fresh
           replay --end-mark s0
-          replay --start-mark s0 --check "$step" --fsck "env PASS=write $T/point.sh"
+          replay --start-mark s0 --check "$step" --fsck "env PASS=write STATE=$T/dumps $T/point.sh"
 
       - name: Compare
         if: always()
         run: |
           python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
-          from collections import defaultdict
+          from collections import Counter
           writer = {}
           for line in open("results/writer.tsv"):
               p = line.rstrip("\n").split("\t")
               if len(p) == 4 and p[1] == "powercut":
-                  writer[int(p[2].split("_")[1])] = p[3].split()
-          # A state: length, vectors digest, unreachable, not finite, slots, graph as sets.
-          marks, points = {}, defaultdict(list)
+                  writer[p[2].removeprefix("state_")] = p[3].split()
+          # A state: length, vectors digest, unreachable, not finite, slots, graph as sets; at a
+          # point, then lists that differ, links gained to committed slots and past them, lost.
+          marks, points = {}, {"flush": [], "write": []}
           for line in open("results/points.txt"):
               name, _, state = line.rstrip("\n").partition(" ")
-              if name.startswith("mark"):
-                  marks[int(name[4:])] = state.split()
+              if name.startswith("mark_s"):
+                  marks[name.removeprefix("mark_s")] = state.split()
               else:
                   points[name].append(state)
           print("```")
-          for k, s in sorted(marks.items()):
+          for k, s in marks.items():
               good = len(s) == 6 and s[:2] == writer.get(k) and s[3] == "0"
               print(f"mark s{k}: {' '.join(s)}: {'ok' if good else 'PROBLEM, the writer saw ' + ' '.join(writer.get(k, ['nothing']))}")
-          for name in ("flush", "write"):
-              hard, exact, other, worse = [], 0, 0, 0
-              for state in points[name]:
+          for name, states in points.items():
+              c, hard, share = Counter(), [], []
+              for state in states:
                   s = state.split()
-                  same = [m for m in marks.values() if len(s) == 6 and len(m) == 6 and (m[0], m[1], m[4]) == (s[0], s[1], s[4])]
-                  if not same or s[3] != "0":
+                  mark = next((m for m in marks.values() if len(s) == 10 and (m[0], m[1], m[4]) == (s[0], s[1], s[4])), None)
+                  if mark is None or s[3] != "0":
                       hard.append(state)
-                  elif any(m[5] == s[5] for m in same):
-                      exact += 1
-                  else:
-                      other += 1
-                      worse += int(s[2]) > max(int(m[2]) for m in same)
-              print(f"{name} points: {len(points[name])}; a mark's length, vectors and slots: {len(points[name]) - len(hard)}, "
-                    f"graph exact {exact}, graph otherwise {other}, more unreachable than the mark {worse}")
+                      continue
+                  differing, committed, past, lost = map(int, s[6:])
+                  c["exact" if differing == 0 else "differs"] += 1
+                  c["gained a committed link"] += committed > 0
+                  c["more unreachable"] += int(s[2]) > int(mark[2])
+                  c["links gained past the commit"] += past
+                  c["links lost"] += lost
+                  if differing:
+                      share.append(differing / int(s[4]))
+              print(f"{name} points: {len(states)}; matched a commit {len(states) - len(hard)}; {dict(c)}")
+              if share:
+                  share.sort()
+                  print(f"  lists differing where any do: median {share[len(share) // 2]:.2%}, most {share[-1]:.2%}")
               for state in hard[:10]:
                   print(f"  PROBLEM: {state}")
           print("```")
