@@ -48,6 +48,8 @@ Chassis fits an app that embeds its own data and searches it on the same machine
 * [LanceDB](https://github.com/lancedb/lancedb), when you want one store for vectors and their columns, with filters in the query and versions of the data.
 * A server such as pgvector or Qdrant, when many machines write to one index, or other services query it over the network.
 
+And [Limits](docs/src/guide/limits.md#poor-fits) says where Chassis stops fitting: an index much larger than memory, many writers, heavy churn.
+
 ## Learn more
 
 * [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](chassisdb/README.md)

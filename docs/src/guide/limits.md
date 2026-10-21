@@ -3,6 +3,24 @@
 What one index can hold, and what it needs from the machine to hold it well. Going past a hard
 limit is an error that names it ([Errors](./errors.md)), never a wrong answer.
 
+## Poor fits
+
+Some limits come with the design, and no option changes them. Reach for something else for:
+
+- **An index much larger than memory.** Searches wait on the disk, over a thousand times slower
+  ([Memory](#memory)). An index built for the disk, such as DiskANN, fits that better.
+- **Many writers.** One process writes a file at a time; a server such as Qdrant or pgvector takes
+  writes from many.
+- **Heavy churn.** Deleted vectors slow searches until `compact()`, which builds the graph again:
+  to about 70% of their speed with half the vectors deleted, and a fifth with 90%.
+- **Metadata in the index.** Chassis keeps vectors and ids. Keep the rest in SQLite or a store of
+  your own under the same ids, and pass the ids it selects to a filtered search.
+- **Inner product.** There is Euclidean and cosine distance; for vectors of length 1, cosine
+  orders results as inner product does, so only vectors of other lengths miss it.
+- **Storage that fails reads.** The file is mapped into memory, so a read the disk fails ends the
+  process (SIGBUS on Linux and macOS) instead of returning an error, as with every store that maps
+  its file.
+
 ## Hard limits
 
 | What | Limit |
