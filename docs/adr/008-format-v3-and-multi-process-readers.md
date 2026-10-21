@@ -242,8 +242,9 @@ The writer guarantees only these things:
   `msync` returned success and only `F_FULLFSYNC` reported the error, and 2,688 of 4,096 pages were
   lost.
 
-  Built on 2026-10-21 (#138), on Linux only, and an add that finds the disk full fails before it
-  writes, leaving the index as it was. Windows allocates as the file grows, and macOS, as measured,
+  Built on 2026-10-21 (#138), on Linux only, 1 MiB ahead, and an add that finds the disk full
+  fails before it writes, leaving the index as it was. A step of 16 MiB took most of a new
+  segment of long vectors, which a backup then copied. Windows allocates as the file grows, and macOS, as measured,
   reports a full disk when the flush syncs, so neither reserves anything; Chassis names a full disk
   wherever it shows. On APFS the next writer opened to the last flush once there was room, after
   refusing for a few seconds, and needed more than the flush did: putting the saved lists back

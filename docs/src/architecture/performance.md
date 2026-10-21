@@ -104,8 +104,10 @@ and 0.16 GB of everything else; half precision halves the vectors. Built as abov
 
 Segments double in size up to 256 MiB, so the file can be up to one segment longer than the data
 written. That unused end is never written, and takes no disk where the file system keeps holes:
-ext4, XFS and btrfs keep all of them, and APFS those of 16 MiB or more. On APFS, files as long as
-SIFT-1M's and dbpedia's took 688 and 630 MB of disk. A backup keeps the holes too.
+ext4, XFS and btrfs keep all of them, and APFS those of 16 MiB or more. On Linux the writer
+allocates 1 MiB ahead of what it writes, so that a full disk is an error, not a crash. On APFS,
+files as long as SIFT-1M's and dbpedia's took 688 and 630 MB of disk. A backup keeps the holes
+too.
 
 ## Deletes
 

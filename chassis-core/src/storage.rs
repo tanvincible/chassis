@@ -48,7 +48,7 @@ mod sizes {
     pub const HEAP_BASE_MIN_LOG2: u8 = 16;
     pub const MAX_CHUNK_LOG2: u8 = 28;
     pub const TABLE_PAGE_LOG2: u8 = 13;
-    pub const RESERVE_BYTES: usize = 16 << 20;
+    pub const RESERVE_BYTES: usize = 1 << 20;
 }
 /// Small in unit tests, so short workloads cross segment, heap chunk and table page boundaries.
 #[cfg(test)]

@@ -26,7 +26,7 @@ Building Chassis takes Rust 1.89 or later, one release newer than before.
 - On a Windows network share, adds and a reader's `backup()` no longer fail now and then with
   "Access is denied" while the other runs (#135).
 - A full disk is an error with what to do, not a crash, except on Btrfs: on Linux the writer
-  allocates the disk up to 16 MiB ahead of its writes (#138).
+  allocates the disk 1 MiB ahead of its writes (#138).
 
 ## [v0.10.0](https://github.com/tanvincible/chassis/compare/v0.9.1...v0.10.0) - 19 October 2026
 
