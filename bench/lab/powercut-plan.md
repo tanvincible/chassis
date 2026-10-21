@@ -67,3 +67,80 @@ and `state`. Points before `s0`, while the file is created, aren't checked.
   a plan to keep the undo entries ahead of the lists they save.
 - **2 to 5 hold**: verification.md's limits say what this run covers, and it reruns after any
   change to the file format or storage.
+
+## Results
+
+Run 39588830118, 2026-10-21: Linux 6.17.0-1022-azure, ext4, about 3 minutes a job. Raw lines: the
+`powercut-1-main` and `powercut-1-mutant` artifacts. A first attempt (39588392143) stopped before
+any check, on a harness bug: `replay-log`'s option is `--num-entries`, not the `--number-entries`
+its help prints.
+
+`dm-log-writes` was in the kernel's own modules. `main` logged 1,159 writes and `mutant` 941; with
+fewer than 1,500 after `s0`, every write was a point.
+
+| Job | Flush points | Write points | Matched a commit | Graph as its mark's | More unreachable |
+| --- | --- | --- | --- | --- | --- |
+| `main` | 215 | 1,050 | all | 164 of 172 flush, 332 of 801 write | none |
+| `mutant` | 128 | 829 | all but 8 flush and 19 write | 85 of 93 flush, 234 of 616 write | none |
+
+The marks matched the writer at every one of the ten in both jobs. In both, 292 and 221 points
+matched no mark but the commit `compact()` makes before it rebuilds: s4's length and vectors in
+4,000 slots. The harness didn't mark that commit, so those points have no mark's graph to compare
+with; the plan missed it.
+
+The mutant's 27 points are a header that commits data the disk doesn't have: a vectors digest
+that matches no commit, or a file shorter than its header says.
+
+| # | Prediction | Held? |
+| --- | --- | --- |
+| 1 | `dm-log-writes` loads | yes: the kernel's own module |
+| 2 | Marks as the writer saw them | yes, all ten |
+| 3 | Every point a mark's length, vectors and slots, nothing not finite, no error | yes, counting the commit compaction makes first, which the plan missed |
+| 4 | Graph as the mark's at every flush point and 90% of write points; no more unreachable | **no**: 8 flush points and 59% of write points differ; none more unreachable |
+| 5 | The mutant breaks 3 | yes: 8 flush and 19 write points |
+| 6 | Within 120 minutes | yes: 3 minutes |
+
+**Decision:** no bug in what RUN 1 can see: every power cut opened to a commit, with its vectors,
+and the mutant shows the harness sees one that doesn't. Prediction 4 failed, and the rule sends
+lists that differ only as ADR-0012 allows to ADR-0012. RUN 1 can't tell that they do: a set
+digest says a graph differs, not how. RUN 2 compares each list.
+
+## RUN 2
+
+Plan written 2026-10-21, before the run, after RUN 1. Code: `lab/exp-scale` 87bc990.
+
+### Why
+
+RUN 1 found the graph different from its commit's at 59% of the write points and 8 flush points,
+with no vector harder to reach. ADR-0012 allows one difference: a list the kernel wrote before the
+undo entry that saved it keeps the lost adds' links, and lacks the links they pushed out. A list
+that gained a link to a committed slot it never had is not that, and would be a bug.
+
+### What
+
+As RUN 1, with two changes:
+
+1. The workload flushes and marks (`s4a`) before `compact()`, so every commit has a mark.
+2. Each mark's lists are saved; each point's lists are compared, list by list, with those of the
+   commit it matches: the lists that differ, the links gained to slots the commit has, the links
+   gained past them, and the links lost.
+
+### Predictions
+
+| # | Prediction |
+| --- | --- |
+| 1 | `main`: every point matches a mark's length, vectors and slots, nothing not finite, no error |
+| 2 | `main`: no list gains a link to a slot its commit has |
+| 3 | `main`: no point has more unreachable vectors than its mark |
+| 4 | `main`: points whose graph differs have at most 5% of their lists differing |
+| 5 | `mutant`: at least one point breaks prediction 1 |
+
+### Decision rule
+
+- **5 fails**: the harness is fixed before the rest count.
+- **1, 2 or 3 fails, with 5 holding**: a bug. Reproduce it from the replayed image, fix it on
+  `main` with a test, run again.
+- **4 fails, the rest holding**: as below, with how many lists.
+- **1 to 3 hold**: ADR-0012 says how often a power cut left lists as it allows, on the real I/O
+  path with writeback every 10 ms, and verification.md says what this lab covers. It reruns after
+  any change to the file format or storage.
