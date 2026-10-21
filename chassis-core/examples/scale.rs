@@ -162,6 +162,48 @@ fn advise_random(path: &str) -> anyhow::Result<usize> {
     Ok(advised)
 }
 
+/// The graph's slots, and each slot's id and lists as a search reads them, in order and as sets: a
+/// rollback keeps an entry that is in both lists where it is, for readers, so order can change.
+fn graph_digests(path: &str) -> anyhow::Result<(u64, u64, u64)> {
+    let graph = HnswGraph::open(Storage::open(path, dims() as u32)?, HnswParams::default())?;
+    let (mut ordered, mut sets) = (FNV, FNV);
+    for slot in 0..graph.node_count() {
+        let record = graph.read_node_record(slot)?;
+        let header = [record.header.id, u64::from(record.header.layer_count)];
+        (ordered, sets) =
+            (header.into_iter().fold(ordered, fnv), header.into_iter().fold(sets, fnv));
+        for layer in 0..usize::from(record.header.layer_count) {
+            let mut ids = record.get_neighbors(layer);
+            ordered = ids.iter().copied().fold(fnv(ordered, ids.len() as u64), fnv);
+            ids.sort_unstable();
+            sets = ids.iter().copied().fold(fnv(sets, ids.len() as u64), fnv);
+        }
+    }
+    Ok((graph.node_count(), ordered, sets))
+}
+
+/// The live vectors: each id, in order, and its components' bits.
+fn vectors_digest(index: &VectorIndex) -> anyhow::Result<u64> {
+    let mut ids = index.ids()?;
+    ids.sort_unstable();
+    let mut digest = FNV;
+    for id in ids {
+        let vector = index.get(id)?.ok_or_else(|| anyhow::anyhow!("{id} is listed but missing"))?;
+        digest = vector.iter().fold(fnv(digest, id), |d, x| fnv(d, u64::from(x.to_bits())));
+    }
+    Ok(digest)
+}
+
+/// Marks the dm-log-writes log, when `POWERCUT_DM` names its device.
+fn mark(name: &str) -> anyhow::Result<()> {
+    let Ok(device) = std::env::var("POWERCUT_DM") else { return Ok(()) };
+    let status = std::process::Command::new("sudo")
+        .args(["dmsetup", "message", &device, "0", "mark", name])
+        .status()?;
+    anyhow::ensure!(status.success(), "dmsetup message {device} 0 mark {name}: {status}");
+    Ok(())
+}
+
 fn writer(path: &str) -> anyhow::Result<VectorIndex> {
     let start = Instant::now();
     let index = VectorIndex::open(path, dims() as u32, options())?;
@@ -312,28 +354,58 @@ fn main() -> anyhow::Result<()> {
         }
         "check" => check("check", &writer(arg(1))?)?,
         "graph" => {
-            // Each slot's id and lists as a search reads them, in order and as sets: a rollback
-            // keeps an entry that is in both lists where it is, for readers, so order can change.
             let start = Instant::now();
-            let graph =
-                HnswGraph::open(Storage::open(arg(1), dims() as u32)?, HnswParams::default())?;
-            let (mut ordered, mut sets) = (FNV, FNV);
-            for slot in 0..graph.node_count() {
-                let record = graph.read_node_record(slot)?;
-                let header = [record.header.id, u64::from(record.header.layer_count)];
-                (ordered, sets) =
-                    (header.into_iter().fold(ordered, fnv), header.into_iter().fold(sets, fnv));
-                for layer in 0..usize::from(record.header.layer_count) {
-                    let mut ids = record.get_neighbors(layer);
-                    ordered = ids.iter().copied().fold(fnv(ordered, ids.len() as u64), fnv);
-                    ids.sort_unstable();
-                    sets = ids.iter().copied().fold(fnv(sets, ids.len() as u64), fnv);
-                }
-            }
-            out("graph", "slots", graph.node_count());
+            let (slots, ordered, sets) = graph_digests(arg(1))?;
+            out("graph", "slots", slots);
             out("graph", "ordered_digest", format!("{ordered:016x}"));
             out("graph", "set_digest", format!("{sets:016x}"));
             out("graph", "s", secs(start));
+        }
+        "powercut" => {
+            // Batches of adds, every third with deletes, and a compaction halfway; after each
+            // commit, a mark in the dm-log-writes log and the length and vectors it left.
+            let (path, batches, size) = (arg(1), number(2)?, setting("POWERCUT_BATCH", 1000));
+            let pause = std::time::Duration::from_millis(setting("POWERCUT_PAUSE_MS", 0));
+            let mut index = writer(path)?;
+            index.flush()?;
+            mark("s0")?;
+            out("powercut", "state_0", format!("{} {:016x}", index.len(), vectors_digest(&index)?));
+            for k in 1..=batches {
+                let ids: Vec<u64> = (k * size..(k + 1) * size).collect();
+                let vectors: Vec<f32> = ids.iter().flat_map(|&id| data.vector(id)).collect();
+                index.add_batch_with_ids(&ids, &vectors)?;
+                // Time for the kernel to write uncommitted pages back, when told to.
+                std::thread::sleep(pause);
+                if k % 3 == 0 {
+                    for id in ((k - 1) * size..k * size).step_by(7) {
+                        anyhow::ensure!(index.delete(id)?, "{id} wasn't there to delete");
+                    }
+                }
+                if k == batches / 2 {
+                    index.compact()?;
+                } else {
+                    index.flush()?;
+                }
+                mark(&format!("s{k}"))?;
+                let state = format!("{} {:016x}", index.len(), vectors_digest(&index)?);
+                out("powercut", &format!("state_{k}"), state);
+            }
+        }
+        "state" => {
+            // What an index opens to: its length, live vectors, `check`, slots and graph as sets,
+            // on one line; an error's text in their place.
+            let state = || -> anyhow::Result<String> {
+                let index = writer(arg(1))?;
+                let check = index.check()?;
+                let (len, digest) = (index.len(), vectors_digest(&index)?);
+                let (unreachable, not_finite) = (check.unreachable.len(), check.not_finite.len());
+                drop(index);
+                let (slots, _, sets) = graph_digests(arg(1))?;
+                Ok(format!("{len} {digest:016x} {unreachable} {not_finite} {slots} {sets:016x}"))
+            };
+            let line =
+                state().unwrap_or_else(|e| format!("error {e:#}").replace(['\t', '\n'], " "));
+            out("state", "line", line);
         }
         "delete" => {
             let (path, n) = (arg(1), number(2)?);

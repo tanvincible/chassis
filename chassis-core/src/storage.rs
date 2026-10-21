@@ -1739,6 +1739,8 @@ impl Storage {
             }
             self.state.epoch = epoch;
         }
+        // A mutant for the power-cut lab: the header may reach the disk before the data it commits.
+        #[cfg(not(lab_nosync))]
         self.sync()?;
         self.state.pending_epoch = 0;
         let state = self.state.clone();
