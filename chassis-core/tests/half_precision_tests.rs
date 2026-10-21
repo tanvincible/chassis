@@ -12,7 +12,7 @@ use tempfile::tempdir;
 const DIMS: u32 = 96;
 
 fn half() -> IndexOptions {
-    IndexOptions { precision: Precision::Half, ..IndexOptions::default() }
+    IndexOptions { precision: Some(Precision::Half), ..IndexOptions::default() }
 }
 
 fn random(seed: u64) -> impl FnMut() -> f32 {
@@ -162,13 +162,15 @@ fn test_precision_is_the_files() {
     index.flush().unwrap();
     drop(index);
 
-    // A writer has to name it, as it names the metric; a reader takes it from the file.
-    let error = VectorIndex::open(&path, DIMS, IndexOptions::default()).err().unwrap();
+    // Left out, it's the file's, for a writer and a reader; given, it's checked (ADR-0026).
+    let full = IndexOptions { precision: Some(Precision::Full), ..IndexOptions::default() };
+    let error = VectorIndex::open(&path, DIMS, full).err().unwrap();
     assert_eq!(error.kind(), chassisdb::ErrorKind::OptionsMismatch);
     assert!(error.to_string().contains("opened with half precision too"), "{error}");
     let mut reader = IndexReader::open(&path, DIMS, IndexOptions::default()).unwrap();
     assert_eq!(reader.precision(), Precision::Half);
-    let mut index = VectorIndex::open(&path, DIMS, half()).unwrap();
+    let mut index = VectorIndex::open(&path, DIMS, IndexOptions::default()).unwrap();
+    assert_eq!(index.precision(), Precision::Half);
     for id in [0, 7, 199] {
         let (read, written) =
             (reader.search(&vector(id), 3).unwrap(), index.search(&vector(id), 3).unwrap());
@@ -235,7 +237,7 @@ fn test_storage_gives_back_what_half_precision_kept() {
 #[test]
 fn test_cosine_in_half_precision() {
     let dir = tempdir().unwrap();
-    let options = IndexOptions { metric: DistanceMetric::Cosine, ef_search: 200, ..half() };
+    let options = IndexOptions { metric: Some(DistanceMetric::Cosine), ef_search: 200, ..half() };
     let mut index = VectorIndex::open(dir.path().join("cos.chassis"), DIMS, options).unwrap();
     let n = 2000;
     // Lengths from 0.5 to 50,000: a cosine index keeps directions, which always fit.

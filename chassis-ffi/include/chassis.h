@@ -107,6 +107,12 @@
 #define CHASSIS_PRECISION_HALF 1
 
 /**
+ * For a `metric` or `precision`: the existing index's, or the default when creating one
+ * (ADR-0026).
+ */
+#define CHASSIS_FROM_FILE UINT32_MAX
+
+/**
  * Opaque handle to a Chassis index (C-compatible)
  *
  * This is a zero-sized type that serves as an opaque handle for C.
@@ -127,7 +133,10 @@ extern "C" {
  * # Arguments
  *
  * - `path`: UTF-8 encoded path to the index file (must not be NULL)
- * - `dimensions`: Number of dimensions per vector (must be > 0)
+ * - `dimensions`: Number of dimensions per vector, or 0 to open an existing index with its own
+ *
+ * The metric, precision and `max_connections` are an existing index's, or the defaults when
+ * creating one: Euclidean, full precision and 16 (ADR-0026).
  *
  * # Returns
  *
@@ -163,8 +172,9 @@ struct ChassisIndex *chassis_open(const char *path, uint32_t dimensions);
  * # Arguments
  *
  * - `path`: UTF-8 encoded path to the index file (must not be NULL)
- * - `dimensions`: Number of dimensions per vector (must be > 0)
- * - `max_connections`: Maximum connections per node (M parameter, typically 8-64)
+ * - `dimensions`: Number of dimensions per vector, or 0 to open an existing index with its own
+ * - `max_connections`: Maximum connections per node (M parameter, typically 8-64), or 0 for an
+ *   existing index's own
  * - `ef_construction`: Construction quality (typically 100-400)
  * - `ef_search`: Search quality (typically 50-200)
  *
@@ -194,7 +204,9 @@ struct ChassisIndex *chassis_open_with_options(const char *path, uint32_t dimens
  *   (1) for cosine distance (1 - cosine similarity).
  *   A cosine index stores vectors scaled to unit length, rejects zero vectors, and reports
  *   distances from 0 to 2. The metric is fixed when the index is created; reopening an existing
- *   index with another one fails.
+ *   index with another one fails. `CHASSIS_FROM_FILE` takes an existing index's, or Euclidean
+ *   when creating one.
+ * - The precision is an existing index's, or full when creating one.
  * - The other arguments are as for `chassis_open_with_options()`.
  *
  * # Safety
@@ -212,8 +224,8 @@ struct ChassisIndex *chassis_open_with_metric(const char *path, uint32_t dimensi
  *   float, `CHASSIS_PRECISION_HALF` (1) as a 16-bit float. Half precision halves the vectors'
  *   size in the file and in memory; each component is rounded to about three decimal digits, and
  *   a vector with a component of 65,520 or more in magnitude is refused. The precision is fixed
- *   when the index is created; reopening an existing index with another one fails. A release
- *   without this function can't open a file in half precision.
+ *   when the index is created; reopening an existing index with another one fails.
+ *   `CHASSIS_FROM_FILE` takes an existing index's, or full precision when creating one.
  * - The other arguments are as for `chassis_open_with_metric()`.
  *
  * # Safety
@@ -233,8 +245,8 @@ struct ChassisIndex *chassis_open_with_precision(const char *path, uint32_t dime
  * # Arguments
  *
  * - `path`: UTF-8 encoded path to the index file (must not be NULL)
- * - `dimensions`: Number of dimensions per vector (must be > 0)
- * - `max_connections`: The value the index was created with (16 by default)
+ * - `dimensions`: Number of dimensions per vector, or 0 for the index's own
+ * - `max_connections`: The value the index was created with, or 0 for the index's own
  * - `ef_search`: Search quality parameter
  *
  * # Returns

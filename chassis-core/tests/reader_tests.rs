@@ -202,7 +202,7 @@ fn test_reader_refuses_files_it_cannot_read() {
     let path = dir.path().join("index.chassis");
     VectorIndex::open(&path, DIMS, options()).unwrap().flush().unwrap();
     assert!(IndexReader::open(&path, DIMS + 1, options()).is_err());
-    let other = IndexOptions { max_connections: 8, ..options() };
+    let other = IndexOptions { max_connections: Some(8), ..options() };
     assert!(IndexReader::open(&path, DIMS, other).is_err());
 
     let mut legacy = vec![0u8; 4096];

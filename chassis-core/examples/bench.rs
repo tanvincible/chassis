@@ -68,7 +68,7 @@ fn main() -> anyhow::Result<()> {
             let n: usize = arg(3).parse()?;
             let precision = if arg(5) == "half" { Precision::Half } else { Precision::Full };
             let _ = std::fs::remove_file(arg(4));
-            let options = IndexOptions { precision, ..IndexOptions::default() };
+            let options = IndexOptions { precision: Some(precision), ..IndexOptions::default() };
             let mut index = VectorIndex::open(arg(4), dims as u32, options)?;
             let start = Instant::now();
             index.add_batch(&train[..n * dims])?;

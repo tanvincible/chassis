@@ -582,7 +582,8 @@ impl Storage {
     }
 
     /// `open_with`, creating a new file with vectors in `precision` (ADR-0018). An existing file
-    /// keeps the precision it was created with, which `precision()` reports.
+    /// keeps the precision it was created with, which `precision()` reports. Dimensions of 0 take
+    /// an existing file's (ADR-0026), and can't create one.
     pub fn open_with_precision<P: AsRef<Path>>(
         path: P,
         dimensions: u32,
@@ -591,9 +592,15 @@ impl Storage {
         precision: Precision,
     ) -> Result<Self> {
         let path = path.as_ref();
+        if dimensions == 0 && !path.exists() {
+            return Err(nothing_to_open(path));
+        }
         let file = open_locked(path)?;
         let len = file.metadata()?.len();
         if len == 0 {
+            if dimensions == 0 {
+                return Err(nothing_to_open(path));
+            }
             return Self::initialize(file, path, dimensions, params, metric, precision);
         }
 
@@ -616,6 +623,9 @@ impl Storage {
             && headers.bytes(LIVE, HEADER_STRIDE).iter().all(|&b| b == 0)
         {
             drop(headers);
+            if dimensions == 0 {
+                return Err(nothing_to_open(path));
+            }
             return Self::initialize(file, path, dimensions, params, metric, precision);
         }
         Self::load(file, headers, dimensions, path)
@@ -649,7 +659,7 @@ impl Storage {
         }
         let headers = Region::map(&file, 0, REGIONS_START as usize, false)?;
         let (header, _) = newest_header(&headers, Some(path))?;
-        if header.dims != dimensions {
+        if dimensions != 0 && header.dims != dimensions {
             return Err(dimension_mismatch(path, header.dims, dimensions));
         }
         let mut storage = Self::new(file, false, headers, header, 0)?;
@@ -833,7 +843,7 @@ impl Storage {
                 header.write_version
             );
         }
-        if header.dims != dims {
+        if dims != 0 && header.dims != dims {
             return Err(dimension_mismatch(path, header.dims, dims));
         }
         let mut storage = Self::new(file, true, headers, header, copy)?;
@@ -1159,6 +1169,7 @@ impl Storage {
     /// Converts a v1 or v2 file to v3, then swaps it in (ADR-0008, decision 8).
     fn migrate(path: &Path, original: File, dims: u32) -> Result<Self> {
         let legacy = LegacyIndex::open(&original, dims)?;
+        let dims = legacy.dims as u32;
         let temp = sibling(path, "migrating");
         match std::fs::remove_file(&temp) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
@@ -1981,12 +1992,24 @@ fn not_an_index(path: &Path) -> anyhow::Error {
     )
 }
 
+/// Dimensions of 0 asked to take a file's, where there is no file to take them from.
+fn nothing_to_open(path: &Path) -> anyhow::Error {
+    raised(
+        ErrorKind::NotFound,
+        format!(
+            "There's no index at {} to take the dimensions from\nhelp: check the path; to create \
+             an index there, give the dimensions of its vectors, such as 384, 768 or 1536",
+            path.display()
+        ),
+    )
+}
+
 fn dimension_mismatch(path: &Path, held: u32, asked: u32) -> anyhow::Error {
     raised(
         ErrorKind::DimensionMismatch,
         format!(
-            "The index at {} holds vectors of {held} dimensions, not {asked}\nhelp: open it with \
-             {held} dimensions, or create a new index at another path",
+            "The index at {} holds vectors of {held} dimensions, not {asked}\nhelp: leave the \
+             dimensions out (0) to use the file's, or create a new index at another path",
             path.display()
         ),
     )

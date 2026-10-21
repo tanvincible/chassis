@@ -151,13 +151,14 @@ Opens an index file to add, delete and search vectors.
 #### Constructor
 
 ```python
-VectorIndex(path: str | Path, dimensions: int, options: IndexOptions | None = None, read_only: bool = False)
+VectorIndex(path: str | Path, dimensions: int | None = None, options: IndexOptions | None = None, read_only: bool = False)
 ```
 
-To reopen an existing index, pass the metric, precision and `max_connections` it was created
-with; others raise `OptionsMismatchError`, which names them. With `read_only=True` it only
-searches, takes no lock, and takes the metric and precision from the file (`max_connections` has
-to match); any number can search while one writer writes, in this process or others.
+`dimensions` is needed to create an index. Opening an existing one takes its dimensions, metric,
+precision and `max_connections` from the file unless they're given, so `VectorIndex(path)` opens an
+index made elsewhere; one given that differs raises `OptionsMismatchError` or
+`DimensionMismatchError`, which name it. With `read_only=True` it only searches and takes no lock;
+any number can search while one writer writes, in this process or others.
 
 #### Methods
 
@@ -259,8 +260,7 @@ to match); any number can search while one writer writes, in this process or oth
 #### Properties
 
 - **`dimensions: int`** - Number of dimensions per vector
-- **`metric: str`** - `"euclidean"` or `"cosine"`, as the index was created; opening with
-  `read_only=True` and explicit `options` naming another raises `OptionsMismatchError`
+- **`metric: str`** - `"euclidean"` or `"cosine"`, as the index was created
 - **`precision: str`** - `"full"` or `"half"`, as the index was created
 - **`path: Path`** - Path to the index file
 - **`options: IndexOptions`** - HNSW configuration
@@ -268,18 +268,19 @@ to match); any number can search while one writer writes, in this process or oth
 ### `IndexOptions`
 
 The index's options. `metric`, `precision` and `max_connections` are fixed when the index is
-created.
+created, with the defaults below for any left out (`None`); opening it again takes each from the
+file unless it's given.
 
 ```python
 @dataclass
 class IndexOptions:
-    max_connections: int = 16      # M parameter
-    ef_construction: int = 200     # Build-time search quality
-    ef_search: int = 50            # Query-time search quality
-    metric: str = "euclidean"      # or "cosine": 1 - cosine similarity, unit-length storage
-    precision: str = "full"        # or "half": vectors kept as 16-bit floats, half the file and memory
-    huge_pages: bool | None = None # Linux: 2 MB pages; True from opening, False never, None: warm decides
-    warm: bool = False             # read the index in from the start, in the background
+    max_connections: int | None = None  # M parameter: 16 when creating
+    ef_construction: int = 200          # Build-time search quality
+    ef_search: int = 50                 # Query-time search quality
+    metric: str | None = None           # "euclidean" when creating, or "cosine": 1 - cosine similarity
+    precision: str | None = None        # "full" when creating, or "half": 16-bit floats, half the room
+    huge_pages: bool | None = None      # Linux: 2 MB pages; True from opening, False never, None: warm decides
+    warm: bool = False                  # read the index in from the start, in the background
 ```
 
 ### `SearchResult`
@@ -304,8 +305,9 @@ lists their causes and fixes.
   id, a vector with NaN or infinity. A wrong type is a plain `TypeError`.
 - **`DimensionMismatchError`** (`ValueError`) - a vector or query of other dimensions than the index's
 - **`OptionsMismatchError`** (`ValueError`) - reopened with another metric, precision or
-  `max_connections`
-- **`IndexNotFoundError`** (`FileNotFoundError`) - no index at the path, for `read_only=True`
+  `max_connections` than the file's
+- **`IndexNotFoundError`** (`FileNotFoundError`) - no index at the path, for `read_only=True` or
+  without `dimensions`
 - **`NotAnIndexError`** (`ValueError`) - the file isn't a Chassis index
 - **`IdInUseError`** (`ValueError`) - the id is taken; delete it first to replace it
 - **`IndexLockedError`** - another writer has the index open

@@ -27,10 +27,18 @@ let mut index = VectorIndex::open(
 **Parameters**:
 
 * `path`: Path to the backing file (created if missing).
-* `dims`: Vector dimensionality (must be static for the file's lifetime).
-* `options`: Configuration for graph construction and search. To reopen an existing index, pass the
-  metric, precision and `max_connections` it was created with; others are an `OptionsMismatch`
-  error that names them.
+* `dims`: Vector dimensionality (must be static for the file's lifetime), or 0 to open an existing
+  index with its own. 0 where there is no index is a `NotFound` error, and creates nothing.
+* `options`: Configuration for graph construction and search. The metric, precision and
+  `max_connections` are fixed when the index is created, with defaults for any left out (`None`).
+  Opening it again takes each from the file unless it's given; one given that differs is an
+  `OptionsMismatch` error that names it
+  ([ADR-0026](https://github.com/tanvincible/chassis/blob/main/docs/adr/026-options-from-the-file.md)).
+
+```rust
+// An index made elsewhere, opened with whatever it holds.
+let index = VectorIndex::open("embeddings.chassis", 0, IndexOptions::default())?;
+```
 
 **Returns**:
 
@@ -261,8 +269,9 @@ names. A check of 200,000 vectors of 384 dimensions takes about 0.1 s.
 
 Searches an index while a `VectorIndex` writes it, in another process or this one. It takes no
 lock, so any number of readers can open one file next to its single writer
-([ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md), decision 5). It takes the metric
-and precision from the file; `max_connections` has to be the one the index was created with.
+([ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md), decision 5). Like a writer, it
+takes the dimensions (given as 0), metric, precision and `max_connections` from the file, and checks
+any that is given.
 
 ```rust
 use chassisdb::{IndexOptions, IndexReader};
@@ -316,8 +325,8 @@ Parameters tuning the HNSW graph trade-offs between recall, speed, and memory.
 
 ```rust
 pub struct IndexOptions {
-    /// Max connections per node (M). Default: 16
-    pub max_connections: u16,
+    /// Max connections per node (M): 16 if left out when creating. Default: None
+    pub max_connections: Option<u16>,
     
     /// Size of the dynamic candidate list during construction. Default: 200
     /// Higher = Better graph quality, slower inserts.
@@ -327,11 +336,12 @@ pub struct IndexOptions {
     /// Higher = Better recall, slower search.
     pub ef_search: usize,
 
-    /// `DistanceMetric::Euclidean` (default) or `DistanceMetric::Cosine`.
-    pub metric: DistanceMetric,
+    /// `DistanceMetric::Euclidean` (if left out when creating) or `DistanceMetric::Cosine`.
+    /// Default: None
+    pub metric: Option<DistanceMetric>,
 
-    /// `Precision::Full` (default) or `Precision::Half`.
-    pub precision: Precision,
+    /// `Precision::Full` (if left out when creating) or `Precision::Half`. Default: None
+    pub precision: Option<Precision>,
 
     /// Ask the operating system to keep the vectors on huge pages. Default: None, left to `warm`
     pub huge_pages: Option<bool>,
@@ -341,13 +351,13 @@ pub struct IndexOptions {
 }
 ```
 
-The metric is fixed when the index is created: reopening with another one is an error, an
-`IndexReader` uses the file's, and `metric()` on either reports it. A cosine index stores vectors
+The metric is fixed when the index is created: reopening takes the file's, giving another one is an
+error, and `metric()` reports it. A cosine index stores vectors
 scaled to unit length, rejects zero vectors and vectors with NaN or infinite components, and
 reports `1 - cosine similarity`, from 0 to 2. Search speed is the same for both.
 
-`precision` is fixed when the index is created, as the metric is: reopening with another one is an
-error, an `IndexReader` uses the file's, and `precision()` on either reports it. `Precision::Half`
+`precision` is fixed when the index is created, as the metric is: reopening takes the file's, giving
+another one is an error, and `precision()` reports it. `Precision::Half`
 keeps each component of a vector as a 16-bit float
 ([ADR-0018](https://github.com/tanvincible/chassis/blob/main/docs/adr/018-half-precision.md)), so
 the vectors take half the space in the file and in memory. A search over an index too large for the
@@ -362,7 +372,7 @@ Besides half precision, the way to shrink an index is fewer dimensions. Matryosh
 as OpenAI's text-embedding-3 with its `dimensions` argument, are trained so that the first part of a
 vector works on its own. 512 of 1,536 dimensions make the index about a third of the size. Measure
 recall on your own queries first, and cut vectors yourself only with `DistanceMetric::Cosine`, or
-normalize them again. `max_connections: 12` instead of 16 saves less. A 128-dimension file in half
+normalize them again. `max_connections: Some(12)` instead of 16 saves less. A 128-dimension file in half
 precision is 7% smaller, and one of 1,536 dimensions 1%. Builds are 7 to 18% faster, but searches
 for 0.99 recall at 128 and 384 dimensions take up to 14% longer.
 

@@ -98,15 +98,20 @@ struct SkillDoctests;
 
 use error::fail;
 use hnsw::layer_from_uniform;
+use hnsw::node::DEFAULT_M;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 /// Configuration options for VectorIndex
+///
+/// `max_connections`, `metric` and `precision` are fixed when an index is created, with defaults
+/// for any left out. Opening it again takes each from the file unless it's given, and checks any
+/// that is (ADR-0026).
 #[derive(Debug, Clone)]
 pub struct IndexOptions {
-    /// Maximum connections per node (M parameter)
-    pub max_connections: u16,
+    /// Maximum connections per node (M parameter): 16 if left out when the index is created.
+    pub max_connections: Option<u16>,
 
     /// Construction quality parameter (efConstruction)
     pub ef_construction: usize,
@@ -114,12 +119,12 @@ pub struct IndexOptions {
     /// Search quality parameter (efSearch)
     pub ef_search: usize,
 
-    /// How vectors are compared. Set when the index is created; reopening needs the same one.
-    pub metric: DistanceMetric,
+    /// How vectors are compared: Euclidean if left out when the index is created.
+    pub metric: Option<DistanceMetric>,
 
-    /// What the file keeps of each component of a vector (ADR-0018). Set when the index is
-    /// created; reopening needs the same one. A reader takes it from the file.
-    pub precision: Precision,
+    /// What the file keeps of each component of a vector (ADR-0018): full precision if left out
+    /// when the index is created.
+    pub precision: Option<Precision>,
 
     /// Whether to ask the operating system to keep the vectors on huge pages (ADR-0016). On an
     /// index too large for the CPU's caches, searches are up to a quarter faster and batch builds
@@ -143,11 +148,11 @@ pub struct IndexOptions {
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
-            max_connections: 16,
+            max_connections: None,
             ef_construction: 200,
             ef_search: 50,
-            metric: DistanceMetric::Euclidean,
-            precision: Precision::Full,
+            metric: None,
+            precision: None,
             huge_pages: None,
             warm: false,
         }
@@ -186,7 +191,7 @@ impl VectorIndex {
     /// # Arguments
     ///
     /// * `path` - Path to the index file
-    /// * `dims` - Number of dimensions per vector
+    /// * `dims` - Number of dimensions per vector, or 0 to take an existing index's
     /// * `options` - Index configuration options
     ///
     /// A file in format v1 or v2 is migrated to v3 first (ADR-0008). After a crash, slots written
@@ -195,41 +200,20 @@ impl VectorIndex {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The file cannot be opened or created
+    /// - The file cannot be opened or created, or `dims` is 0 and there is no index to open
     /// - The file is corrupted
-    /// - Dimension mismatch with existing index
-    /// - The file was created with a different `max_connections`
+    /// - `dims`, or an option given, differs from the existing index's
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
-        let params = hnsw_params(&options);
         let path = file_path(path.as_ref());
         let storage = Storage::open_with_precision(
             &path,
             dims,
-            params.to_record_params(),
-            options.metric,
-            options.precision,
+            hnsw_params(options.max_connections.unwrap_or(DEFAULT_M)).to_record_params(),
+            options.metric.unwrap_or_default(),
+            options.precision.unwrap_or(Precision::Full),
         )?;
-        if storage.metric() != options.metric {
-            let (held, asked) = (metric_name(storage.metric()), metric_name(options.metric));
-            fail!(
-                OptionsMismatch,
-                "The index at {} was created with {held} distance, so it has to be opened with \
-                 {held} distance too, not {asked}\nhelp: open it with the {held} metric, or \
-                 create a new index at another path for {asked} distance",
-                path.display()
-            );
-        }
-        if storage.precision() != options.precision {
-            let (held, asked) =
-                (precision_name(storage.precision()), precision_name(options.precision));
-            fail!(
-                OptionsMismatch,
-                "The index at {} keeps its vectors in {held} precision, so it has to be opened \
-                 with {held} precision too, not {asked}\nhelp: open it with {held} precision, or \
-                 create a new index at another path for {asked} precision",
-                path.display()
-            );
-        }
+        let options = from_file(options, &storage, &path)?;
+        let params = hnsw_params(options.max_connections.unwrap_or(DEFAULT_M));
         let graph = HnswGraph::open_no_reset(storage, params)?;
         // This is the one writer, so no compaction is running: a copy here is a crashed one's.
         let _ = std::fs::remove_file(storage::sibling(&path, "compacting"));
@@ -645,7 +629,8 @@ impl VectorIndex {
     /// index and open it again, which recovers it to its last flush.
     pub fn rollback(&mut self) -> Result<()> {
         let storage = self.graph.storage.reopened(&self.path)?;
-        let graph = HnswGraph::open_no_reset(storage, hnsw_params(&self.options));
+        let params = hnsw_params(self.options.max_connections.unwrap_or(DEFAULT_M));
+        let graph = HnswGraph::open_no_reset(storage, params);
         self.graph = graph.inspect_err(|_| self.graph.storage.poison())?;
         self.ids = OnceLock::new();
         self.apply_options();
@@ -1123,12 +1108,50 @@ fn file_path(path: &Path) -> PathBuf {
     path
 }
 
-fn hnsw_params(options: &IndexOptions) -> HnswParams {
+fn hnsw_params(max_connections: u16) -> HnswParams {
     HnswParams {
-        max_connections: options.max_connections,
-        ml: 1.0 / f32::from(options.max_connections).ln(),
+        max_connections,
+        ml: 1.0 / f32::from(max_connections).ln(),
         max_layers: 16, // Fixed for now
     }
+}
+
+/// `options` with the file's metric, precision and `max_connections` in place of any left out,
+/// once the metric and precision given are checked against the file's (ADR-0026). The graph checks
+/// `max_connections`.
+fn from_file(options: IndexOptions, storage: &Storage, path: &Path) -> Result<IndexOptions> {
+    let held = storage.metric();
+    if let Some(asked) = options.metric
+        && asked != held
+    {
+        let (held, asked) = (metric_name(held), metric_name(asked));
+        fail!(
+            OptionsMismatch,
+            "The index at {} was created with {held} distance, so it has to be opened with \
+             {held} distance too, not {asked}\nhelp: leave the metric out to use the file's, or \
+             create a new index at another path for {asked} distance",
+            path.display()
+        );
+    }
+    let held = storage.precision();
+    if let Some(asked) = options.precision
+        && asked != held
+    {
+        let (held, asked) = (precision_name(held), precision_name(asked));
+        fail!(
+            OptionsMismatch,
+            "The index at {} keeps its vectors in {held} precision, so it has to be opened with \
+             {held} precision too, not {asked}\nhelp: leave the precision out to use the file's, \
+             or create a new index at another path for {asked} precision",
+            path.display()
+        );
+    }
+    Ok(IndexOptions {
+        metric: Some(storage.metric()),
+        precision: Some(storage.precision()),
+        max_connections: Some(options.max_connections.unwrap_or(storage.params().m)),
+        ..options
+    })
 }
 
 /// Searches an index while a `VectorIndex` in another process may be writing it (ADR-0008,
@@ -1159,7 +1182,9 @@ impl IndexReader {
     pub fn open<P: AsRef<Path>>(path: P, dims: u32, options: IndexOptions) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let storage = Storage::open_read_only(&path, dims)?;
-        let graph = HnswGraph::reader(storage, hnsw_params(&options))?;
+        let (options, dims) = (from_file(options, &storage, &path)?, storage.dimensions());
+        let params = hnsw_params(options.max_connections.unwrap_or(DEFAULT_M));
+        let graph = HnswGraph::reader(storage, params)?;
         let mut reader =
             Self { graph, ef_search: options.ef_search, path, dims, options, ids: None };
         if reader.options.huge_pages == Some(true) {
@@ -1610,10 +1635,10 @@ mod tests {
             let path = dir.path().join("a.chassis");
             let mut options = IndexOptions::default();
             if seed % 3 == 0 {
-                options.metric = DistanceMetric::Cosine;
+                options.metric = Some(DistanceMetric::Cosine);
             }
             if seed % 4 == 0 {
-                options.precision = Precision::Half;
+                options.precision = Some(Precision::Half);
             }
             let mut index = VectorIndex::open(&path, 16, options.clone()).unwrap();
             let (custom, mut next) = (seed % 2 == 0, 0u64);

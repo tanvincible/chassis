@@ -47,7 +47,11 @@ fn cases() -> Vec<Case> {
             Case {
                 file: f[0].to_string(),
                 dims: f[1].parse().unwrap(),
-                options: IndexOptions { metric, precision, ..IndexOptions::default() },
+                options: IndexOptions {
+                    metric: Some(metric),
+                    precision: Some(precision),
+                    ..IndexOptions::default()
+                },
                 len: f[4].parse().unwrap(),
                 live: ids(f[5]),
                 results: f[6..].iter().map(|s| ids(s)).collect(),

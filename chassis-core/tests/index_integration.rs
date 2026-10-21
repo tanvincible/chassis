@@ -164,7 +164,7 @@ fn test_custom_options() {
     let temp_file = NamedTempFile::new().unwrap();
 
     let options = IndexOptions {
-        max_connections: 8,
+        max_connections: Some(8),
         ef_construction: 100,
         ef_search: 25,
         ..Default::default()
@@ -301,13 +301,13 @@ fn test_max_connections_mismatch_on_reopen_keeps_data() {
         index.flush().unwrap();
     }
 
-    let other = IndexOptions { max_connections: 8, ..IndexOptions::default() };
+    let other = IndexOptions { max_connections: Some(8), ..IndexOptions::default() };
     let error = VectorIndex::open(&path, 64, other).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::OptionsMismatch);
     assert_eq!(
         error.to_string(),
         "This index was created with max_connections 16, so it has to be opened with 16 too, not \
-         8\nhelp: open it with max_connections 16"
+         8\nhelp: leave max_connections out to use the file's"
     );
 
     let index = VectorIndex::open(&path, 64, IndexOptions::default()).unwrap();
@@ -573,7 +573,8 @@ fn test_a_backup_takes_no_disk_for_what_was_never_written() {
     }
     let path = dir.path().join("index.chassis");
     let (writers, readers) = (dir.path().join("writer.chassis"), dir.path().join("reader.chassis"));
-    let options = IndexOptions { max_connections: 4, ef_construction: 8, ..Default::default() };
+    let options =
+        IndexOptions { max_connections: Some(4), ef_construction: 8, ..Default::default() };
     let mut index = VectorIndex::open(&path, 4096, options.clone()).unwrap();
     let vectors: Vec<f32> = (0..1025 * 4096).map(|i| (i % 4099) as f32).collect();
     index.add_batch(&vectors).unwrap();

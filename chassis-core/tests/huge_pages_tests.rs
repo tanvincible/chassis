@@ -40,7 +40,7 @@ fn asking_changes_no_result(precision: Precision) {
         ef_construction: 32,
         ef_search: 1200,
         huge_pages: Some(huge_pages),
-        precision,
+        precision: Some(precision),
         ..IndexOptions::default()
     };
     let dir = tempdir().unwrap();

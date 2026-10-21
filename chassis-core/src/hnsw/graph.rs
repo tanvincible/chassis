@@ -85,7 +85,7 @@ impl HnswGraph {
             fail!(
                 OptionsMismatch,
                 "This index was created with max_connections {held}, so it has to be opened with \
-                 {held} too, not {}\nhelp: open it with max_connections {held}",
+                 {held} too, not {}\nhelp: leave max_connections out to use the file's",
                 record_params.m
             );
         }

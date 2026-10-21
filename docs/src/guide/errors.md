@@ -5,7 +5,7 @@ starting `help:` what to do instead:
 
 ```text
 The index at vectors.chassis holds vectors of 768 dimensions, not 1536
-help: open it with 768 dimensions, or create a new index at another path
+help: leave the dimensions out (0) to use the file's, or create a new index at another path
 ```
 
 Each also has a kind, the same in every language, for a program to act on: `Error::kind()` in
@@ -35,7 +35,8 @@ Every Python class is a `ChassisError`. In C, a call that succeeds sets the code
 
 An argument is out of range or malformed. The message names it and its value.
 
-- **Dimensions** are 1 to 4,096: the length of the vectors the index will hold.
+- **Dimensions** are 1 to 4,096: the length of the vectors the index will hold. 0 (or none, in
+  Python) opens an existing index with its own.
 - **`max_connections`** is 2 to 32,767; 16 suits most indexes.
 - **`k`** is at least 1. In Python it is an `int`; `5.0` is a `TypeError`.
 - **A vector or query with NaN or infinity** is refused, at every metric and precision, with
@@ -66,15 +67,15 @@ embedding model than the index's.
 
 ## Options mismatch
 
-The file was created with another metric, precision or `max_connections` than the one asked for.
-All three are fixed when the index is created, and a writer has to name the same ones again. A
-reader takes the metric and precision from the file, but names the same `max_connections`. Open
-the index with the ones it was created with, or create a new index at another path.
+The file was created with another metric, precision or `max_connections` than the one given. All
+three are fixed when the index is created, and opening it takes each from the file unless it's
+given. Leave the option out, or create a new index at another path.
 
 ## Not found
 
-There is no index at the path a reader was given, or the directory of a path a writer was given
-doesn't exist. A reader opens an index that exists: create it by opening it as a writer first.
+There is no index at the path a reader was given, or a writer was given dimensions of 0 (or none,
+in Python) to take an index's, or the directory of a path a writer was given doesn't exist. Create
+an index by opening it as a writer with its dimensions.
 
 ## Not an index
 

@@ -112,7 +112,7 @@ fn test_batch_with_ids_is_all_or_nothing() {
 #[test]
 fn test_cosine_batch_rejects_a_zero_vector_and_adds_nothing() {
     let dir = tempdir().unwrap();
-    let cosine = IndexOptions { metric: DistanceMetric::Cosine, ..options() };
+    let cosine = IndexOptions { metric: Some(DistanceMetric::Cosine), ..options() };
     let mut index = VectorIndex::open(dir.path().join("cos.chassis"), DIMS as u32, cosine).unwrap();
     let mut vectors = flat(0..100);
     vectors[50 * DIMS..51 * DIMS].fill(0.0);

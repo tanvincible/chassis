@@ -23,8 +23,8 @@ fn built(path: &std::path::Path, options: IndexOptions, count: u64) -> VectorInd
 fn test_an_index_in_good_order_checks_clean() {
     let options = [
         IndexOptions::default(),
-        IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() },
-        IndexOptions { precision: Precision::Half, ..IndexOptions::default() },
+        IndexOptions { metric: Some(DistanceMetric::Cosine), ..IndexOptions::default() },
+        IndexOptions { precision: Some(Precision::Half), ..IndexOptions::default() },
     ];
     for (i, options) in options.into_iter().enumerate() {
         let dir = TempDir::new().unwrap();

@@ -313,13 +313,6 @@ unsafe fn open_handle(
         );
         return ptr::null_mut();
     }
-    if dimensions == 0 {
-        set_last_error(
-            "dimensions is 0, but has to be between 1 and 4096\nhelp: pass the length of the \
-             vectors the index will hold, such as 384, 768 or 1536",
-        );
-        return ptr::null_mut();
-    }
     // SAFETY: Caller guarantees path is valid C string
     let c_path = unsafe { CStr::from_ptr(path) };
     // Not to_string_lossy(), which would open a file other than the one named.
@@ -392,6 +385,26 @@ pub const CHASSIS_METRIC_COSINE: c_int = 1;
 pub const CHASSIS_PRECISION_FULL: c_int = 0;
 /// Each component a 16-bit float.
 pub const CHASSIS_PRECISION_HALF: c_int = 1;
+/// For a `metric` or `precision`: the existing index's, or the default when creating one
+/// (ADR-0026).
+pub const CHASSIS_FROM_FILE: u32 = u32::MAX;
+
+/// A C `max_connections`: 0 for the index's own, or 16 when creating one (ADR-0026).
+fn connections(max_connections: u32) -> Option<Option<u16>> {
+    match max_connections {
+        0 => Some(None),
+        m => match u16::try_from(m) {
+            Ok(m) => Some(Some(m)),
+            Err(_) => {
+                set_last_error(format!(
+                    "max_connections is {m}, but has to be between 2 and 32,767\nhelp: 16 suits \
+                     most indexes, and 0 opens an existing one with its own"
+                ));
+                None
+            }
+        },
+    }
+}
 
 /// An error as C sees it: a code and a message.
 struct Failure {
@@ -493,7 +506,10 @@ where
 /// # Arguments
 ///
 /// - `path`: UTF-8 encoded path to the index file (must not be NULL)
-/// - `dimensions`: Number of dimensions per vector (must be > 0)
+/// - `dimensions`: Number of dimensions per vector, or 0 to open an existing index with its own
+///
+/// The metric, precision and `max_connections` are an existing index's, or the defaults when
+/// creating one: Euclidean, full precision and 16 (ADR-0026).
 ///
 /// # Returns
 ///
@@ -532,8 +548,9 @@ pub unsafe extern "C" fn chassis_open(path: *const c_char, dimensions: u32) -> *
 /// # Arguments
 ///
 /// - `path`: UTF-8 encoded path to the index file (must not be NULL)
-/// - `dimensions`: Number of dimensions per vector (must be > 0)
-/// - `max_connections`: Maximum connections per node (M parameter, typically 8-64)
+/// - `dimensions`: Number of dimensions per vector, or 0 to open an existing index with its own
+/// - `max_connections`: Maximum connections per node (M parameter, typically 8-64), or 0 for an
+///   existing index's own
 /// - `ef_construction`: Construction quality (typically 100-400)
 /// - `ef_search`: Search quality (typically 50-200)
 ///
@@ -560,11 +577,7 @@ pub unsafe extern "C" fn chassis_open_with_options(
     ef_search: u32,
 ) -> *mut ChassisIndex {
     ffi_guard(|| {
-        let Ok(max_connections) = u16::try_from(max_connections) else {
-            set_last_error(format!(
-                "max_connections is {max_connections}, but has to be between 2 and 32,767\nhelp: 16 \
-                 suits most indexes; 32 gives higher recall for more memory"
-            ));
+        let Some(max_connections) = connections(max_connections) else {
             return ptr::null_mut();
         };
         let options = IndexOptions {
@@ -587,7 +600,9 @@ pub unsafe extern "C" fn chassis_open_with_options(
 ///   (1) for cosine distance (1 - cosine similarity).
 ///   A cosine index stores vectors scaled to unit length, rejects zero vectors, and reports
 ///   distances from 0 to 2. The metric is fixed when the index is created; reopening an existing
-///   index with another one fails.
+///   index with another one fails. `CHASSIS_FROM_FILE` takes an existing index's, or Euclidean
+///   when creating one.
+/// - The precision is an existing index's, or full when creating one.
 /// - The other arguments are as for `chassis_open_with_options()`.
 ///
 /// # Safety
@@ -611,7 +626,7 @@ pub unsafe extern "C" fn chassis_open_with_metric(
             ef_construction,
             ef_search,
             metric,
-            0,
+            CHASSIS_FROM_FILE,
         )
     }
 }
@@ -624,8 +639,8 @@ pub unsafe extern "C" fn chassis_open_with_metric(
 ///   float, `CHASSIS_PRECISION_HALF` (1) as a 16-bit float. Half precision halves the vectors'
 ///   size in the file and in memory; each component is rounded to about three decimal digits, and
 ///   a vector with a component of 65,520 or more in magnitude is refused. The precision is fixed
-///   when the index is created; reopening an existing index with another one fails. A release
-///   without this function can't open a file in half precision.
+///   when the index is created; reopening an existing index with another one fails.
+///   `CHASSIS_FROM_FILE` takes an existing index's, or full precision when creating one.
 /// - The other arguments are as for `chassis_open_with_metric()`.
 ///
 /// # Safety
@@ -642,31 +657,30 @@ pub unsafe extern "C" fn chassis_open_with_precision(
     precision: u32,
 ) -> *mut ChassisIndex {
     ffi_guard(|| {
-        let Ok(max_connections) = u16::try_from(max_connections) else {
-            set_last_error(format!(
-                "max_connections is {max_connections}, but has to be between 2 and 32,767\nhelp: 16 \
-                 suits most indexes; 32 gives higher recall for more memory"
-            ));
+        let Some(max_connections) = connections(max_connections) else {
             return ptr::null_mut();
         };
         let metric = match metric {
-            0 => DistanceMetric::Euclidean,
-            1 => DistanceMetric::Cosine,
+            0 => Some(DistanceMetric::Euclidean),
+            1 => Some(DistanceMetric::Cosine),
+            CHASSIS_FROM_FILE => None,
             other => {
                 set_last_error(format!(
                     "metric is {other}, which is no metric\nhelp: pass CHASSIS_METRIC_EUCLIDEAN \
-                     (0) or CHASSIS_METRIC_COSINE (1)"
+                     (0), CHASSIS_METRIC_COSINE (1), or CHASSIS_FROM_FILE for an existing index's"
                 ));
                 return ptr::null_mut();
             }
         };
         let precision = match precision {
-            0 => Precision::Full,
-            1 => Precision::Half,
+            0 => Some(Precision::Full),
+            1 => Some(Precision::Half),
+            CHASSIS_FROM_FILE => None,
             other => {
                 set_last_error(format!(
                     "precision is {other}, which is no precision\nhelp: pass \
-                     CHASSIS_PRECISION_FULL (0) or CHASSIS_PRECISION_HALF (1)"
+                     CHASSIS_PRECISION_FULL (0), CHASSIS_PRECISION_HALF (1), or CHASSIS_FROM_FILE \
+                     for an existing index's"
                 ));
                 return ptr::null_mut();
             }
@@ -695,8 +709,8 @@ pub unsafe extern "C" fn chassis_open_with_precision(
 /// # Arguments
 ///
 /// - `path`: UTF-8 encoded path to the index file (must not be NULL)
-/// - `dimensions`: Number of dimensions per vector (must be > 0)
-/// - `max_connections`: The value the index was created with (16 by default)
+/// - `dimensions`: Number of dimensions per vector, or 0 for the index's own
+/// - `max_connections`: The value the index was created with, or 0 for the index's own
 /// - `ef_search`: Search quality parameter
 ///
 /// # Returns
@@ -715,11 +729,7 @@ pub unsafe extern "C" fn chassis_open_reader(
     ef_search: u32,
 ) -> *mut ChassisIndex {
     ffi_guard(|| {
-        let Ok(max_connections) = u16::try_from(max_connections) else {
-            set_last_error(format!(
-                "max_connections is {max_connections}, but has to be between 2 and 32,767\nhelp: 16 \
-                 suits most indexes; 32 gives higher recall for more memory"
-            ));
+        let Some(max_connections) = connections(max_connections) else {
             return ptr::null_mut();
         };
         let options =
@@ -2442,10 +2452,14 @@ mod tests {
         assert_eq!(unsafe { chassis_metric(ptr) }, 1);
         unsafe { chassis_free(ptr) };
         assert!(
-            unsafe { chassis_open(path.as_ptr(), 2) }.is_null(),
+            unsafe { chassis_open_with_metric(path.as_ptr(), 2, 16, 200, 50, 0) }.is_null(),
             "reopened with another metric"
         );
-        let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
+        // Left out, the metric is the file's (ADR-0026).
+        let ptr = unsafe { chassis_open(path.as_ptr(), 0) };
+        assert_eq!(unsafe { chassis_metric(ptr) }, 1);
+        unsafe { chassis_free(ptr) };
+        let reader = unsafe { chassis_open_reader(path.as_ptr(), 0, 0, 50) };
         assert_eq!(unsafe { chassis_metric(reader) }, 1);
         unsafe { chassis_free(reader) };
     }
@@ -2475,7 +2489,9 @@ mod tests {
         unsafe { chassis_free(ptr) };
 
         assert!(open(0).is_null(), "reopened with another precision");
-        assert!(unsafe { chassis_open(path.as_ptr(), 2) }.is_null());
+        let ptr = open(CHASSIS_FROM_FILE);
+        assert_eq!(unsafe { chassis_precision(ptr) }, 1);
+        unsafe { chassis_free(ptr) };
         let reader = unsafe { chassis_open_reader(path.as_ptr(), 2, 16, 50) };
         assert_eq!(unsafe { chassis_precision(reader) }, 1);
         unsafe { chassis_free(reader) };
@@ -3077,10 +3093,10 @@ mod tests {
             ptr::null_mut()
         );
         assert_eq!(chassis_last_error_code(), CHASSIS_ERROR_INVALID_ARGUMENT);
-        assert!(
-            message()
-                .contains("help: pass CHASSIS_METRIC_EUCLIDEAN (0) or CHASSIS_METRIC_COSINE (1)")
-        );
+        assert!(message().contains(
+            "help: pass CHASSIS_METRIC_EUCLIDEAN (0), CHASSIS_METRIC_COSINE (1), or \
+             CHASSIS_FROM_FILE for an existing index's"
+        ));
 
         // A call that succeeds clears it.
         assert_eq!(unsafe { chassis_add(writer, [0.5f32; 8].as_ptr(), 8) }, 0);

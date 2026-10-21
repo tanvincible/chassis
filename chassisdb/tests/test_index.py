@@ -182,7 +182,7 @@ class TestIndexOptions:
 
     def test_default_options(self, temp_index_path):
         index = VectorIndex(temp_index_path, dimensions=128)
-        assert index.options.max_connections == 16
+        assert index.options.max_connections is None
         assert index.options.ef_construction == 200
         assert index.options.ef_search == 50
 
@@ -280,7 +280,7 @@ class TestVectorIndexProperties:
 
     def test_options_property(self, simple_index):
         assert isinstance(simple_index.options, IndexOptions)
-        assert simple_index.options.max_connections == 16
+        assert simple_index.options.metric == "euclidean"
 
     def test_repr(self, simple_index):
         repr_str = repr(simple_index)
@@ -412,8 +412,9 @@ class TestReadOnly:
         VectorIndex(path, dimensions=3, options=cosine).close()
         with VectorIndex(path, dimensions=3, read_only=True) as reader:
             assert (reader.options.metric, reader.options.precision) == ("cosine", "half")
-        with pytest.raises(OptionsMismatchError, match="help: open it with precision='half'"):
-            VectorIndex(path, dimensions=3, options=IndexOptions(metric="cosine"), read_only=True)
+        full = IndexOptions(metric="cosine", precision="full")
+        with pytest.raises(OptionsMismatchError, match="help: leave the precision out"):
+            VectorIndex(path, dimensions=3, options=full, read_only=True)
 
     def test_reader_needs_an_existing_index(self, tmp_path):
         with pytest.raises(ChassisError):
@@ -557,8 +558,9 @@ class TestMetric:
         reader = VectorIndex(path, dimensions=2, read_only=True)
         assert reader.metric == "cosine"
         reader.close()
+        euclidean = IndexOptions(metric="euclidean")
         with pytest.raises(ChassisError):
-            VectorIndex(path, dimensions=2, options=IndexOptions(), read_only=True)
+            VectorIndex(path, dimensions=2, options=euclidean, read_only=True)
         writer.close()
 
 
@@ -586,8 +588,10 @@ class TestPrecision:
         assert reader.search(vectors[17], k=1)[0].id == 17
         reader.close()
         for options in (None, IndexOptions()):
-            with pytest.raises(ChassisError, match="precision"):
-                VectorIndex(path, dimensions=256, options=options)
+            with VectorIndex(path, dimensions=256, options=options) as index:
+                assert index.precision == "half"
+        with pytest.raises(ChassisError, match="precision"):
+            VectorIndex(path, dimensions=256, options=IndexOptions(precision="full"))
 
     def test_what_half_precision_cannot_hold_is_refused(self, tmp_path):
         options = IndexOptions(precision="half")

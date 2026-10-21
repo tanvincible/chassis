@@ -25,6 +25,8 @@ from chassisdb.exceptions import (
 
 _METRICS = {"euclidean": 0, "cosine": 1}
 _PRECISIONS = {"full": 0, "half": 1}
+# For a metric or precision left out: an existing index's, or the default when creating one.
+_FROM_FILE = 0xFFFFFFFF
 # Other names for them, as other libraries spell them.
 _METRIC_NAMES = {"l2": "euclidean", "euclid": "euclidean", "cos": "cosine", "angular": "cosine"}
 _PRECISION_NAMES = {
@@ -43,22 +45,25 @@ _MAX_DIMENSIONS = 4096
 class IndexOptions:
     """Configuration options for HNSW index.
 
+    ``max_connections``, ``metric`` and ``precision`` are fixed when an index is
+    created, with the defaults below for any left out. Opening it again takes
+    each from the file unless it's given, and checks any that is.
+
     Attributes:
         max_connections: Maximum connections per node (M parameter).
-            Higher = better recall, more memory. Default: 16
+            Higher = better recall, more memory. Default: 16 when creating
         ef_construction: Construction quality parameter.
             Higher = better index quality, slower build. Default: 200
         ef_search: Search quality parameter.
             Higher = better search quality, slower search. Default: 50
         metric: "euclidean" (L2) or "cosine" (1 - cosine similarity; vectors
-            are stored at unit length and zero vectors are rejected). Fixed
-            when the index is created. Default: "euclidean"
+            are stored at unit length and zero vectors are rejected).
+            Default: "euclidean" when creating
         precision: "full" keeps each component of a vector as a 32-bit float,
             "half" as a 16-bit float: half the file and half the memory, each
             component rounded to about three decimal digits, and a vector with
-            a component of 65,520 or more in magnitude refused. Fixed when the
-            index is created; a read-only index takes it from the file.
-            Default: "full"
+            a component of 65,520 or more in magnitude refused.
+            Default: "full" when creating
         huge_pages: Whether to ask the operating system to keep the vectors
             on huge pages. On an index too large for the CPU's caches,
             searches are up to a quarter faster. Only on Linux, and only where
@@ -75,11 +80,11 @@ class IndexOptions:
             asks for huge pages under vectors of 2 KB or more. Default: False
     """
 
-    max_connections: int = 16
+    max_connections: int | None = None
     ef_construction: int = 200
     ef_search: int = 50
-    metric: str = "euclidean"
-    precision: str = "full"
+    metric: str | None = None
+    precision: str | None = None
     huge_pages: bool | None = None
     warm: bool = False
 
@@ -91,9 +96,11 @@ class IndexOptions:
             InvalidArgumentError: If an option is out of range or unknown
             TypeError: If an option has the wrong type
         """
-        for name in ("max_connections", "ef_construction", "ef_search"):
+        for name in ("ef_construction", "ef_search"):
             _check_int(name, getattr(self, name))
-        if not 2 <= self.max_connections <= 32767:
+        if self.max_connections is not None and not 2 <= _check_int(
+            "max_connections", self.max_connections
+        ) <= 32767:
             raise InvalidArgumentError(
                 f"max_connections is {self.max_connections}, but has to be between 2 and "
                 "32,767\nhelp: 16 suits most indexes; 32 gives higher recall for more memory"
@@ -105,8 +112,10 @@ class IndexOptions:
                     f"finds more of the true nearest for more time; the default is "
                     f"{getattr(IndexOptions(), name)}"
                 )
-        self.metric = _named("metric", self.metric, _METRICS, _METRIC_NAMES)
-        self.precision = _named("precision", self.precision, _PRECISIONS, _PRECISION_NAMES)
+        if self.metric is not None:
+            self.metric = _named("metric", self.metric, _METRICS, _METRIC_NAMES)
+        if self.precision is not None:
+            self.precision = _named("precision", self.precision, _PRECISIONS, _PRECISION_NAMES)
 
 
 # What other libraries call the options, for a hint when one of those names is given.
@@ -224,7 +233,7 @@ class VectorIndex:
     def __init__(
         self,
         path: str | Path,
-        dimensions: int,
+        dimensions: int | None = None,
         options: IndexOptions | None = None,
         read_only: bool = False,
     ):
@@ -232,21 +241,23 @@ class VectorIndex:
 
         Args:
             path: Path to the index file
-            dimensions: Number of dimensions per vector
-            options: Optional HNSW configuration. If None, uses defaults.
+            dimensions: Number of dimensions per vector. Needed to create an
+                index; left out, an existing index's are used.
+            options: Optional HNSW configuration. If None, uses defaults, and
+                an existing index's metric, precision and max_connections.
             read_only: Open an existing index to search it while another
                 process writes it. Takes no lock; add(), delete() and
-                flush() raise ChassisError. The index keeps the metric it
-                was created with; explicit options naming another raise.
+                flush() raise ChassisError.
 
         Raises:
-            IndexNotFoundError: If read_only and there is no index at path, or
-                the path's directory doesn't exist
+            IndexNotFoundError: If read_only, or dimensions is left out, and
+                there is no index at path, or the path's directory doesn't
+                exist
             IndexLockedError: If another writer has the index open
             DimensionMismatchError: If the index holds vectors of other
                 dimensions
             OptionsMismatchError: If the index was created with another
-                metric or precision
+                metric, precision or max_connections than one given
             NotAnIndexError: If the file isn't a Chassis index
             InvalidArgumentError: If dimensions or an option is out of range
             TypeError: If an argument has the wrong type
@@ -258,57 +269,52 @@ class VectorIndex:
         self._read_only = read_only
         self._path = Path(path)
         self._dimensions = _check_dimensions(dimensions)
-        self._options = _check_options(options)
-        explicit = options is not None
-        options = self._options
+        self._options = options = _check_options(options)
 
         path_bytes = str(self._path).encode("utf-8")
-
+        # 0 and _FROM_FILE take what an existing index holds.
+        max_connections = options.max_connections or 0
         if read_only:
             ptr = _ffi._lib.chassis_open_reader(
-                path_bytes,
-                dimensions,
-                self._options.max_connections,
-                self._options.ef_search,
+                path_bytes, self._dimensions, max_connections, options.ef_search
             )
-        elif not explicit:
-            ptr = _ffi._lib.chassis_open(path_bytes, dimensions)
         else:
             ptr = _ffi._lib.chassis_open_with_precision(
                 path_bytes,
-                dimensions,
-                options.max_connections,
+                self._dimensions,
+                max_connections,
                 options.ef_construction,
                 options.ef_search,
-                _METRICS[options.metric],
-                _PRECISIONS[options.precision],
+                _METRICS.get(options.metric, _FROM_FILE),
+                _PRECISIONS.get(options.precision, _FROM_FILE),
             )
 
         if not ptr:
             raise _ffi.last_error("The index couldn't be opened, and Chassis didn't say why")
 
         self._ptr = ptr
+        self._dimensions = int(_ffi._lib.chassis_dimensions(ptr))
         if self._options.huge_pages:
             _ffi._lib.chassis_use_huge_pages(ptr)
         elif self._options.huge_pages is not None:
             _ffi._lib.chassis_keep_small_pages(ptr)
         if self._options.warm:
             _ffi._lib.chassis_warm(ptr)
-        # A reader takes the file's metric and precision; say so rather than use others.
+        # A writer checks a given metric and precision against the file's; a reader, here.
         metric, precision = self.metric, self.precision
-        if explicit and options.metric != metric:
+        if options.metric not in (None, metric):
             self.close()
             raise OptionsMismatchError(
                 f"The index at {self._path} was created with {metric} distance, not "
-                f"{options.metric}\nhelp: open it with metric={metric!r}, or leave the metric "
-                "out: a read_only index takes it from the file"
+                f"{options.metric}\nhelp: leave the metric out to use the file's, or open it "
+                f"with metric={metric!r}"
             )
-        if explicit and options.precision != precision:
+        if options.precision not in (None, precision):
             self.close()
             raise OptionsMismatchError(
                 f"The index at {self._path} keeps its vectors in {precision} precision, not "
-                f"{options.precision}\nhelp: open it with precision={precision!r}, or leave the "
-                "precision out: a read_only index takes it from the file"
+                f"{options.precision}\nhelp: leave the precision out to use the file's, or open "
+                f"it with precision={precision!r}"
             )
         # `options` reports what the index really uses.
         self._options = dataclasses.replace(self._options, metric=metric, precision=precision)
@@ -951,6 +957,9 @@ def _check_id(given: object) -> int:
 
 
 def _check_dimensions(given: object) -> int:
+    """`given` as C takes it: 0 for left out, which takes an existing index's."""
+    if given is None:
+        return 0
     dimensions = _check_int("dimensions", given)
     if not 1 <= dimensions <= _MAX_DIMENSIONS:
         raise InvalidArgumentError(

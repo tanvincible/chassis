@@ -190,10 +190,10 @@ fn test_migration_keeps_the_original_parameters() {
     let path = dir.path().join("index.chassis");
     write_legacy(&path, &legacy_v2());
 
-    let other = IndexOptions { max_connections: 8, ..IndexOptions::default() };
+    let other = IndexOptions { max_connections: Some(8), ..IndexOptions::default() };
     assert!(VectorIndex::open(&path, DIMS, other).is_err());
     // Old files hold raw vectors, so they stay Euclidean.
-    let cosine = IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() };
+    let cosine = IndexOptions { metric: Some(DistanceMetric::Cosine), ..IndexOptions::default() };
     let error = VectorIndex::open(&path, DIMS, cosine).unwrap_err().to_string();
     assert!(error.contains("opened with euclidean distance too, not cosine"), "{error}");
     let index = VectorIndex::open(&path, DIMS, IndexOptions::default()).unwrap();

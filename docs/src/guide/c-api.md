@@ -85,8 +85,10 @@ cl myapp.c /I chassis-ffi\include /link /LIBPATH:target\release chassis_ffi.dll.
 ```c
 ChassisIndex* chassis_open(const char* path, uint32_t dimensions);
 ```
-Open or create an index. Returns `NULL` on error, including when the file is a cosine index or
-one in half precision: open those with `chassis_open_with_precision` or `chassis_open_reader`.
+Open or create an index. Returns `NULL` on error. Dimensions of 0 open an existing index with its
+own, and are an error where there is none. An existing index keeps its metric, precision and
+`max_connections`; a new one gets the defaults: Euclidean, full precision and 16
+([ADR-0026](https://github.com/tanvincible/chassis/blob/main/docs/adr/026-options-from-the-file.md)).
 
 #### `chassis_open_with_options`
 ```c
@@ -98,7 +100,8 @@ ChassisIndex* chassis_open_with_options(
     uint32_t ef_search
 );
 ```
-Open with custom HNSW parameters.
+Open with custom HNSW parameters. A `max_connections` of 0 takes an existing index's, or 16 for a
+new one; another differing from an existing index's fails.
 
 #### `chassis_open_with_metric`
 ```c
@@ -113,7 +116,8 @@ ChassisIndex* chassis_open_with_metric(
 ```
 Like `chassis_open_with_options`, with a distance metric: `CHASSIS_METRIC_EUCLIDEAN` (0) or
 `CHASSIS_METRIC_COSINE` (1, `1 - cosine similarity`; vectors are stored at unit length and zero vectors are rejected). The
-metric is fixed when the index is created; reopening with another one fails.
+metric is fixed when the index is created; reopening with another one fails, and `CHASSIS_FROM_FILE`
+takes an existing index's, or Euclidean for a new one.
 
 #### `chassis_open_with_precision`
 ```c
@@ -132,8 +136,8 @@ component of a vector as a 32-bit float, `CHASSIS_PRECISION_HALF` (1) as a 16-bi
 halves the vectors' size in the file and in memory, and a search over an index too large for the
 CPU's caches is faster for it. Each component is rounded to about three decimal digits, and a
 vector with a component of 65,520 or more in magnitude is refused. The precision is fixed when
-the index is created; reopening with another one fails, and a release without this function
-can't open a file in half precision.
+the index is created; reopening with another one fails, and `CHASSIS_FROM_FILE` takes an existing
+index's, or full precision for a new one.
 
 #### `chassis_open_reader`
 ```c
@@ -149,8 +153,8 @@ no lock, so any number of readers can open the file next to one writer. Each sea
 writer's newest flush, which becomes visible just before its final fsync; `chassis_len` takes a new
 snapshot first. Adds, deletes and flushes on the
 handle fail. A file in an older format must be opened once with `chassis_open` to migrate it.
-The metric and precision come from the file; `max_connections` has to be the one the index was
-created with.
+The metric and precision come from the file; dimensions and `max_connections` of 0 do too, and
+others are checked.
 
 #### `chassis_use_huge_pages`
 ```c

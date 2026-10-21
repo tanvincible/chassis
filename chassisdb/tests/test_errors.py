@@ -185,7 +185,22 @@ def test_reopening_with_another_metric_says_which_it_was_created_with(tmp_path):
     path = tmp_path / "cosine.chassis"
     VectorIndex(path, 4, options=IndexOptions(metric="cosine")).close()
     with pytest.raises(OptionsMismatchError, match="created with cosine distance"):
-        VectorIndex(path, 4)
+        VectorIndex(path, 4, options=IndexOptions(metric="euclidean"))
+
+
+def test_an_index_opens_with_what_its_file_holds(tmp_path):
+    path = tmp_path / "cosine.chassis"
+    created = IndexOptions(metric="cosine", precision="half", max_connections=32)
+    VectorIndex(path, 4, options=created).close()
+    for read_only in (False, True):
+        with VectorIndex(path, read_only=read_only) as index:
+            assert (index.dimensions, index.metric, index.precision) == (4, "cosine", "half")
+    with pytest.raises(OptionsMismatchError, match="max_connections"):
+        VectorIndex(path, options=IndexOptions(max_connections=16))
+    missing = tmp_path / "missing.chassis"
+    with pytest.raises(IndexNotFoundError, match="help: check the path"):
+        VectorIndex(missing)
+    assert not missing.exists()
 
 
 def test_every_error_is_a_chassis_error_and_a_builtin_of_its_kind(index):

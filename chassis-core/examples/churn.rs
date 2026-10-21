@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
     let queries: Vec<&[f32]> = test.chunks_exact(dims).collect();
     let n = (train.len() / dims) as u64;
     let options = |ef_search| IndexOptions {
-        max_connections: 16,
+        max_connections: Some(16),
         ef_construction: 200,
         ef_search,
         ..IndexOptions::default()

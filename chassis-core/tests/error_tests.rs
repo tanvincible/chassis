@@ -75,11 +75,16 @@ fn test_a_mistake_says_what_was_wrong_and_what_to_do() {
     says(IndexReader::open(&zeros, 4, IndexOptions::default()), ErrorKind::NotAnIndex, &named);
     assert!(std::fs::read(&zeros).unwrap().iter().all(|&b| b == 0), "left as it was");
     says(
-        VectorIndex::open(dir.path().join("new.chassis"), 0, IndexOptions::default()),
+        VectorIndex::open(dir.path().join("new.chassis"), 5000, IndexOptions::default()),
         ErrorKind::InvalidArgument,
-        "dimensions is 0",
+        "dimensions is 5000",
     );
-    let thin = IndexOptions { max_connections: 1, ..IndexOptions::default() };
+    says(
+        VectorIndex::open(dir.path().join("new.chassis"), 0, IndexOptions::default()),
+        ErrorKind::NotFound,
+        "There's no index at",
+    );
+    let thin = IndexOptions { max_connections: Some(1), ..IndexOptions::default() };
     says(
         VectorIndex::open(dir.path().join("new.chassis"), 4, thin),
         ErrorKind::InvalidArgument,
@@ -87,13 +92,13 @@ fn test_a_mistake_says_what_was_wrong_and_what_to_do() {
     );
 
     drop(index);
-    let cosine = IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() };
+    let cosine = IndexOptions { metric: Some(DistanceMetric::Cosine), ..IndexOptions::default() };
     says(
         VectorIndex::open(&path, 4, cosine.clone()),
         ErrorKind::OptionsMismatch,
         "created with euclidean",
     );
-    let half = IndexOptions { precision: Precision::Half, ..IndexOptions::default() };
+    let half = IndexOptions { precision: Some(Precision::Half), ..IndexOptions::default() };
     says(VectorIndex::open(&path, 4, half), ErrorKind::OptionsMismatch, "in full precision");
     let mut index = VectorIndex::open(dir.path().join("cosine.chassis"), 2, cosine).unwrap();
     says(index.add(&[0.0, 0.0]), ErrorKind::InvalidArgument, "zero vector");
@@ -102,11 +107,11 @@ fn test_a_mistake_says_what_was_wrong_and_what_to_do() {
 #[test]
 fn test_an_error_goes_into_anyhow_with_its_message() {
     fn open(path: &std::path::Path) -> anyhow::Result<VectorIndex> {
-        Ok(VectorIndex::open(path, 0, IndexOptions::default())?)
+        Ok(VectorIndex::open(path, 5000, IndexOptions::default())?)
     }
     let dir = tempdir().unwrap();
     let error = open(&dir.path().join("x.chassis")).unwrap_err();
-    assert!(error.to_string().starts_with("dimensions is 0"));
+    assert!(error.to_string().starts_with("dimensions is 5000"));
     assert_eq!(
         error.downcast_ref::<chassisdb::Error>().unwrap().kind(),
         ErrorKind::InvalidArgument

@@ -195,7 +195,7 @@ fn test_compact_with_nothing_deleted_keeps_slot_ids() {
 fn test_compact_keeps_a_cosine_index_cosine() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("cos.chassis");
-    let cosine = IndexOptions { metric: DistanceMetric::Cosine, ..options() };
+    let cosine = IndexOptions { metric: Some(DistanceMetric::Cosine), ..options() };
     let mut index = VectorIndex::open(&path, DIMS as u32, cosine.clone()).unwrap();
     let scaled: Vec<f32> = (0..300).flat_map(vector).map(|x| x * 5.0).collect();
     index.add_batch(&scaled).unwrap();
@@ -206,7 +206,8 @@ fn test_compact_keeps_a_cosine_index_cosine() {
     assert_eq!(hit.id, 8);
     assert!(hit.distance.abs() < 1e-5, "{}", hit.distance);
     drop(index);
-    assert!(VectorIndex::open(&path, DIMS as u32, options()).is_err(), "still a cosine file");
+    let euclidean = IndexOptions { metric: Some(DistanceMetric::Euclidean), ..options() };
+    assert!(VectorIndex::open(&path, DIMS as u32, euclidean).is_err(), "still a cosine file");
 }
 
 #[test]

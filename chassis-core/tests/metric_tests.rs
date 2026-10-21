@@ -1,6 +1,8 @@
 //! Cosine distance: ranking and distances match brute-force cosine; the metric is the file's.
 
-use chassisdb::{DistanceMetric, IndexOptions, IndexReader, VectorIndex, cosine_distance};
+use chassisdb::{
+    DistanceMetric, ErrorKind, IndexOptions, IndexReader, Precision, VectorIndex, cosine_distance,
+};
 use tempfile::tempdir;
 
 const DIMS: u32 = 16;
@@ -21,7 +23,7 @@ fn vector(id: u64) -> Vec<f32> {
 }
 
 fn cosine() -> IndexOptions {
-    IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() }
+    IndexOptions { metric: Some(DistanceMetric::Cosine), ..IndexOptions::default() }
 }
 
 #[test]
@@ -105,6 +107,49 @@ fn test_cosine_index_rejects_zero_vectors() {
 }
 
 #[test]
+fn test_an_index_opens_with_what_its_file_holds() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("cos.chassis");
+    let created =
+        IndexOptions { max_connections: Some(32), precision: Some(Precision::Half), ..cosine() };
+    let mut index = VectorIndex::open(&path, DIMS, created).unwrap();
+    for id in 0..50 {
+        index.add(&vector(id)).unwrap();
+    }
+    index.flush().unwrap();
+    drop(index);
+
+    // Nothing given: everything from the file, for a writer and a reader (ADR-0026).
+    let index = VectorIndex::open(&path, 0, IndexOptions::default()).unwrap();
+    let held = (index.dimensions(), index.metric(), index.precision());
+    assert_eq!(held, (DIMS, DistanceMetric::Cosine, Precision::Half));
+    assert_eq!(index.search(&vector(7), 1).unwrap()[0].id, 7);
+    drop(index);
+    let mut reader = IndexReader::open(&path, 0, IndexOptions::default()).unwrap();
+    let hit = &reader.search(&vector(7), 1).unwrap()[0];
+    assert_eq!(hit.id, 7);
+    assert!(hit.distance.abs() < 1e-3, "{}", hit.distance);
+
+    // Anything given is checked.
+    let writer = |dims, options| VectorIndex::open(&path, dims, options).unwrap_err().kind();
+    let default = IndexOptions::default;
+    let euclidean = IndexOptions { metric: Some(DistanceMetric::Euclidean), ..default() };
+    assert_eq!(writer(DIMS, euclidean.clone()), ErrorKind::OptionsMismatch);
+    let full = IndexOptions { precision: Some(Precision::Full), ..default() };
+    assert_eq!(writer(DIMS, full), ErrorKind::OptionsMismatch);
+    let m16 = IndexOptions { max_connections: Some(16), ..default() };
+    assert_eq!(writer(DIMS, m16), ErrorKind::OptionsMismatch);
+    assert_eq!(writer(DIMS + 1, default()), ErrorKind::DimensionMismatch);
+    let reader = IndexReader::open(&path, 0, euclidean).map(|_| ()).unwrap_err().kind();
+    assert_eq!(reader, ErrorKind::OptionsMismatch);
+
+    // Nothing to take them from: an error, and no file left behind.
+    let missing = dir.path().join("missing.chassis");
+    let error = VectorIndex::open(&missing, 0, default()).map(|_| ()).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::NotFound, "{error}");
+    assert!(!missing.exists());
+}
+#[test]
 fn test_metric_is_the_files() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("cos.chassis");
@@ -115,7 +160,9 @@ fn test_metric_is_the_files() {
     index.flush().unwrap();
     drop(index);
 
-    assert!(VectorIndex::open(&path, DIMS, IndexOptions::default()).is_err());
+    let euclidean =
+        IndexOptions { metric: Some(DistanceMetric::Euclidean), ..IndexOptions::default() };
+    assert!(VectorIndex::open(&path, DIMS, euclidean).is_err());
     let mut reader = IndexReader::open(&path, DIMS, IndexOptions::default()).unwrap();
     let hit = &reader.search(&vector(7), 1).unwrap()[0];
     assert_eq!(hit.id, 7);
