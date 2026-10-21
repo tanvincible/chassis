@@ -32,8 +32,8 @@ Some limits come with the design, and no option changes them. Reach for somethin
 | Components | finite numbers; in half precision, under 65,520 in magnitude |
 
 The file system's own limits apply too: FAT32 holds files up to 4 GiB. And keep the disk from
-filling: the file grows without reserving its space, so on Linux and macOS a disk that fills as
-Chassis writes can end the process (SIGBUS) instead of returning an error
+filling: the file grows without reserving its space, so on Linux a disk that fills as Chassis
+writes can end the process (SIGBUS) instead of returning an error. macOS and Windows return one
 ([Verification](../architecture/verification.md#limits)).
 
 ## Size
