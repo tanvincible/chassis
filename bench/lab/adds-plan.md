@@ -52,3 +52,36 @@ Ratios below are the tenth million's over the first's, per add.
   the visited filter or a heap; otherwise IDEAS.md, with the numbers.
 - **Between**: both, reported as such, in IDEAS.md.
 - Either way, the answer replaces "not looked into" in IDEAS.md's entry on adds.
+
+## Results
+
+Run 39588392209, 2026-10-21: two runners, each 4 vCPUs and 15 GB. Raw lines: the `adds-1-counted`
+and `adds-1-profiled` artifacts; the tenth window's profile is in the profiled job's summary. The
+runner has no hardware counters: `perf stat` reported every event `<not supported>`.
+
+| Million | Time, profiled | Distances searching, an add | Nodes expanded | Distances choosing |
+| --- | --- | --- | --- | --- |
+| 1 | 33.2 s | 1,038 | 214 | 493 |
+| 2 | 47.3 s | 1,312 | 214 | 581 |
+| 5 | 86.6 s | 1,994 | 215 | 739 |
+| 10 | 96.9 s | 2,457 | 215 | 898 |
+
+Each node expanded found more neighbors not yet visited: 4.9 in the first million, 11.4 in the
+tenth. The profile barely moved: `search_layer`, with the layer-0 kernel inlined, took 68.5% of the
+samples in the first window and 68.3% in the tenth; the kernel called for choosing neighbors 7.6%
+and 9.8%; the visited filter's `take` 0.7% and 1.5%.
+
+| # | Prediction | Held? |
+| --- | --- | --- |
+| 1 | Distances searching 1.1 to 1.6 | **no**: 2.37 |
+| 2 | Distances choosing 0.8 to 1.3 | **no**: 1.82 |
+| 3 | Nodes expanded 1.0 to 1.5 | yes: 1.006 |
+| 4 | Time 2.5 to 3.4 | yes: 2.92 |
+| 5 | Time per distance 1.8 or more | **no**: 1.33 |
+| 6 | Kernels' share within 10 points | yes: 0.2 and 2.2 points |
+
+**Decision:** more work. An add computes 2.2 times the distances in the tenth million, and each
+costs 1.33 times as much, so about three quarters of the slowdown is the count. The search expands
+the same number of nodes; each has more neighbors it hasn't seen. Whether that is fuller lists,
+which an index fills as it grows, or neighborhoods that overlap less, goes to a plan before any
+change: counting the neighbors read per node expanded tells them apart.

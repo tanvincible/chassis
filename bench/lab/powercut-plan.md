@@ -144,3 +144,33 @@ As RUN 1, with two changes:
 - **1 to 3 hold**: ADR-0012 says how often a power cut left lists as it allows, on the real I/O
   path with writeback every 10 ms, and verification.md says what this lab covers. It reruns after
   any change to the file format or storage.
+
+### Results
+
+Run 39590958680, 2026-10-21: Linux 6.17, ext4, about 2 minutes a job. Raw lines: the
+`powercut-2-main` and `powercut-2-mutant` artifacts. Every write after `s0` was a point.
+
+| Job | Flush points | Write points | Matched a commit | Graph as its commit's | Lists differing, where any do |
+| --- | --- | --- | --- | --- | --- |
+| `main` | 231 | 1,028 | all | 223 flush, 560 write | median 89% at flushes, 74% at writes; at most 99.3% |
+| `mutant` | 137 | 973 | all but 10 flush and 21 write | 119 flush, 372 write | median 89% and 72% |
+
+Every list that differed had gained only links past its commit's slots and lost others: 3.1
+million gained and 1.4 million lost across `main`'s write points. No list gained a link to a slot
+its commit has, and no point found more unreachable vectors than its commit.
+
+| # | Prediction | Held? |
+| --- | --- | --- |
+| 1 | Every point a commit's length, vectors and slots | yes: 1,259 of 1,259 |
+| 2 | No list gains a committed link | yes |
+| 3 | No point more unreachable | yes |
+| 4 | Where the graph differs, at most 5% of its lists | **no**: median 74 to 89%, at most 99.3% |
+| 5 | The mutant breaks 1 | yes: 10 flush and 21 write points |
+
+**Decision:** no bug. Power cuts left graphs only as ADR-0012 allows, but far more of them than
+its words suggest: where a graph differed, the rollback had put back almost nothing, so most lists
+the batch had touched kept its lost adds' links. That is the undo file missing from the disk, not
+a few lists ahead of their entries: it is created anew after each commit, and ext4 makes a new
+file durable at its next journal commit, while the lists are overwritten in place and reach the
+disk as soon as they're written back. ADR-0012 and verification.md say so, with these numbers.
+Keeping the undo file on disk ahead of the lists goes to IDEAS.md.
