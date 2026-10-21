@@ -89,7 +89,7 @@ jobs:
           sudo umount /mnt/lw
           sudo dmsetup remove lw
           sudo losetup -d "$data" "$log"
-          echo "writes logged: $("$T/replay-log" --log "$T/log.img" --number-entries)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "writes logged: $("$T/replay-log" --log "$T/log.img" --num-entries)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Replay and check
         timeout-minutes: 120
@@ -108,7 +108,7 @@ jobs:
           else
             line="mount failed"
           fi
-          echo "$PASS ${line:-no state}" >> "$T/points.txt"
+          echo "$PASS ${line:-no state}" >> "$GITHUB_WORKSPACE/results/points.txt"
           EOF
           chmod +x "$T/point.sh"
           fresh() { rm -f "$T/replay.img"; truncate -s 256M "$T/replay.img"; }
@@ -122,13 +122,12 @@ jobs:
           replay --end-mark s0
           replay --start-mark s0 --check flush --fsck "env PASS=flush $T/point.sh"
           first=$("$T/replay-log" --log "$T/log.img" --find --end-mark s0 | cut -d@ -f1)
-          total=$("$T/replay-log" --log "$T/log.img" --number-entries)
+          total=$("$T/replay-log" --log "$T/log.img" --num-entries)
           step=$(( (total - first + 1499) / 1500 ))
           echo "write points every $step writes from write $first of $total" | tee -a "$GITHUB_STEP_SUMMARY"
           fresh
           replay --end-mark s0
           replay --start-mark s0 --check "$step" --fsck "env PASS=write $T/point.sh"
-          cp "$T/points.txt" results/
 
       - name: Compare
         if: always()
