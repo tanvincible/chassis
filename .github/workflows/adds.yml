@@ -1,0 +1,133 @@
+name: x86 adds
+
+# Experiment branch only: why adds slow as an index grows. The distances an add computes, counted
+# per million of a 10M build, and where a build without counters spends its time in the first
+# million and the tenth. The plan, predictions and decision rule are in bench/lab/adds-plan.md.
+# Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/adds.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  SHA: e93cdccd4f751c7c15278fd0666b50528a8ff8c9
+  N: 10000000
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  adds:
+    name: adds (${{ matrix.job }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { job: counted, flags: "--cfg lab --cfg lab_count" }
+          - { job: profiled, flags: "" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build the harness
+        run: |
+          git fetch -q origin lab/exp-scale
+          git worktree add --detach "$RUNNER_TEMP/src" "$SHA"
+          RUSTFLAGS="${{ matrix.flags }}" cargo build -q --release --example scale \
+            --manifest-path "$RUNNER_TEMP/src/Cargo.toml"
+          cp "$RUNNER_TEMP/src/target/release/examples/scale" "$RUNNER_TEMP/scale"
+          rm -rf "$RUNNER_TEMP/src/target"
+
+      - name: Make room and describe the machine
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          dir=$(df --output=avail,target / /mnt 2>/dev/null | tail -n +2 | sort -n | tail -1 | awk '{print $2}')
+          dir="${dir%/}/adds"
+          sudo mkdir -p "$dir" && sudo chown "$USER" "$dir"
+          echo "DIR=$dir" >> "$GITHUB_ENV"
+          mkdir results
+          {
+            echo "## $(lscpu | sed -n 's/^Model name: *//p' | head -1), $(nproc) vCPUs, $(free -g | awk '/Mem:/ {print $2}') GB"
+            echo "kernel $(uname -r); THP $(cat /sys/kernel/mm/transparent_hugepage/enabled)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install perf
+        if: matrix.job == 'profiled'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" \
+            || sudo apt-get install -y -qq linux-tools-common linux-tools-azure \
+            || sudo apt-get install -y -qq linux-tools-common linux-tools-generic
+          PERF=$(find /usr/lib -name perf -path '*tools*' 2>/dev/null | sort | tail -1)
+          PERF=$(readlink -f "${PERF:-/usr/bin/perf}")
+          echo "PERF=$PERF" >> "$GITHUB_ENV"
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+
+      - name: Build 10M
+        timeout-minutes: 200
+        run: |
+          "$RUNNER_TEMP/scale" build "$DIR/index.chassis" "$N" > results/build.tsv &
+          pid=$!
+          if [ "${{ matrix.job }}" = profiled ]; then
+            # Where a window's time goes, by symbol, and the hardware counters the runner has.
+            window() { # name, seconds of samples, seconds of counters
+              "$PERF" record -q -e cpu-clock -F 999 -p "$pid" -o "$RUNNER_TEMP/$1.data" -- sleep "$2" || true
+              "$PERF" stat -e cycles,instructions,dTLB-load-misses,LLC-load-misses -p "$pid" \
+                -o "results/$1.stat" -- sleep "$3" || true
+              "$PERF" report -i "$RUNNER_TEMP/$1.data" --stdio --no-children --sort symbol -g none 2>/dev/null \
+                | grep -v '^#' | grep -v '^$' | head -40 > "results/$1.symbols" || true
+            }
+            sleep 8
+            window first 20 10
+            until grep -q 'flush_9000000_s' results/build.tsv || ! kill -0 "$pid" 2>/dev/null; do sleep 1; done
+            window tenth 40 20
+          fi
+          wait "$pid"
+          cat results/build.tsv
+
+      - name: Per add, the tenth million against the first
+        if: always()
+        run: |
+          python3 - "${{ matrix.job }}" <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import sys
+          job = sys.argv[1]
+          v = {}
+          for line in open("results/build.tsv"):
+              parts = line.rstrip("\n").split("\t")
+              if len(parts) == 4:
+                  v[parts[2]] = float(parts[3]) if parts[3].replace(".", "", 1).isdigit() else parts[3]
+          print("```")
+          names = ["add_%d_s", "distances_%d", "hops_%d", "selected_%d"]
+          for m in range(1, 11):
+              end = m * 1_000_000
+              print(m, "\t".join(str(v.get(n % end, "-")) for n in names))
+          first, tenth = 1_000_000, 10_000_000
+          for n in names:
+              if (n % first) in v and (n % tenth) in v and v[n % first]:
+                  print(f"{n.replace('_%d', '')}: tenth/first {v[n % tenth] / v[n % first]:.2f}")
+          print("```")
+          for w in ("first", "tenth"):
+              for kind in ("stat", "symbols"):
+                  try:
+                      print(f"### {w} {kind}\n```\n{open(f'results/{w}.{kind}').read()}\n```")
+                  except FileNotFoundError:
+                      pass
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adds-${{ env.RUN }}-${{ matrix.job }}
+          path: results/

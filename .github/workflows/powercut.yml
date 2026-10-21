@@ -1,0 +1,178 @@
+name: x86 powercut
+
+# Experiment branch only: power cuts on the real I/O path. dm-log-writes records every write the
+# kernel sends to the disk; xfstests' replay-log replays the disk to a point, where the index is
+# opened and checked. The plan, predictions and decision rule are in bench/lab/powercut-plan.md.
+# Runs when this file changes; edit RUN to rerun.
+on:
+  push:
+    branches: [lab/x86]
+    paths: [.github/workflows/powercut.yml]
+
+permissions:
+  contents: read
+
+env:
+  RUN: 1
+  SHA: e93cdccd4f751c7c15278fd0666b50528a8ff8c9
+  XFSTESTS: 22348afe338c0f6d540c0d7ef0db749eaa51b218
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  powercut:
+    name: powercut (${{ matrix.job }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { job: main, flags: "" }
+          # The data isn't synced before the header that commits it.
+          - { job: mutant, flags: "--cfg lab_nosync" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build the harness and replay-log
+        run: |
+          git fetch -q origin lab/exp-scale
+          git worktree add --detach "$RUNNER_TEMP/src" "$SHA"
+          RUSTFLAGS="${{ matrix.flags }}" cargo build -q --release --example scale \
+            --manifest-path "$RUNNER_TEMP/src/Cargo.toml"
+          cp "$RUNNER_TEMP/src/target/release/examples/scale" "$RUNNER_TEMP/scale"
+          git clone -q https://github.com/kdave/xfstests "$RUNNER_TEMP/xfstests"
+          git -C "$RUNNER_TEMP/xfstests" checkout -q "$XFSTESTS"
+          gcc -O2 -o "$RUNNER_TEMP/replay-log" "$RUNNER_TEMP"/xfstests/src/log-writes/{replay-log,log-writes}.c
+          mkdir results
+
+      - name: Load dm-log-writes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dmsetup e2fsprogs > /dev/null
+          if sudo modprobe dm-log-writes; then
+            from="the kernel's modules"
+          else
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" > /dev/null
+            sudo modprobe dm-log-writes
+            from="linux-modules-extra"
+          fi
+          sudo dmsetup targets | grep log-writes
+          echo "kernel $(uname -r); dm-log-writes from $from" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The kernel writes dirty pages back within 10 ms while the workload runs, so changes not yet
+      # committed reach the disk between flushes, as they can in a long batch.
+      - name: Record the writes
+        run: |
+          T=$RUNNER_TEMP
+          truncate -s 256M "$T/data.img"
+          truncate -s 2G "$T/log.img"
+          data=$(sudo losetup -f --show "$T/data.img")
+          log=$(sudo losetup -f --show "$T/log.img")
+          sudo dmsetup create lw --table "0 $(sudo blockdev --getsz "$data") log-writes $data $log"
+          sudo mkfs.ext4 -q -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 /dev/mapper/lw
+          sudo dmsetup message lw 0 mark mkfs
+          sudo mkdir -p /mnt/lw /mnt/snap
+          sudo mount /dev/mapper/lw /mnt/lw
+          sudo chown "$USER" /mnt/lw
+          sudo sysctl -q -w vm.dirty_expire_centisecs=1 vm.dirty_writeback_centisecs=1
+          POWERCUT_DM=lw POWERCUT_PAUSE_MS=100 "$T/scale" powercut /mnt/lw/idx 9 | tee results/writer.tsv
+          sudo sysctl -q -w vm.dirty_expire_centisecs=3000 vm.dirty_writeback_centisecs=500
+          sudo umount /mnt/lw
+          sudo dmsetup remove lw
+          sudo losetup -d "$data" "$log"
+          echo "writes logged: $("$T/replay-log" --log "$T/log.img" --number-entries)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Replay and check
+        timeout-minutes: 120
+        run: |
+          T=$RUNNER_TEMP
+          # One point: a copy of the replayed disk, mounted as the next boot would mount it, and the
+          # index opened by a writer. It always succeeds, so replay-log goes on to the next point.
+          cat > "$T/point.sh" <<'EOF'
+          #!/bin/bash
+          T=$RUNNER_TEMP
+          line=
+          cp --sparse=always "$T/replay.img" "$T/snap.img"
+          if sudo mount -o loop "$T/snap.img" /mnt/snap 2>/dev/null; then
+            line=$(timeout 120 "$T/scale" state /mnt/snap/idx 2>&1 | awk -F'\t' '$2 == "state" { print $4 }')
+            sudo umount /mnt/snap
+          else
+            line="mount failed"
+          fi
+          echo "$PASS ${line:-no state}" >> "$T/points.txt"
+          EOF
+          chmod +x "$T/point.sh"
+          fresh() { rm -f "$T/replay.img"; truncate -s 256M "$T/replay.img"; }
+          replay() { "$T/replay-log" --log "$T/log.img" --replay "$T/replay.img" "$@" > /dev/null; }
+          for k in $(seq 0 9); do
+            fresh
+            replay --end-mark "s$k"
+            PASS="mark$k" "$T/point.sh"
+          done
+          fresh
+          replay --end-mark s0
+          replay --start-mark s0 --check flush --fsck "env PASS=flush $T/point.sh"
+          first=$("$T/replay-log" --log "$T/log.img" --find --end-mark s0 | cut -d@ -f1)
+          total=$("$T/replay-log" --log "$T/log.img" --number-entries)
+          step=$(( (total - first + 1499) / 1500 ))
+          echo "write points every $step writes from write $first of $total" | tee -a "$GITHUB_STEP_SUMMARY"
+          fresh
+          replay --end-mark s0
+          replay --start-mark s0 --check "$step" --fsck "env PASS=write $T/point.sh"
+          cp "$T/points.txt" results/
+
+      - name: Compare
+        if: always()
+        run: |
+          python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          from collections import defaultdict
+          writer = {}
+          for line in open("results/writer.tsv"):
+              p = line.rstrip("\n").split("\t")
+              if len(p) == 4 and p[1] == "powercut":
+                  writer[int(p[2].split("_")[1])] = p[3].split()
+          # A state: length, vectors digest, unreachable, not finite, slots, graph as sets.
+          marks, points = {}, defaultdict(list)
+          for line in open("results/points.txt"):
+              name, _, state = line.rstrip("\n").partition(" ")
+              if name.startswith("mark"):
+                  marks[int(name[4:])] = state.split()
+              else:
+                  points[name].append(state)
+          print("```")
+          for k, s in sorted(marks.items()):
+              good = len(s) == 6 and s[:2] == writer.get(k) and s[3] == "0"
+              print(f"mark s{k}: {' '.join(s)}: {'ok' if good else 'PROBLEM, the writer saw ' + ' '.join(writer.get(k, ['nothing']))}")
+          for name in ("flush", "write"):
+              hard, exact, other, worse = [], 0, 0, 0
+              for state in points[name]:
+                  s = state.split()
+                  same = [m for m in marks.values() if len(s) == 6 and len(m) == 6 and (m[0], m[1], m[4]) == (s[0], s[1], s[4])]
+                  if not same or s[3] != "0":
+                      hard.append(state)
+                  elif any(m[5] == s[5] for m in same):
+                      exact += 1
+                  else:
+                      other += 1
+                      worse += int(s[2]) > max(int(m[2]) for m in same)
+              print(f"{name} points: {len(points[name])}; a mark's length, vectors and slots: {len(points[name]) - len(hard)}, "
+                    f"graph exact {exact}, graph otherwise {other}, more unreachable than the mark {worse}")
+              for state in hard[:10]:
+                  print(f"  PROBLEM: {state}")
+          print("```")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: powercut-${{ env.RUN }}-${{ matrix.job }}
+          path: results/
