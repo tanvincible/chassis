@@ -228,6 +228,8 @@ fn main() -> anyhow::Result<()> {
             let (path, n) = (arg(1), number(2)?);
             let mut index = writer(path)?;
             let (mut peak, chunk) = (0, setting("SCALE_CHUNK", CHUNK));
+            #[cfg(lab)]
+            let mut counted = [0u64; 3];
             for start in (0..n).step_by(chunk as usize) {
                 let end = (start + chunk).min(n);
                 let ids: Vec<u64> = (start..end).collect();
@@ -239,6 +241,17 @@ fn main() -> anyhow::Result<()> {
                 index.flush()?;
                 out("build", &format!("flush_{end}_s"), secs(at));
                 out("build", &format!("page_tables_{end}_kb"), proc("status", "VmPTE"));
+                // With `--cfg lab --cfg lab_count`, the distances and hops this chunk's adds took.
+                #[cfg(lab)]
+                {
+                    let counts = chassisdb::lab::counts();
+                    for (name, (now, before)) in
+                        ["distances", "hops", "selected"].iter().zip(counts.iter().zip(counted))
+                    {
+                        out("build", &format!("{name}_{end}"), now - before);
+                    }
+                    counted = counts;
+                }
                 peak = peak.max(anon_mb());
             }
             out("build", "anon_peak_mb", peak);

@@ -67,6 +67,35 @@ mod storage;
 #[cfg(test)]
 mod power_loss;
 
+/// Lab counters, compiled only with `--cfg lab` and counted only with `--cfg lab_count`.
+#[cfg(lab)]
+pub mod lab {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Distances computed in searches, builds' included.
+    pub static DISTANCES: AtomicU64 = AtomicU64::new(0);
+    /// Nodes expanded by `search_layer`.
+    pub static HOPS: AtomicU64 = AtomicU64::new(0);
+    /// Distances computed choosing neighbors.
+    pub static SELECTED: AtomicU64 = AtomicU64::new(0);
+
+    pub fn counts() -> [u64; 3] {
+        [&DISTANCES, &HOPS, &SELECTED].map(|c| c.load(Ordering::Relaxed))
+    }
+}
+
+#[cfg(lab_count)]
+macro_rules! lab_count {
+    ($counter:ident, $n:expr) => {
+        crate::lab::$counter.fetch_add($n as u64, std::sync::atomic::Ordering::Relaxed);
+    };
+}
+#[cfg(not(lab_count))]
+macro_rules! lab_count {
+    ($counter:ident, $n:expr) => {};
+}
+pub(crate) use lab_count;
+
 #[cfg(feature = "internals")]
 pub use hnsw::*;
 

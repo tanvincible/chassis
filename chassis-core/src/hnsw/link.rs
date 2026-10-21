@@ -311,6 +311,7 @@ impl HnswGraph {
         let mut scratch = Vec::new();
         let base_vector = E::widened(self.storage.stored::<E>(base_node)?, &mut scratch);
         let (kernel, prefetch) = (E::kernel(), Prefetch::detect().for_dims::<E>(base_vector.len()));
+        crate::lab_count!(SELECTED, candidates.len());
         // Start loading every candidate's vector first, so the cache misses overlap.
         let vectors: Vec<Option<&[E]>> = candidates
             .iter()
@@ -336,6 +337,7 @@ impl HnswGraph {
 
         // Each (candidate, kept) pair is compared at most once, so there is nothing to cache.
         let mut selected: Vec<(NodeId, &[E])> = Vec::with_capacity(max_count);
+        let mut pairs = 0u64;
         for &(candidate, distance) in by_distance {
             if selected.len() >= max_count {
                 break;
@@ -346,6 +348,7 @@ impl HnswGraph {
             // too and so no nearer to it: otherwise copies fill every list among themselves and
             // leave the rest of the graph unreachable.
             let near_a_kept = |&(_, kept): &(NodeId, &[E])| {
+                pairs += 1;
                 // SAFETY: stored vectors all have the index's dimensions.
                 let apart = unsafe { kernel(vector, kept) };
                 apart < distance || apart == 0.0
@@ -354,6 +357,7 @@ impl HnswGraph {
                 selected.push((candidate, stored));
             }
         }
+        crate::lab_count!(SELECTED, pairs);
         Ok(selected.into_iter().map(|(id, _)| id).collect())
     }
 

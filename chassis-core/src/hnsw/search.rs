@@ -326,6 +326,7 @@ impl HnswGraph {
         let mut visited = Visited::take(self.node_count as usize);
         visited.0.visit(entry);
         let mut changed = true;
+        let mut distances = 1u64;
         while changed {
             changed = false;
 
@@ -343,6 +344,7 @@ impl HnswGraph {
                     let vector = self.storage.stored::<E>(neighbor_id)?;
                     // SAFETY: as above.
                     let dist = unsafe { K::squared(query, vector) };
+                    distances += 1;
 
                     if dist.total_cmp(&best_dist) == std::cmp::Ordering::Less {
                         best_id = neighbor_id;
@@ -352,6 +354,7 @@ impl HnswGraph {
                 }
             }
         }
+        crate::lab_count!(DISTANCES, distances);
         Ok(best_id)
     }
 
@@ -598,6 +601,9 @@ impl HnswGraph {
         }
         visited.0.visit(entry);
         let mut bound = worst_allowed(&results, ef);
+        // Counted once a search, so threads don't contend; a filtered search that runs out of
+        // budget isn't counted, and builds never filter.
+        let (mut distances, mut hops) = (1u64, 0u64);
 
         while let Some(Reverse(current)) = candidates.pop() {
             // Early termination: current is further than worst result
@@ -615,6 +621,7 @@ impl HnswGraph {
                     fresh.push((neighbor_id, vector));
                 }
             }
+            (distances, hops) = (distances + fresh.len() as u64, hops + 1);
             // Their distances `W` at a time, then one by one for what is left over; each
             // group's are taken in as soon as they are known.
             let mut take = |neighbor_id: NodeId, dist: f32| -> Result<bool> {
@@ -662,6 +669,8 @@ impl HnswGraph {
             }
         }
 
+        crate::lab_count!(DISTANCES, distances);
+        crate::lab_count!(HOPS, hops);
         let mut sorted = results.into_vec();
         sorted.sort_unstable();
         Ok(Some(sorted.into_iter().map(unpack).collect()))
