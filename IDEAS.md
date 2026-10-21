@@ -371,6 +371,9 @@ asked for is below, most asked first.
 ### A full disk as an error, not a SIGBUS
 
 **In #138**: allocated 16 MiB ahead on Linux; a full disk named with a `help:` line everywhere.
+Not Btrfs: it copies a page on every write, so a full disk still ends the process there (CI). A new
+file marked no-copy-on-write (`FS_NOCOW_FL`) would write in place, as databases on Btrfs advise,
+at the cost of Btrfs's checksums for that file: a decision, then a test on Btrfs.
 
 * **Known** (2026-10-15): a region is added with `set_len`, which leaves the file sparse, so on
   Linux and macOS a full disk shows when a write first touches a page of the new region: SIGBUS
