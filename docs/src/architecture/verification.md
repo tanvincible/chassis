@@ -20,6 +20,17 @@ designed showed why every condition is there: "every reopen shows exactly one co
 its own accepted 6 of 8 broken protocols
 ([ADR-0008](https://github.com/tanvincible/chassis/blob/main/docs/adr/008-format-v3-and-multi-process-readers.md)).
 
+**Power cuts on the real path.** The simulator stands in for the kernel and the disk. In a lab
+run, Linux's dm-log-writes recorded every write ext4 sent to a disk while a writer added, deleted
+and compacted, and the disk was replayed to each write in turn, 1,259 points. Each opened to a
+commit, with its length, vectors and slots exact and nothing not finite; a build that commits data
+before syncing it failed at 31 of its own 1,110. With the kernel writing pages back every 10 ms,
+46% of the points between flushes kept most of the batch's links, as
+[ADR-0012](https://github.com/tanvincible/chassis/blob/main/docs/adr/012-rolling-back-lost-adds.md)
+allows, and none left more vectors unreachable than its commit. The plan and numbers are in
+[`bench/lab/powercut-plan.md`](https://github.com/tanvincible/chassis/blob/lab/x86/bench/lab/powercut-plan.md)
+on the `lab/x86` branch; it runs again after any change to the file format or storage.
+
 **The application's number.** Each simulated flush sets a new `user_version`, and every file the
 simulator builds has to hold the number of the flush whose vectors it holds
 ([ADR-0023](https://github.com/tanvincible/chassis/blob/main/docs/adr/023-user-version.md)).

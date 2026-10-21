@@ -81,6 +81,15 @@ committed until its first flush.
 * **After a power loss:** the same for every list whose saved entry reached disk. Between
   flushes the OS may write a changed list before the entry saved for it; that list then keeps
   what ADR-0005's amendment described. It is never worse than before this ADR.
+
+  Measured on the real I/O path on 2026-10-21 (`bench/lab/powercut-plan.md` on `lab/x86`), that
+  is most lists, not a few. ext4 was replayed to each write of a workload of adds, deletes and a
+  compaction, with the kernel writing pages back every 10 ms. Between flushes, 468 of 1,028 points
+  reopened with lists that differed from the commit's: a median of 74% of all the lists, each
+  with links to the lost adds and without some it had. It fits the undo file missing from the
+  disk: a commit removes it and the next save creates it, and ext4 makes a new file durable at
+  its next journal commit, while the lists are overwritten in place. No list gained a link to a
+  committed node, and none left more vectors unreachable than its commit.
 * **An index copied or opened without its undo file,** or by a release from before this ADR,
   behaves as before: the lost adds' links stay, and compaction removes them.
 
