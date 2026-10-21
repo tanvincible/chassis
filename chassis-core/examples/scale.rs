@@ -182,6 +182,66 @@ fn graph_digests(path: &str) -> anyhow::Result<(u64, u64, u64)> {
     Ok((graph.node_count(), ordered, sets))
 }
 
+/// Each slot's lists, by layer, sorted.
+fn graph_lists(path: &str) -> anyhow::Result<Vec<Vec<Vec<u64>>>> {
+    let graph = HnswGraph::open(Storage::open(path, dims() as u32)?, HnswParams::default())?;
+    let sorted = |mut ids: Vec<u64>| {
+        ids.sort_unstable();
+        ids
+    };
+    (0..graph.node_count())
+        .map(|slot| {
+            let record = graph.read_node_record(slot)?;
+            let layers = 0..usize::from(record.header.layer_count);
+            Ok(layers.map(|layer| sorted(record.get_neighbors(layer))).collect())
+        })
+        .collect()
+}
+
+/// How `lists` differ from those dumped in `dir` for the commit with the same length, vectors and
+/// slots as `line`: lists that differ, links gained to committed slots and past them, links lost.
+/// A power cut may leave a list with links to the adds it lost, and without the ones they pushed
+/// out (ADR-0012); a gained link to a committed slot it never had is neither.
+fn differences(dir: &str, line: &str, lists: &[Vec<Vec<u64>>]) -> anyhow::Result<String> {
+    let key = |l: &str| -> Vec<String> {
+        let f: Vec<&str> = l.split(' ').collect();
+        [0, 1, 4].iter().map(|&i| f.get(i).unwrap_or(&"").to_string()).collect()
+    };
+    for entry in std::fs::read_dir(dir)? {
+        let text = std::fs::read_to_string(entry?.path())?;
+        let mut lines = text.lines();
+        if lines.next().map(key) != Some(key(line)) {
+            continue;
+        }
+        let (mut differing, mut committed, mut past, mut lost) = (0, 0, 0, 0);
+        for (slot, saved) in lines.enumerate() {
+            let saved: Vec<Vec<u64>> = saved
+                .split('|')
+                .map(|l| {
+                    l.split(',').filter(|s| !s.is_empty()).map(|s| s.parse().unwrap()).collect()
+                })
+                .collect();
+            let now = &lists[slot];
+            if now == &saved {
+                continue;
+            }
+            differing += 1;
+            for layer in 0..now.len().max(saved.len()) {
+                let (a, b) = (
+                    now.get(layer).cloned().unwrap_or_default(),
+                    saved.get(layer).cloned().unwrap_or_default(),
+                );
+                for id in a.iter().filter(|id| !b.contains(id)) {
+                    if *id < lists.len() as u64 { committed += 1 } else { past += 1 }
+                }
+                lost += b.iter().filter(|id| !a.contains(id)).count();
+            }
+        }
+        return Ok(format!(" {differing} {committed} {past} {lost}"));
+    }
+    Ok(" no-commit".into())
+}
+
 /// The live vectors: each id, in order, and its components' bits.
 fn vectors_digest(index: &VectorIndex) -> anyhow::Result<u64> {
     let mut ids = index.ids()?;
@@ -382,6 +442,11 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 if k == batches / 2 {
+                    // Committed and marked first, as compaction commits before it rebuilds.
+                    index.flush()?;
+                    mark(&format!("s{k}a"))?;
+                    let state = format!("{} {:016x}", index.len(), vectors_digest(&index)?);
+                    out("powercut", &format!("state_{k}a"), state);
                     index.compact()?;
                 } else {
                     index.flush()?;
@@ -393,7 +458,8 @@ fn main() -> anyhow::Result<()> {
         }
         "state" => {
             // What an index opens to: its length, live vectors, `check`, slots and graph as sets,
-            // on one line; an error's text in their place.
+            // on one line; an error's text in their place. Then, with `dump <file>`, its lists
+            // saved to compare others with; with a directory of those, how its lists differ.
             let state = || -> anyhow::Result<String> {
                 let index = writer(arg(1))?;
                 let check = index.check()?;
@@ -401,7 +467,23 @@ fn main() -> anyhow::Result<()> {
                 let (unreachable, not_finite) = (check.unreachable.len(), check.not_finite.len());
                 drop(index);
                 let (slots, _, sets) = graph_digests(arg(1))?;
-                Ok(format!("{len} {digest:016x} {unreachable} {not_finite} {slots} {sets:016x}"))
+                let mut line =
+                    format!("{len} {digest:016x} {unreachable} {not_finite} {slots} {sets:016x}");
+                let lists = graph_lists(arg(1))?;
+                match arg(2) {
+                    "" => {}
+                    "dump" => {
+                        let join = |ids: &Vec<u64>| {
+                            ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
+                        };
+                        let rows =
+                            lists.iter().map(|l| l.iter().map(join).collect::<Vec<_>>().join("|"));
+                        let text: Vec<String> = std::iter::once(line.clone()).chain(rows).collect();
+                        std::fs::write(arg(3), text.join("\n"))?;
+                    }
+                    dir => line += &differences(dir, &line, &lists)?,
+                }
+                Ok(line)
             };
             let line =
                 state().unwrap_or_else(|e| format!("error {e:#}").replace(['\t', '\n'], " "));
