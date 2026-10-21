@@ -152,7 +152,8 @@ jobs:
         include:
           - { os: ubuntu-latest, fs: ext4, size: 96M }
           - { os: ubuntu-latest, fs: xfs, size: 320M, packages: xfsprogs }
-          - { os: ubuntu-latest, fs: btrfs, size: 160M, packages: btrfs-progs }
+          # Not Btrfs: it copies a page on every write, so allocating ahead can't promise the room,
+          # and a full disk still ends the process there.
           - { os: ubuntu-latest, fs: tmpfs, size: 96m }
           - { os: macos-latest, fs: apfs, size: 96m }
           - { os: windows-latest, fs: ntfs, size: 96 }

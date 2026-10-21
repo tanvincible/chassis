@@ -76,5 +76,5 @@ Rust and with 1.89, the oldest supported; the Python package on Python 3.11 with
 - No test has cut the power to real hardware. The simulator stands in for it, under the
   assumptions `power_loss.rs` states: a write never tears inside an aligned 8-byte word.
 - Readers were not tested during a compaction, nor with exFAT on Windows (ADR-0008).
-- A full disk while a write first touches a page of the file can end the process (SIGBUS) instead
-  of returning an error: the file grows without reserving its space.
+- A full disk is an error, tested on ext4, XFS, tmpfs, APFS and NTFS. On Btrfs, which copies a page
+  on every write, it can still end the process (SIGBUS).

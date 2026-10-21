@@ -17,8 +17,8 @@ fn vector(id: u64) -> Vec<f32> {
 fn a_full_disk_is_an_error_and_the_last_flush_is_kept() {
     let dir = std::env::var("CHASSIS_FULL_DISK").expect("CHASSIS_FULL_DISK names a file system");
     let dir = Path::new(&dir);
-    // Room to make once the disk is full: on APFS and Btrfs, which copy a page on every write,
-    // putting the saved lists back takes new blocks.
+    // Room to make once the disk is full: on APFS, which copies a page on every write, putting the
+    // saved lists back takes new blocks.
     std::fs::write(dir.join("room"), vec![1u8; 24 << 20]).unwrap();
     let path = dir.join("full.chassis");
     let (mut flushed, mut next) = (0, 0);
