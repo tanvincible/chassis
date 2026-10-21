@@ -98,9 +98,10 @@ class IndexOptions:
         """
         for name in ("ef_construction", "ef_search"):
             _check_int(name, getattr(self, name))
-        if self.max_connections is not None and not 2 <= _check_int(
-            "max_connections", self.max_connections
-        ) <= 32767:
+        if (
+            self.max_connections is not None
+            and not 2 <= _check_int("max_connections", self.max_connections) <= 32767
+        ):
             raise InvalidArgumentError(
                 f"max_connections is {self.max_connections}, but has to be between 2 and "
                 "32,767\nhelp: 16 suits most indexes; 32 gives higher recall for more memory"
@@ -285,8 +286,8 @@ class VectorIndex:
                 max_connections,
                 options.ef_construction,
                 options.ef_search,
-                _METRICS.get(options.metric, _FROM_FILE),
-                _PRECISIONS.get(options.precision, _FROM_FILE),
+                _FROM_FILE if options.metric is None else _METRICS[options.metric],
+                _FROM_FILE if options.precision is None else _PRECISIONS[options.precision],
             )
 
         if not ptr:
