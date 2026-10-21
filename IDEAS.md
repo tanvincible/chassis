@@ -370,6 +370,8 @@ asked for is below, most asked first.
 
 ### A full disk as an error, not a SIGBUS
 
+**In #138**: allocated 16 MiB ahead on Linux; a full disk named with a `help:` line everywhere.
+
 * **Known** (2026-10-15): a region is added with `set_len`, which leaves the file sparse, so on
   Linux and macOS a full disk shows when a write first touches a page of the new region: SIGBUS
   ends the process instead of an error. ADR-0008 lists "allocating space before writing to it" as
@@ -380,6 +382,20 @@ asked for is below, most asked first.
   extra space, one call per step. Catching SIGBUS in a library would take over a process-wide
   signal, which is no way to treat the app.
 * **To validate**: what a step costs an add and a flush, and how much ahead is enough.
+
+### The undo file on disk ahead of the lists
+
+* **Known** (powercut RUN 2, `bench/lab/powercut-plan.md`): replaying ext4 to every write, with
+  writeback every 10 ms, 46% of the points between flushes reopened with almost nothing rolled
+  back: most lists the batch had touched kept its lost adds' links, as ADR-0012 allows for a list
+  written before its undo entry. Nothing became unreachable. That fits the undo file missing from
+  the disk: it is created after each commit, and ext4 makes a new file durable at its next journal
+  commit, while the lists are overwritten in place.
+* **Options**: keep the undo file between commits, emptied rather than removed, with its blocks
+  allocated, so its entries reach the disk as the lists do; or sync it before the first list of a
+  batch changes, one sync per batch.
+* **To validate**: the powercut lab with the file kept: how many points' rollbacks put every list
+  back, and what each option costs a batch.
 
 ### Smaller ones, asked once each
 
@@ -525,8 +541,11 @@ checked against their code says so; the rest is the survey's.
   most of that is something else. **Not the page tables** (scale RUN 2): on one runner, huge pages
   put 71% of the file on them and cut the page tables from 13.8 to 4.7 MiB, and the last million
   still took 2.96 times the first, against 2.87 without. At 1,536 dimensions in half precision the
-  last 100,000 of 3M took 2.2 times the first. **To validate next**: a profile of adds at 1M and
-  10M.
+  last 100,000 of 3M took 2.2 times the first. **More work** (adds RUN 1, `bench/lab/adds-plan.md`):
+  an add in the tenth million computed 2.2 times the distances of one in the first, each 1.33
+  times as costly. The search expands the same 215 nodes; each has 11.4 neighbors it hasn't seen
+  where it had 4.9. **To validate next**: the neighbors read per node expanded, to tell fuller
+  lists from neighborhoods that overlap less.
 
 ## Not yet measured at all
 
@@ -538,4 +557,5 @@ checked against their code says so; the rest is the survey's.
 * AVX-512 in half precision, which widens sixteen halves at a time, and for the kernels called
   through a pointer: builds' choice of neighbors, exact scans, `euclidean_distance` (ADR-0025).
 * AVX-512 on a second Ice Lake, or any Intel before Sapphire Rapids: one job decided all of them.
-* Real power loss; it is only simulated.
+* Real power loss on real hardware. The in-process simulator, and block-level power cuts replayed
+  on ext4 (the powercut lab), stand in.
