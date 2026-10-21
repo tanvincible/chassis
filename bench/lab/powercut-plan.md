@@ -169,8 +169,8 @@ its commit has, and no point found more unreachable vectors than its commit.
 
 **Decision:** no bug. Power cuts left graphs only as ADR-0012 allows, but far more of them than
 its words suggest: where a graph differed, the rollback had put back almost nothing, so most lists
-the batch had touched kept its lost adds' links. That is the undo file missing from the disk, not
-a few lists ahead of their entries: it is created anew after each commit, and ext4 makes a new
-file durable at its next journal commit, while the lists are overwritten in place and reach the
-disk as soon as they're written back. ADR-0012 and verification.md say so, with these numbers.
+the batch had touched kept its lost adds' links. That fits the undo file missing from the disk
+rather than a few lists ahead of their entries, though the run didn't look: it is created anew
+after each commit, and ext4 makes a new file durable at its next journal commit, while the lists
+are overwritten in place and reach the disk as soon as they're written back. ADR-0012 and verification.md say so, with these numbers.
 Keeping the undo file on disk ahead of the lists goes to IDEAS.md.
