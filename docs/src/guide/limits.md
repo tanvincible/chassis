@@ -31,9 +31,9 @@ Some limits come with the design, and no option changes them. Reach for somethin
 | `max_connections` | 2 to 32,767; 16 by default |
 | Components | finite numbers; in half precision, under 65,520 in magnitude |
 
-The file system's own limits apply too: FAT32 holds files up to 4 GiB. And keep the disk from
-filling: the file grows without reserving its space, so on Linux a disk that fills as Chassis
-writes can end the process (SIGBUS) instead of returning an error. macOS and Windows return one
+The file system's own limits apply too: FAT32 holds files up to 4 GiB. A full disk is an error,
+except on Btrfs: it copies a page on every write, so the space Chassis allocates ahead doesn't
+cover it, and a disk that fills as Chassis writes ends the process (SIGBUS)
 ([Verification](../architecture/verification.md#limits)).
 
 ## Size
