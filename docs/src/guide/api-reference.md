@@ -249,11 +249,11 @@ assert!(check.is_ok());     // Nothing out of reach, nothing that isn't a finite
 Checks what opening can't; opening checks the header and that the file holds every region it
 names. A check of 200,000 vectors of 384 dimensions takes about 0.1 s.
 
-- `check.unreachable`: live vectors that no path through the graph reaches, so no search returns
-  them. Damage leaves them, and `compact()` builds the graph again. A sound graph can have a few
-  too. On uniform random numbers in 384 dimensions, 0.3% to 1.4% of them, rebuilt or not; on
-  clustered data, as embeddings are, none. Among many exact copies of one vector, some, and a
-  search for that vector finds the others.
+- `check.unreachable`: live vectors that no path through the graph reaches, so no search that walks
+  the graph returns them; a filtered search that checks every vector can. Damage leaves them, and
+  `compact()` builds the graph again. A sound graph can have a few too. On uniform random numbers in
+  384 dimensions, 0.3% to 1.4% of them, rebuilt or not; on clustered data, as embeddings are, none.
+  Among many exact copies of one vector, some, and a search for that vector finds the others.
 - `check.not_finite`: vectors with a component that isn't a finite number, which only damage to
   the file leaves, since `add` refuses them. Delete them and add them again from your own data.
 
