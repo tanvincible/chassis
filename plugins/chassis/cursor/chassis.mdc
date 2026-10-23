@@ -88,9 +88,9 @@ reader.close()
 
 ## Rules
 
-- **Dimensions and options are fixed at creation.** Reopen with the same `dimensions`, `metric`,
-  `precision` and `max_connections`; a mismatch raises an error saying which to pass. A new
-  embedding model means a new index file.
+- **Dimensions and options are fixed at creation.** Reopening takes them from the file:
+  `VectorIndex(path)` opens an index made elsewhere. Any you pass are checked, and a mismatch
+  raises an error saying which. A new embedding model means a new index file.
 - **Durability**: adds and deletes are saved by `flush()`. `close()`, garbage collection and a crash
   discard what wasn't flushed, and so does `rollback()`, which keeps the index open; leaving a
   `with` block flushes unless an exception is leaving it.
@@ -127,7 +127,7 @@ reader.close()
 use chassisdb::{DistanceMetric, IndexOptions, VectorIndex};
 
 fn index_and_search(ids: &[u64], vectors: &[f32], query: &[f32]) -> chassisdb::Result<()> {
-    let options = IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() };
+    let options = IndexOptions { metric: Some(DistanceMetric::Cosine), ..IndexOptions::default() };
     let mut index = VectorIndex::open("notes.chassis", 384, options)?;
     index.add_batch_with_ids(ids, vectors)?; // `vectors` holds one 384-float vector per id
     index.flush()?;

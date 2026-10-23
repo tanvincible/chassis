@@ -66,8 +66,8 @@ impl Run {
     fn options(&self) -> IndexOptions {
         IndexOptions {
             ef_construction: 40,
-            metric: self.metric,
-            precision: self.precision,
+            metric: Some(self.metric),
+            precision: Some(self.precision),
             ..IndexOptions::default()
         }
     }

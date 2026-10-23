@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
     let n = train.len() / dims;
     let vector = |i: usize| &train[i * dims..(i + 1) * dims];
     let options = |ef_search| IndexOptions {
-        max_connections: 16,
+        max_connections: Some(16),
         ef_construction: 200,
         ef_search,
         ..IndexOptions::default()

@@ -25,7 +25,7 @@ pub(crate) fn is_legacy(prefix: &[u8]) -> bool {
 /// The committed state of a v1 or v2 index.
 pub(crate) struct LegacyIndex {
     map: Mmap,
-    dims: usize,
+    pub dims: usize,
     graph_start: usize,
     pub params: NodeRecordParams,
     /// Committed nodes; vectors past this are leftovers of a crashed insert.
@@ -50,15 +50,15 @@ impl LegacyIndex {
                  check the path; to create a new index, give a path where no file exists yet"
             );
         }
-        if u32_at(12) != dims {
+        if dims != 0 && u32_at(12) != dims {
             crate::error::fail!(
                 DimensionMismatch,
-                "The index holds vectors of {} dimensions, not {dims}\nhelp: open it with {} \
-                 dimensions, or create a new index at another path",
-                u32_at(12),
+                "The index holds vectors of {} dimensions, not {dims}\nhelp: leave the dimensions \
+                 out (0) to use the file's, or create a new index at another path",
                 u32_at(12)
             );
         }
+        let dims = u32_at(12);
         let stored = u64_at(16);
 
         // The graph offset lives in the header's reserved bytes, behind a layout tag.

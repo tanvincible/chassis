@@ -706,7 +706,10 @@ mod tests {
         // 37 components: a whole main loop, a tail of eight and a scalar tail.
         let vector = |i: u64| (0..37).map(|d| ((i * 37 + d) as f32 * 0.618).sin()).collect();
         for precision in [Precision::Full, Precision::Half] {
-            let options = crate::IndexOptions { precision, ..crate::IndexOptions::default() };
+            let options = crate::IndexOptions {
+                precision: Some(precision),
+                ..crate::IndexOptions::default()
+            };
             let path = dir.path().join(format!("{precision:?}.chassis"));
             let mut index = crate::VectorIndex::open(path, 37, options).unwrap();
             index.add_batch(&(0..600).flat_map(vector).collect::<Vec<f32>>()).unwrap();

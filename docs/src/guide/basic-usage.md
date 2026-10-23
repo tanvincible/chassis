@@ -23,7 +23,7 @@ fn embed(text: &str) -> Vec<f32> {
 
 fn main() -> chassisdb::Result<()> {
     let options = IndexOptions {
-        max_connections: 16,
+        max_connections: Some(16),
         ef_construction: 200,
         ef_search: 50,
         ..IndexOptions::default()
@@ -45,8 +45,9 @@ fn main() -> chassisdb::Result<()> {
 ## Open
 
 `open` creates the file if it doesn't exist. The dimensions, metric, precision and
-`max_connections` are fixed when the index is created, and you give the same ones to open it
-again. The options above are the defaults.
+`max_connections` are fixed when the index is created; opening it again takes each from the file
+unless you give it, and checks any you do. Dimensions of 0 open an existing index with its own. The
+options above are the defaults.
 
 ## Add
 

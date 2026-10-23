@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     let path = dir.join(format!("{name}.chassis"));
     let _ = std::fs::remove_file(&path);
     let options = |ef_search| IndexOptions {
-        max_connections: 16,
+        max_connections: Some(16),
         ef_construction: 200,
         ef_search,
         ..IndexOptions::default()

@@ -130,7 +130,7 @@ fn test_reader_filters_within_its_snapshot() {
 #[test]
 fn test_cosine_filtered_search_reports_cosine_distance() {
     let dir = tempdir().unwrap();
-    let cosine = IndexOptions { metric: DistanceMetric::Cosine, ..IndexOptions::default() };
+    let cosine = IndexOptions { metric: Some(DistanceMetric::Cosine), ..IndexOptions::default() };
     let index = build(&dir.path().join("f.chassis"), cosine);
     let query = vector(100_001);
     for modulus in [2, 200] {

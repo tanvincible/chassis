@@ -2,7 +2,7 @@
 
 > Chassis is an embedded vector index for local semantic search: approximate nearest-neighbor search (HNSW) over embeddings kept in one file, inside your own process, with no server. Python: `pip install chassisdb`, `import chassisdb` (Python 3.11+). Rust: `cargo add chassisdb`. C: a library and `chassis.h` with each GitHub release.
 
-Chassis stores vectors and integer ids only: keep text and metadata where the app keeps its data (SQLite, files) under the same id. An index's dimensions, metric, precision and `max_connections` are fixed when it is created and must be given again to reopen it. Adds and deletes are durable after `flush()`; closing or dropping an index without one discards them, as a crash would. One process writes a file at a time; readers take no lock, in any process, and see the last flush. Every error says what was wrong and, on a `help:` line, what to do.
+Chassis stores vectors and integer ids only: keep text and metadata where the app keeps its data (SQLite, files) under the same id. An index's dimensions, metric, precision and `max_connections` are fixed when it is created; reopening takes them from the file (dimensions 0 in Rust and C, or left out in Python) and checks any that are given. Adds and deletes are durable after `flush()`; closing or dropping an index without one discards them, as a crash would. One process writes a file at a time; readers take no lock, in any process, and see the last flush. Every error says what was wrong and, on a `help:` line, what to do.
 
 ## Docs
 
