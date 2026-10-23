@@ -18,6 +18,7 @@ PAGES = [
     "docs/src/guide/api-reference.md",
     "docs/src/guide/c-api.md",
     "docs/src/guide/errors.md",
+    "docs/src/guide/limits.md",
     "docs/src/guide/with-a-database.md",
     "docs/src/guide/agents.md",
 ]
