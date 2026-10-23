@@ -1,7 +1,8 @@
 name: Filesystems
 
 # The core's tests with their files on the filesystems users keep indexes on besides ext4, APFS and
-# NTFS: other Linux filesystems, exFAT drives, network shares and ReFS.
+# NTFS: other Linux filesystems, exFAT drives, network shares and ReFS. And a full disk, on those
+# three and a few others.
 on:
   push:
     branches: [main]
@@ -140,3 +141,70 @@ jobs:
 
       - name: Run the core's tests
         run: cargo test -p chassisdb --all-features --no-fail-fast -- --skip compile_fail_tests
+
+  # A full disk is an error, not a crash: the core's one test that fills a small file system.
+  full-disk:
+    name: Full disk (${{ matrix.fs }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, fs: ext4, size: 96M }
+          - { os: ubuntu-latest, fs: xfs, size: 320M, packages: xfsprogs }
+          # Not Btrfs: it copies a page on every write, so allocating ahead can't promise the room,
+          # and a full disk still ends the process there.
+          - { os: ubuntu-latest, fs: tmpfs, size: 96m }
+          - { os: macos-latest, fs: apfs, size: 96m }
+          - { os: windows-latest, fs: ntfs, size: 96 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: filesystems
+
+      - name: Mount a small ${{ matrix.fs }}
+        if: runner.os != 'Windows'
+        run: |
+          dir="$RUNNER_TEMP/full"
+          case ${{ matrix.fs }} in
+            apfs)
+              hdiutil create -size ${{ matrix.size }} -fs APFS -volname FULL "$RUNNER_TEMP/full.dmg"
+              hdiutil attach "$RUNNER_TEMP/full.dmg"
+              dir=/Volumes/FULL ;;
+            tmpfs)
+              mkdir "$dir" && sudo mount -t tmpfs -o size=${{ matrix.size }} tmpfs "$dir" ;;
+            *)
+              if [ -n "${{ matrix.packages }}" ]; then
+                sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.packages }}
+              fi
+              truncate -s ${{ matrix.size }} "$RUNNER_TEMP/full.img"
+              sudo mkfs.${{ matrix.fs }} -q "$RUNNER_TEMP/full.img"
+              mkdir "$dir" && sudo mount -o loop "$RUNNER_TEMP/full.img" "$dir" ;;
+          esac
+          [ "$(uname)" = Darwin ] || sudo chown "$USER" "$dir"
+          echo "CHASSIS_FULL_DISK=$dir" >> "$GITHUB_ENV"
+
+      - name: Mount a small NTFS disk
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vhd = "$env:RUNNER_TEMP\full.vhdx"
+          @(
+            "create vdisk file=`"$vhd`" maximum=${{ matrix.size }} type=expandable",
+            "select vdisk file=`"$vhd`"",
+            "attach vdisk",
+            "create partition primary",
+            "format fs=ntfs quick",
+            "assign letter=F"
+          ) | Set-Content "$env:RUNNER_TEMP\diskpart.txt"
+          diskpart /s "$env:RUNNER_TEMP\diskpart.txt"
+          "CHASSIS_FULL_DISK=F:\" >> $env:GITHUB_ENV
+
+      - name: Fill it
+        run: cargo test -p chassisdb --test full_disk_tests -- --ignored

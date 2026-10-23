@@ -113,7 +113,7 @@ leaves one complete file at the path, and readers move to the new file on their 
 
 | Choice | What it gives | What it costs |
 | --- | --- | --- |
-| A mapped file | Nothing to load at open; vectors read where they lie | `unsafe` code. A disk error while reading a mapped page, or a full disk on Unix, can crash the process (SIGBUS) instead of returning an error |
+| A mapped file | Nothing to load at open; vectors read where they lie | `unsafe` code. A disk error while reading a mapped page, or a full disk on Btrfs, can crash the process (SIGBUS) instead of returning an error |
 | A file that only grows | Mappings never move, so references and readers stay valid | Deleted vectors keep their space until `compact()` |
 | One writer | No coordination between writers; readers take no lock | Writes from several processes have to go through one |
 | Commits at `flush()` | An add costs no sync | A crash loses what came after the last flush; a flush waits for the disk |
