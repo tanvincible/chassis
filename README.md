@@ -61,7 +61,7 @@ And [Limits](docs/src/guide/limits.md#poor-fits) says where Chassis stops fittin
 
 ## Status
 
-Early, and moving fast. The latest release is v0.10.0. See [CHANGELOG.md](CHANGELOG.md).
+Early, and moving fast. The latest release is v0.11.0. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
