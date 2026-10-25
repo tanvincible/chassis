@@ -3,17 +3,25 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.1/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.10.0...HEAD)
+## [Unreleased](https://github.com/tanvincible/chassis/compare/v0.11.0...HEAD)
 
-Building Chassis takes Rust 1.89 or later, one release newer than before.
+## [v0.11.0](https://github.com/tanvincible/chassis/compare/v0.10.0...v0.11.0) - 25 October 2026
+
+Open an index without restating its options, search long vectors with AVX-512 where it pays, and
+a full disk is an error, not a crash, on Linux too. Rust code that sets `metric`, `precision` or
+`max_connections` now wraps them in `Some`, and building takes Rust 1.89 or later.
+The file format doesn't change: v0.10.0 opens what v0.11.0 writes.
+
+### Breaking
+
+- Rust: `IndexOptions`' `metric`, `precision` and `max_connections` are `Option`s; wrap values in
+  `Some`. Dimensions of 0 take the file's (#140).
 
 ### Changed
 
 - Rust 1.89 or later, for AVX-512 (#131).
 - Opening an index takes its dimensions, metric, precision and `max_connections` from the file
   unless they're given, and checks any that are (ADR-0026, #140).
-- Rust: `IndexOptions`' `metric`, `precision` and `max_connections` are `Option`s; wrap values in
-  `Some`. Dimensions of 0 take the file's (#140).
 - C: dimensions and `max_connections` of 0, and `CHASSIS_FROM_FILE` for a metric or precision,
   take the file's (#140).
 - Python: `dimensions`, `metric`, `precision` and `max_connections` default to `None` (#140).
