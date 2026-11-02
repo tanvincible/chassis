@@ -2,7 +2,7 @@
 
 Chassis is an embedded vector index for local semantic search, written in Rust.
 
-Your index is one file, and Chassis runs inside your process: no server to run, nothing to connect to. Store embeddings under your own ids, search them, and keep the rest of your data where it already lives.
+Your index is one file, and Chassis runs inside your process, so there is no server to run and nothing to connect to. You store embeddings under your own ids and search them. The rest of your data stays where it already lives.
 
 ```sh
 pip install chassisdb   # Python 3.11+: import chassisdb
@@ -23,7 +23,7 @@ for hit in index.search(query, k=5):
     print(hit.id, hit.distance)
 ```
 
-An index opens in about a millisecond: only its headers are read until a search needs more. At the same recall, it searches a million 128-dimension vectors faster than hnswlib on every server CPU measured, x86 and ARM.
+An index opens in about a millisecond, because only its headers are read until a search needs more. At 0.95 recall, Chassis searches a million 128-dimension vectors faster than hnswlib on every server CPU we [measured](docs/src/architecture/performance.md), x86 and ARM.
 
 ## Capabilities
 
@@ -38,30 +38,32 @@ An index opens in about a millisecond: only its headers are read until a search 
 * Errors that say what was wrong and what to do instead
 * Rust, C and Python APIs
 
-It is not a database server or a distributed system, and it stores vectors and ids, not metadata.
+Chassis is not a database server or a distributed system. It stores vectors and ids, and leaves metadata to you.
 
 ## Use cases
 
-Chassis fits an app that embeds its own data and searches it on the same machine: a desktop or command-line app, a local RAG or agent memory, a cache one process writes while others search it. Other tools fit other shapes:
+Chassis fits an app that embeds its own data and searches it on the same machine. That could be a desktop or command-line app, a local RAG or agent memory, or a cache that one process writes while others search it.
 
-* [sqlite-vec](https://github.com/asg017/sqlite-vec), when the data is in SQLite already and the search should be part of SQL queries.
+Other tools fit other shapes, and you should use them when they do:
+
+* [sqlite-vec](https://github.com/asg017/sqlite-vec), when your data is already in SQLite and search should be part of your SQL queries.
 * [LanceDB](https://github.com/lancedb/lancedb), when you want one store for vectors and their columns, with filters in the query and versions of the data.
 * A server such as pgvector or Qdrant, when many machines write to one index, or other services query it over the network.
 
-And [Limits](docs/src/guide/limits.md#poor-fits) says where Chassis stops fitting: an index much larger than memory, many writers, heavy churn.
+[Limits](docs/src/guide/limits.md#poor-fits) says where Chassis stops fitting: an index much larger than memory, many writers, or heavy churn.
 
 ## Learn more
 
-* [Getting started](docs/src/guide/getting-started.md), and the [Python bindings](chassisdb/README.md)
-* [How it works](docs/src/architecture/overview.md), and why, in the [decision records](docs/adr)
-* [Benchmarks](docs/src/architecture/performance.md), and what is [planned](ROADMAP.md)
-* LangChain: [langchain-chassisdb](integrations/langchain-chassisdb/README.md), a vector store that passes LangChain's standard tests
-* Long-term memory for agents, on your machine: [chassisdb-mcp](chassisdb-mcp/README.md), an MCP server built on Chassis
-* Coding with an agent? In Claude Code, `/plugin install chassis --marketplace tanvincible/chassis`; for Cursor, Codex and the rest, see [Chassis for coding agents](docs/src/guide/agents.md), and [llms.txt](llms.txt)
+* [Getting started](docs/src/guide/getting-started.md) and the [Python bindings](chassisdb/README.md)
+* [How it works](docs/src/architecture/overview.md), and the [decision records](docs/adr) that say why
+* [Benchmarks](docs/src/architecture/performance.md) and the [roadmap](ROADMAP.md)
+* [langchain-chassisdb](integrations/langchain-chassisdb/README.md): a LangChain vector store that passes LangChain's standard tests
+* [chassisdb-mcp](chassisdb-mcp/README.md): an MCP server built on Chassis, for long-term agent memory on your machine
+* Coding with an agent? In Claude Code, run `/plugin install chassis --marketplace tanvincible/chassis`. For Cursor, Codex and the rest, see [Chassis for coding agents](docs/src/guide/agents.md) and [llms.txt](llms.txt).
 
 ## Status
 
-Early, and moving fast. The latest release is v0.11.0. See [CHANGELOG.md](CHANGELOG.md).
+Chassis is early and moving fast. The latest release is v0.11.0, and [CHANGELOG.md](CHANGELOG.md) says what changed.
 
 ## License
 
