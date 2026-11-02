@@ -43,6 +43,16 @@ Chassis is intentionally small and focused. If you have an idea for a new featur
 
 We prefer features that benefit most users rather than specialized functionality that can be built on top of Chassis by the host application.
 
+### API
+
+A public function, option or error is hard to take back once released: code in Rust, C and Python depends on it, and files carry what it wrote. SQLite is trusted because its small surface doesn't break, and Chassis aims for the same. So the bar for new API is high, and it rises as the surface grows. Before one is added:
+
+* users need it now, shown in an issue, not someday;
+* the application can't build it from the API there is;
+* an ADR says why, with its errors in all three languages.
+
+We would rather say no, or wait, than keep something for good that few people use.
+
 ### Setup
 
 Chassis is one repository with five parts:
