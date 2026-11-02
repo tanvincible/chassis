@@ -1,137 +1,151 @@
 # Contributing
 
-Thank you for looking at this project. Chassis is a small embedded vector index for local semantic search: one file, in your process, no server. It stays small, correct and fast only through careful work.
+Thank you for looking at Chassis. It is an embedded vector index for local semantic search: one
+file, in your process, no server. It stays small, correct and fast only through careful work, so
+this page is specific about what a change needs before it can be merged.
 
-Whether you are fixing a bug in the Rust core, improving the Python bindings, or helping someone else with a question, your help is appreciated.
+You don't have to write code to help. A clear bug report helps. So does answering someone's
+question, fixing a sentence that confused you, or mentioning Chassis to someone who needs a local
+vector index.
 
-If you like what we are doing but do not have the time to write code or documentation, you can still help by starring the repository or mentioning the project to others who might find a local vector index useful.
+Everyone here follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Questions
 
-We maintain two primary sources of documentation:
-1. **[The Chassis book](docs/src/SUMMARY.md)**: guides, the API and error references, architecture and the file format. The [decision records](docs/adr) say why it works the way it does.
-2. **[Python docs](chassisdb/docs/index.md)**: usage guides and API reference for the Python package (`chassisdb`).
+Start with the docs:
 
-Before asking a question, please check these resources. If the answer isn't there, search the existing [issues](https://github.com/tanvincible/chassis/issues) on GitHub.
+- [The Chassis book](docs/src/SUMMARY.md): the guides, the API and error references, how Chassis
+  works, and the file format.
+- [The Python docs](chassisdb/docs/index.md): the `chassisdb` package.
+- [The decision records](docs/adr): why Chassis works the way it does, with the measurements
+  behind each choice.
 
-If you still need help, feel free to [open an issue](https://github.com/tanvincible/chassis/issues/new). Please be specific about which part of the stack you are using (Rust Core, C FFI, or Python).
+If the answer isn't there, search the [issues](https://github.com/tanvincible/chassis/issues). If
+nobody has asked yet, [open one](https://github.com/tanvincible/chassis/issues/new), and say
+whether you are using the Rust crate, the C API or the Python package.
 
-## Contributions
+## Bugs
 
-We value stability and correctness above all else. 
+A bug we can run gets fixed first, so the most useful thing you can send is a short script or test
+that shows it. Include the vectors it needs, or the code that makes them. Please also tell us:
 
-By contributing, you agree that your work is your own and that it may be distributed under the project’s MIT and Apache 2.0 licenses.
+- Which part you are using, and its version.
+- What you expected, and what happened instead, with the full error or stack trace.
+- Your operating system, your CPU (x86-64 or ARM64), and your Rust or Python version.
+- The file system the index is on. Some bugs happen on only one, such as a network share.
 
-### Bugs
+If you think the index file is damaged, keep a copy. It is often the fastest way to the cause. An
+index holds your vectors, so think about that before you attach it to a public issue.
 
-A good bug report helps us fix things quickly.
+## Security
 
-Before reporting a bug, please check the [issue tracker](https://github.com/tanvincible/chassis/issues?q=label%3Abug). When opening a new report, please include:
+Don't report a vulnerability in a public issue. Email
+[tanvipm19@gmail.com](mailto:tanvipm19@gmail.com) instead. That includes a memory-safety bug at the
+C boundary, and a crafted file that makes Chassis read or write memory it shouldn't.
 
-1. **Component**: Is this a bug in the Python client, the C FFI, or the Rust core?
-2. **Reproduction**: A minimal code example (Python script or Rust test case) that triggers the issue.
-3. **Environment**: OS (Linux/Mac/Windows), Architecture (x86/ARM), and Python/Rust versions.
-4. **Logs/Errors**: Full stack traces or panic messages.
+## Features
 
-### Security
+Chassis is small on purpose. It does local semantic search in one file, in your process. It is not
+a database server, a distributed system or a metadata store, and the
+[non-goals](docs/src/introduction.md#non-goals) say why. [Limits](docs/src/guide/limits.md#poor-fits)
+says where it is a poor fit, and [ROADMAP.md](ROADMAP.md) lists what is planned.
 
-If you discover a security vulnerability (e.g., memory safety issue in the FFI boundary), please do not report it publicly. Instead, send an email to **[tanvipm19@gmail.com](mailto:tanvipm19@gmail.com)** so it can be handled responsibly.
+Before you build a feature, open an issue that says what you need it for. That way you find out
+whether it fits before you spend your time on it. If your application could build it on top of
+Chassis, it most likely belongs there.
 
-### Features
+## Setup
 
-Chassis is intentionally small and focused. If you have an idea for a new feature, please consider whether it fits the project’s goal: local semantic search in one file, in your process, with no server.
+The repository has five parts:
 
-We prefer features that benefit most users rather than specialized functionality that can be built on top of Chassis by the host application.
+- `chassis-core/`: the `chassisdb` crate, which is the index itself (Rust)
+- `chassis-ffi/`: the C API (Rust)
+- `chassisdb/`: the Python package, over the C API with ctypes
+- `chassisdb-mcp/`: the MCP memory server (Python)
+- `integrations/langchain-chassisdb/`: the LangChain vector store (Python)
 
-### Setup
+### Rust
 
-Chassis is one repository with five parts:
-
-* `chassis-core/`: the `chassisdb` crate, the index itself: storage, graph and search (Rust).
-* `chassis-ffi/`: the C API (Rust).
-* `chassisdb/`: the Python package (Python, over the C API with ctypes).
-* `chassisdb-mcp/`: the MCP memory server (Python).
-* `integrations/langchain-chassisdb/`: the LangChain vector store (Python).
-
-#### Rust
-
-You will need Rust 1.89 or later.
+`rust-toolchain.toml` pins stable Rust, and rustup installs it on the first build. The oldest Rust
+that builds Chassis is 1.89.
 
 ```bash
-# Build the entire workspace
 cargo build
-
-# Run all tests (Core + FFI)
-cargo test --workspace
-
-# Check for linting errors, as CI does on Linux x86
+cargo test --workspace --all-features
+cargo fmt --all
 cargo clippy --all-features --all-targets -- -D warnings
 ```
 
-On ARM, clippy currently stops at known warnings in the NEON kernels in `chassis-core/src/distance.rs`.
+Run the last two before you push: CI fails on an unformatted file or a single clippy warning.
 
-#### Python
+### Python
 
-To work on the Python bindings, you need the C library built first. The package finds it in `target/release`, or wherever `CHASSIS_LIB_PATH` points.
+The Python package loads the C library, so build that first. From a checkout, the package finds it
+in `target/release` on its own. If yours is somewhere else, point `CHASSIS_LIB_PATH` at it.
 
 ```bash
-# 1. Build the shared library
 cargo build --release -p chassis-ffi
-
-# 2. Setup Python environment
 cd chassisdb
 python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-
-# 3. Install in editable mode with dev dependencies (add `docs` to build the docs)
+source .venv/bin/activate   # on Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-
-# 4. Run Python tests
 pytest
 ```
 
-### Style
-
-#### Formatting
-
-- **Rust**: We use `rustfmt` and `clippy`. Run `cargo fmt` and `cargo clippy` before committing.
-- **Python**: We use `black` and `ruff`.
+CI also runs these from `chassisdb/`, so run them before you push:
 
 ```bash
-# Inside chassisdb/
-black .
-ruff check . --fix
-mypy .
+ruff check chassisdb tests examples
+black --check chassisdb tests examples
+mypy chassisdb
 ```
 
-#### Commits
+[Testing](docs/src/dev/testing.md) has the commands for the MCP server and the LangChain store, and
+what each suite checks. [Building](docs/src/dev/building.md) covers each platform and
+cross-compiling.
 
-We use the Conventional Commits specification to keep history readable.
+## Pull requests
 
-* `feat`: A new feature
-* `fix`: A bug fix
-* `docs`: Documentation changes
-* `build`: Build system or dependency changes
-* `refactor`: Code changes that do not alter behavior
-* `perf`: Performance improvements
-* `test`: Adding or fixing tests
-* `chore`: Maintenance tasks
+A typo or a broken link needs no ceremony. Open the pull request.
 
-**Example:**
-`feat: add buffer flushing support to VectorIndex`
+Anything larger has to meet these before it can be merged:
 
-For larger changes, you may include a message body after a blank line with additional context. A git commit template is provided in the [repository](https://github.com/tanvincible/chassis/blob/main/.gitmessage).
+- A fix comes with a test that fails without it. [Testing](docs/src/dev/testing.md#suites) says
+  which suite it belongs in.
+- A speed-up holds at equal recall, because a faster search that finds less hasn't won anything.
+  CI benchmarks each pull request that touches the core against main, on x86-64 and ARM64, and
+  fails it if anything got markedly slower or lost recall
+  ([Benchmarking](docs/src/dev/benchmarking.md)).
+- Files written by earlier releases still open. Formats 3 and 4 are frozen, so a format change
+  either adds something older releases can ignore, or raises the version so they refuse the file
+  instead of misreading it.
+- A design choice has a decision record in `docs/adr`, with the measurements behind it.
+- A new error says what was wrong, with the values, then a `help:` line saying what to do instead.
+  It is listed in [Errors](docs/src/guide/errors.md).
+- Docs follow [STYLE.md](STYLE.md): every number names its machine, data and date, and every
+  example runs as written.
 
-### Documentation
+## Commits
 
-Documentation is as important as code.
+Titles follow [Conventional Commits](https://www.conventionalcommits.org): a type, a colon, then
+what changed. The types are `feat`, `fix`, `perf`, `docs`, `test`, `refactor`, `build`, `ci` and
+`chore`. A `!` after the type marks a breaking change.
 
-* **Architecture Docs**: Located in [`docs`](https://github.com/tanvincible/chassis/tree/main/docs) (built with `mdbook`).
-* **Python Docs**: Located in [`chassisdb/docs/`](https://github.com/tanvincible/chassis/tree/main/chassisdb/docs) (built with `mkdocs`).
+Write the title as what changed for someone using Chassis, not what you did to the code:
 
-Write them as [STYLE.md](STYLE.md) says: the tone, the terms, headings, examples and where each
-thing goes. If you find a typo or unclear explanation, please feel free to submit a pull request.
+```text
+fix: a full disk is an error with what to do, not a crash, on Linux too
+fix: on a Windows network share, adds and backups no longer fail with "Access is denied"
+```
+
+Name the decision record when there is one, as in `(ADR-0026)`. The why goes in the body.
+
+## License
+
+By contributing, you agree that your work is your own and that it may be distributed under the
+project's MIT and Apache 2.0 licenses.
 
 ## Thanks
 
-This project exists because we believe in local, reliable software. We are glad you are here to help build it.
+This project exists because we believe in local, reliable software. We are glad you are here to
+help build it.
