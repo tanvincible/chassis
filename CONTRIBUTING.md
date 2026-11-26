@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for looking at Chassis. It is an embedded vector index for local semantic search: one
+Thanks for looking at Chassis. It is an embedded vector index for local semantic search: one
 file, in your process, no server. It stays small, correct and fast only through careful work, so
 this page is specific about what a change needs before it can be merged.
 
@@ -142,10 +142,9 @@ Name the decision record when there is one, as in `(ADR-0026)`. The why goes in 
 
 ## License
 
-By contributing, you agree that your work is your own and that it may be distributed under the
+By contributing, you confirm the work is yours and that it may be distributed under the
 project's MIT and Apache 2.0 licenses.
 
 ## Thanks
 
-This project exists because we believe in local, reliable software. We are glad you are here to
-help build it.
+This project exists because we believe in local, reliable software. Glad you're here.
